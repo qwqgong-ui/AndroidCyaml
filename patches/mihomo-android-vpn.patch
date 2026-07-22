@@ -28,7 +28,7 @@ index 29ddd2e6..7a947854 100644
 +	C "github.com/metacubex/mihomo/constant"
 @@ -6,0 +10,1 @@ import (
 +	"github.com/metacubex/mihomo/listener"
-@@ -53,0 +58,49 @@ func WithSecret(secret string) Option {
+@@ -54,0 +59,49 @@ func WithSecret(secret string) Option {
 +
 +const (
 +	androidSocksUser     = "androidcyaml"
@@ -82,7 +82,7 @@ diff --git a/hub/executor/executor.go b/hub/executor/executor.go
 index d3b5eb81..15e58795 100644
 --- a/hub/executor/executor.go
 +++ b/hub/executor/executor.go
-@@ -187,0 +188,1 @@ func updateListeners(general *config.General, listeners map[string]C.InboundLis
+@@ -189,0 +190,1 @@ func updateListeners(general *config.General, listeners map[string]C.InboundLis
 +	listener.ReCreateAndroidSocks(tunnel.Tunnel)
 diff --git a/listener/listener.go b/listener/listener.go
 index 3a0a8aad..fb0470ce 100644
@@ -92,7 +92,7 @@ index 3a0a8aad..fb0470ce 100644
 +	"github.com/metacubex/mihomo/component/auth"
 @@ -11,0 +13,1 @@ import (
 +	authStore "github.com/metacubex/mihomo/listener/auth"
-@@ -27,0 +30,7 @@ import (
+@@ -29,0 +32,7 @@ import (
 +
 +type androidSocksRuntimeConfig struct {
 +	port     int
@@ -107,7 +107,7 @@ index 3a0a8aad..fb0470ce 100644
 +	androidSocksActiveConfig   androidSocksRuntimeConfig
 @@ -51,0 +65,1 @@ var (
 +	androidSocksMux sync.Mutex
-@@ -106,0 +121,90 @@ func SetBindAddress(host string) {
+@@ -107,0 +122,90 @@ func SetBindAddress(host string) {
 +
 +// SetAndroidSocksConfig stores the private listener parameters supplied by the
 +// Android runtime. They are deliberately kept outside parsed config state so a
@@ -202,7 +202,7 @@ diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_andr
 index f180bd30..3ed326f3 100644
 --- a/listener/sing_tun/server_android.go
 +++ b/listener/sing_tun/server_android.go
-@@ -49,0 +50,7 @@ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
+@@ -51,0 +52,7 @@ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
 +	if len(tunOptions.IncludePackage) == 0 && len(tunOptions.ExcludePackage) == 0 {
 +		// VpnService.Builder already decides which applications enter this TUN.
 +		// Avoid reading Android's package database, which is inaccessible to a
@@ -243,7 +243,7 @@ index b68e9d96..8ec6e152 100644
 +	} else if androidDisableTun {
 +		options = append(options, hub.WithAndroidTunDisabled())
 +	}
-@@ -253,0 +276,81 @@ func main() {
+@@ -255,0 +278,81 @@ func main() {
 +
 +func newAndroidProcessResolver(socketName string) process.ProcessNameResolver {
 +	return func(network string, src, dst netip.AddrPort) (uint32, string, error) {
