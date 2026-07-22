@@ -1,6 +1,6 @@
 # Third-party notices
 
-AndroidCyaml packages and launches the following upstream works.
+AndroidCyaml packages and launches or links the following upstream works.
 
 ## mihomo
 
@@ -10,30 +10,34 @@ AndroidCyaml packages and launches the following upstream works.
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
 The Android arm64 executable is built by [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh).
-The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch). The patch
-contains Android descriptor/process compatibility hooks retained from the previous direct-TUN data
-path and, for the HEV path, the `-android-disable-tun` guard that prevents a user-supplied
-`tun.enable` from opening `/dev/net/tun` while mihomo is running as a local proxy. The current build
-does not enable the `with_gvisor` tag because HEV owns the VPN data plane. Until Go 1.27 is
-published, the script changes the generated checkout's `go` directive from 1.27 to 1.26. The exact
+The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch) to add the
+Android runtime flags, private authenticated SOCKS5 listener used by the HEV bridge, the legacy
+VpnService file-descriptor transport, and the Android connection-owner lookup bridge. Until Go 1.27
+is published, the script changes the generated checkout's `go` directive from 1.27 to 1.26. The
 corresponding source is the pinned upstream commit plus the committed patch.
 
-## HEV SOCKS5 tunnel
+## hev-socks5-tunnel
 
 - Project: <https://github.com/heiher/hev-socks5-tunnel>
 - Pinned commit: `df11261f09ebafc37bac03f81029c9b75a4aa074`
 - License: MIT
 - Local license copy: [`LICENSES/hev-socks5-tunnel-MIT.txt`](LICENSES/hev-socks5-tunnel-MIT.txt)
 
-The Android arm64 JNI shared library is built from the pinned recursive checkout by
-[`scripts/build_hev_socks5_tunnel.sh`](scripts/build_hev_socks5_tunnel.sh). The binary statically
-includes the following pinned git submodules selected by the HEV superproject:
+The source and the exact recursive submodule commits referenced by its gitlinks are fetched by
+[`scripts/build_hev_socks5_tunnel.sh`](scripts/build_hev_socks5_tunnel.sh). Android NDK builds the
+upstream JNI shared-library target as `libhev-socks5-tunnel.so`. The build defines only the Java
+package/class registration macros and Android ABI/toolchain settings; the checked-out upstream
+source is otherwise unmodified.
 
-- `heiher/hev-socks5-core` — MIT
-- `heiher/hev-task-system` — MIT
-- `heiher/yaml` — MIT
-- `heiher/lwip` — BSD-3-Clause; local license copy:
-  [`LICENSES/lwip-BSD-3-Clause.txt`](LICENSES/lwip-BSD-3-Clause.txt)
+The recursive source graph includes these HEV projects under the MIT license:
+
+- `heiher/hev-socks5-core`
+- `heiher/hev-task-system`
+- `heiher/yaml`
+
+It also includes `heiher/lwip`, based on the lwIP TCP/IP stack under the BSD 3-Clause license.
+The applicable notice is reproduced in
+[`LICENSES/lwip-BSD-3-Clause.txt`](LICENSES/lwip-BSD-3-Clause.txt).
 
 ## zashboard
 
