@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#2952CC</color>
+    <color name="surface">#F7F8FC</color>
+    <color name="surface_variant">#E9ECF5</color>
+    <color name="on_surface">#171A21</color>
+    <color name="status_ok">#147A45</color>
+    <color name="status_error">#B3261E</color>
+</resources>

@@ -1,0 +1,8 @@
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
+*.ttf binary
+*.woff2 binary
+app/src/main/assets/zashboard/** binary

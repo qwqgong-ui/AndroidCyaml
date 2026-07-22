@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AndroidCyaml</string>
+    <string name="upload_config">上传 config.yaml</string>
+    <string name="restart_core">重启</string>
+    <string name="core_starting">mihomo 正在启动…</string>
+    <string name="core_running">mihomo 已运行</string>
+    <string name="core_stopped">mihomo 已停止</string>
+    <string name="config_imported">配置有效，已导入并重启核心</string>
+    <string name="config_import_failed">配置导入失败：%1$s</string>
+    <string name="choose_yaml">选择 config.yaml</string>
+    <string name="external_link_failed">无法打开外部链接</string>
+    <string name="config_validating">正在校验 config.yaml…</string>
+    <string name="dashboard_load_failed">面板加载失败：%1$s</string>
+</resources>

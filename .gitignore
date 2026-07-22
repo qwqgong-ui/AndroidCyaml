@@ -1,0 +1,13 @@
+*.iml
+.gradle/
+.idea/
+.android-sdk/
+.build-jdk/
+.third_party/
+local.properties
+**/build/
+app/src/main/jniLibs/arm64-v8a/libmihomo.so
+*.apk
+*.aab
+captures/
+.DS_Store
