@@ -85,7 +85,8 @@ jobs:
           set -euo pipefail
           source_apk="app/build/outputs/apk/release/app-release.apk"
           release_apk="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk"
-          apksigner verify --verbose --print-certs "${source_apk}"
+          "${ANDROID_SDK_ROOT}/build-tools/36.0.0/apksigner" \
+            verify --verbose --print-certs "${source_apk}"
           cp "${source_apk}" "${release_apk}"
           sha256sum "${release_apk}" | tee SHA256SUMS
 
