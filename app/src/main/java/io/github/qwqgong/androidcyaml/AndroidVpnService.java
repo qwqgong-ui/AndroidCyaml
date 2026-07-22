@@ -5,7 +5,6 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
 import android.net.VpnService;
@@ -14,10 +13,14 @@ import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.ExecutorService;
@@ -45,56 +48,39 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     private static final String NOTIFICATION_CHANNEL = "androidcyaml_vpn";
     private static final int NOTIFICATION_ID = 36;
 
-    // VpnService.Builder is the only owner of interface addressing, routes and DNS.
-    // These values are deliberately independent from config.yaml. HEV receives only
-    // the matching MTU because it reads packets from the already-created TUN FD.
+    // VpnService.Builder is the sole owner of the Android interface profile.
+    // These values are never read from or written back to config.yaml.
     private static final int MTU = 9000;
     private static final String IPV4_ADDRESS = "198.18.0.1";
     private static final int IPV4_PREFIX = 30;
-    private static final String IPV4_DNS = "198.18.0.2";
+    private static final String MAPPED_DNS_ADDRESS = "198.18.0.2";
     private static final String IPV6_ADDRESS = "fdfe:dcba:9876::1";
     private static final int IPV6_PREFIX = 126;
-    private static final String MAP_DNS_NETWORK = "100.64.0.0";
-    private static final String MAP_DNS_NETMASK = "255.192.0.0";
-    private static final String HEV_CONFIG_NAME = "hev-socks5-tunnel.yaml";
-    private static final long SOCKS_READY_TIMEOUT_SECONDS = 15;
-    private static final long NATIVE_START_SETTLE_MILLIS = 250;
 
-    // HEV registers all four methods from JNI_OnLoad, including the stats method.
-    private static native boolean TProxyStartService(String configPath, int tunFd);
-    private static native boolean TProxyStopService();
-    private static native boolean TProxyIsRunning();
-    @SuppressWarnings("unused")
-    private static native long[] TProxyGetStats();
+    private static final String INTERNAL_SOCKS_HOST = "127.0.0.1";
+    private static final String INTERNAL_SOCKS_USER = "androidcyaml";
+    private static final int INTERNAL_SOCKS_PORT_BASE = 20_000;
+    private static final int INTERNAL_SOCKS_PORT_SPAN = 20_000;
+    private static final long SOCKS_READY_TIMEOUT_SECONDS = 90;
 
-    private static final String NATIVE_LOAD_ERROR;
-
-    static {
-        String loadError = null;
-        try {
-            System.loadLibrary("hev-socks5-tunnel");
-        } catch (UnsatisfiedLinkError exception) {
-            loadError = usefulMessage(exception);
-        }
-        NATIVE_LOAD_ERROR = loadError;
-    }
+    // Keep these names synchronized with MihomoManager. Its constructor creates
+    // the per-install 256-bit secret before the VPN service starts the core.
+    private static final String CORE_PREFERENCES = "androidcyaml";
+    private static final String CONTROLLER_SECRET_KEY = "controller_secret";
 
     private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
     private static final Set<Listener> LISTENERS = new CopyOnWriteArraySet<>();
     private static volatile State sharedState = State.STOPPED;
     private static volatile String sharedDetail = "VPN 未连接";
 
-    private final ExecutorService tunnelExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService vpnExecutor = Executors.newSingleThreadExecutor();
 
     private MihomoManager manager;
     private volatile ParcelFileDescriptor tunnel;
-    private volatile File tunnelConfig;
-    private volatile int activeSocksPort;
     private volatile long generation;
-    private volatile boolean stopping;
     private volatile boolean starting;
+    private volatile boolean stopping;
     private volatile boolean tunnelReady;
-    private volatile boolean nativeTunnelStarted;
     private volatile boolean coreRestartPending;
 
     public static void addListener(Listener listener) {
@@ -139,8 +125,8 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         }
 
         if (tunnelReady) {
-            publish(State.RUNNING, runningDetail(activeSocksPort));
-        } else if (!starting && tunnel == null) {
+            publish(State.RUNNING, runningDetail());
+        } else if (!starting) {
             startVpn();
         } else {
             publish(State.STARTING, "正在等待 HEV SOCKS5 隧道接管 VPN…");
@@ -151,173 +137,286 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     private void startVpn() {
         long requestGeneration = ++generation;
         starting = true;
+        stopping = false;
         tunnelReady = false;
-        activeSocksPort = 0;
-        publish(State.STARTING, "正在等待 mihomo 本地 SOCKS5 入站…");
+        coreRestartPending = false;
+        publish(State.STARTING, "正在等待 mihomo 内部 SOCKS5 入口…");
 
-        if (NATIVE_LOAD_ERROR != null) {
-            failAndStop("APK 中的 HEV SOCKS5 隧道无法加载：" + NATIVE_LOAD_ERROR);
-            return;
-        }
-
+        // mihomo remains in local-proxy mode. The patched core exposes a
+        // loopback-only, per-install authenticated SOCKS5 listener for HEV.
         manager.ensureStarted();
-        tunnelExecutor.execute(() -> establishAndStartTunnel(requestGeneration));
+        vpnExecutor.execute(() -> establishTunnel(requestGeneration));
     }
 
-    private void establishAndStartTunnel(long requestGeneration) {
+    private void establishTunnel(long requestGeneration) {
         ParcelFileDescriptor established = null;
-        File generatedConfig = null;
         try {
-            int socksPort = awaitSocksPort(requestGeneration);
+            String socksPassword = readControllerSecret();
+            int socksPort = deriveInternalSocksPort(socksPassword);
+            waitForInternalSocks(requestGeneration, socksPort, socksPassword);
             ensureCurrent(requestGeneration);
-            publish(State.STARTING, "正在建立固定 IPv4/IPv6 VPN 接口…");
 
-            generatedConfig = writeHevConfig(socksPort);
+            publish(State.STARTING, "正在建立固定 IPv4/IPv6 TUN 接口…");
             Builder builder = new Builder()
                     .setSession(getString(R.string.app_name))
                     .setMtu(MTU)
                     .addAddress(IPV4_ADDRESS, IPV4_PREFIX)
                     .addRoute("0.0.0.0", 0)
-                    .addDnsServer(IPV4_DNS)
+                    .addDnsServer(MAPPED_DNS_ADDRESS)
                     .addAddress(IPV6_ADDRESS, IPV6_PREFIX)
                     .addRoute("::", 0)
+                    // HEV consumes a non-blocking TUN descriptor.
                     .setBlocking(false)
                     .setMetered(false)
                     .setConfigureIntent(openAppPendingIntent());
 
-            // HEV and mihomo run under this application's UID. Excluding the UID
-            // keeps the loopback SOCKS transport and mihomo's upstream sockets
-            // outside this VPN, which prevents a routing loop.
+            // HEV and mihomo run under this application's UID. Excluding the
+            // package keeps their loopback and upstream sockets outside the VPN,
+            // while every other application remains captured by the default routes.
             builder.addDisallowedApplication(getPackageName());
             established = builder.establish();
             if (established == null) {
                 throw new IOException("系统未能建立 VPN TUN 接口");
             }
             ensureCurrent(requestGeneration);
-
             tunnel = established;
-            tunnelConfig = generatedConfig;
-            startNativeTunnel(generatedConfig, established, socksPort);
+
+            publish(State.STARTING, "正在启动 HEV TUN → SOCKS5 转发…");
+            boolean hevStarted = HevSocks5Tunnel.start(
+                    getCacheDir(),
+                    established.getFd(),
+                    MTU,
+                    MAPPED_DNS_ADDRESS,
+                    INTERNAL_SOCKS_HOST,
+                    socksPort,
+                    INTERNAL_SOCKS_USER,
+                    socksPassword
+            );
+            if (!hevStarted) {
+                throw new IOException("hev-socks5-tunnel 未能启动");
+            }
             ensureCurrent(requestGeneration);
 
-            activeSocksPort = socksPort;
-            ParcelFileDescriptor activeTunnel = established;
-            MAIN_HANDLER.post(() -> {
-                if (!isCurrent(requestGeneration) || tunnel != activeTunnel) {
-                    return;
-                }
-                starting = false;
-                tunnelReady = true;
-                publish(State.RUNNING, runningDetail(socksPort));
-                updateNotification("VPN 已连接");
-            });
+            ParcelFileDescriptor readyTunnel = established;
+            MAIN_HANDLER.post(() -> finishStart(requestGeneration, readyTunnel));
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            cleanupFailedStart(established, generatedConfig);
+            cleanupFailedStart(established);
             postStartFailure(requestGeneration, "建立 SOCKS5 VPN 时被中断");
-        } catch (PackageManager.NameNotFoundException | IOException | RuntimeException exception) {
-            Log.e(TAG, "Unable to establish SOCKS5 VPN", exception);
-            cleanupFailedStart(established, generatedConfig);
+        } catch (Exception | LinkageError exception) {
+            cleanupFailedStart(established);
+            Log.e(TAG, "Unable to establish HEV VPN", exception);
             postStartFailure(requestGeneration, usefulMessage(exception));
-        } catch (LinkageError error) {
-            Log.e(TAG, "HEV SOCKS5 JNI failure", error);
-            cleanupFailedStart(established, generatedConfig);
-            postStartFailure(
-                    requestGeneration,
-                    "HEV SOCKS5 隧道不可用：" + usefulMessage(error)
-            );
         }
     }
 
-    private int awaitSocksPort(long requestGeneration)
-            throws IOException, InterruptedException {
-        return MihomoSocksEndpoint.awaitPort(
-                manager,
-                SOCKS_READY_TIMEOUT_SECONDS,
-                TimeUnit.SECONDS,
-                () -> !isCurrent(requestGeneration)
-        );
+    private void finishStart(long requestGeneration, ParcelFileDescriptor readyTunnel) {
+        if (!isCurrent(requestGeneration) || tunnel != readyTunnel) {
+            vpnExecutor.execute(() -> {
+                stopHevQuietly();
+                closeTunnel(readyTunnel);
+            });
+            return;
+        }
+        starting = false;
+        tunnelReady = true;
+        publish(State.RUNNING, runningDetail());
+        updateNotification("VPN 已连接 · HEV SOCKS");
     }
 
-    private void startNativeTunnel(
-            File config,
-            ParcelFileDescriptor descriptor,
-            int socksPort
-    ) throws IOException, InterruptedException {
-        if (!descriptor.getFileDescriptor().valid()) {
-            throw new IOException("VPN TUN 接口已关闭");
-        }
-        if (!TProxyStartService(config.getAbsolutePath(), descriptor.getFd())) {
-            throw new IOException("无法启动 HEV SOCKS5 隧道线程");
-        }
-        nativeTunnelStarted = true;
-
-        // JNI reports thread creation, not full initialization. Surface immediate
-        // config/lwIP failures before marking the VPN as connected.
-        TimeUnit.MILLISECONDS.sleep(NATIVE_START_SETTLE_MILLIS);
-        if (!TProxyIsRunning()) {
-            nativeTunnelStarted = false;
-            throw new IOException(
-                    "HEV SOCKS5 隧道初始化失败（SOCKS5 127.0.0.1:" + socksPort + "）"
-            );
-        }
-    }
-
-    private void cleanupFailedStart(
-            ParcelFileDescriptor established,
-            File generatedConfig
-    ) {
+    private void cleanupFailedStart(ParcelFileDescriptor established) {
         if (tunnel == established) {
             tunnel = null;
         }
-        if (tunnelConfig == generatedConfig) {
-            tunnelConfig = null;
-        }
-        stopNativeTunnel();
+        stopHevQuietly();
         closeTunnel(established);
-        deleteQuietly(generatedConfig);
     }
 
     private void postStartFailure(long requestGeneration, String message) {
         MAIN_HANDLER.post(() -> {
-            if (!isCurrent(requestGeneration)) {
-                return;
+            if (isCurrent(requestGeneration)) {
+                failAndStop(message);
             }
-            failAndStop(message);
         });
     }
 
-    private File writeHevConfig(int socksPort) throws IOException {
-        File config = new File(getCacheDir(), HEV_CONFIG_NAME);
-        String content = buildHevConfig(socksPort);
-        try (FileOutputStream output = new FileOutputStream(config, false)) {
-            output.write(content.getBytes(StandardCharsets.UTF_8));
-            output.getFD().sync();
+    private void waitForInternalSocks(
+            long requestGeneration,
+            int socksPort,
+            String socksPassword
+    ) throws IOException, InterruptedException {
+        long deadline = System.nanoTime()
+                + TimeUnit.SECONDS.toNanos(SOCKS_READY_TIMEOUT_SECONDS);
+        IOException lastFailure = null;
+        byte[] username = INTERNAL_SOCKS_USER.getBytes(StandardCharsets.UTF_8);
+        byte[] password = socksPassword.getBytes(StandardCharsets.UTF_8);
+        if (username.length == 0 || username.length > 255
+                || password.length == 0 || password.length > 255) {
+            throw new IOException("mihomo 内部 SOCKS5 凭据长度无效");
         }
-        return config;
+
+        while (System.nanoTime() < deadline && isCurrent(requestGeneration)) {
+            try (Socket socket = new Socket()) {
+                socket.connect(
+                        new InetSocketAddress(
+                                InetAddress.getByName(INTERNAL_SOCKS_HOST),
+                                socksPort
+                        ),
+                        500
+                );
+                socket.setSoTimeout(500);
+                OutputStream output = socket.getOutputStream();
+                InputStream input = socket.getInputStream();
+
+                // RFC 1929 authentication verifies both listener identity and
+                // the per-install credentials before Android publishes the VPN.
+                output.write(new byte[]{0x05, 0x01, 0x02});
+                output.flush();
+                if (input.read() != 0x05 || input.read() != 0x02) {
+                    throw new IOException("mihomo 内部 SOCKS5 未选择认证方法");
+                }
+
+                output.write(0x01);
+                output.write(username.length);
+                output.write(username);
+                output.write(password.length);
+                output.write(password);
+                output.flush();
+                if (input.read() == 0x01 && input.read() == 0x00) {
+                    return;
+                }
+                throw new IOException("mihomo 内部 SOCKS5 认证失败");
+            } catch (IOException exception) {
+                lastFailure = exception;
+            }
+            Thread.sleep(120);
+        }
+        if (!isCurrent(requestGeneration)) {
+            throw new InterruptedException("VPN 启动已取消");
+        }
+        throw new IOException(
+                "mihomo 内部 SOCKS5 未在 " + SOCKS_READY_TIMEOUT_SECONDS + " 秒内就绪",
+                lastFailure
+        );
     }
 
-    private static String buildHevConfig(int socksPort) {
-        return "tunnel:\n"
-                + "  mtu: " + MTU + "\n"
-                + "  icmp: 'off'\n"
-                + "socks5:\n"
-                + "  address: '127.0.0.1'\n"
-                + "  port: " + socksPort + "\n"
-                + "  udp: 'udp'\n"
-                + "  udp-address: '127.0.0.1'\n"
-                + "mapdns:\n"
-                + "  address: " + IPV4_DNS + "\n"
-                + "  port: 53\n"
-                + "  network: " + MAP_DNS_NETWORK + "\n"
-                + "  netmask: " + MAP_DNS_NETMASK + "\n"
-                + "  cache-size: 10000\n"
-                + "misc:\n"
-                + "  task-stack-size: 86016\n"
-                + "  tcp-buffer-size: 65536\n"
-                + "  udp-recv-buffer-size: 524288\n"
-                + "  log-file: stderr\n"
-                + "  log-level: warn\n";
+    private String readControllerSecret() throws IOException {
+        String secret = getSharedPreferences(CORE_PREFERENCES, MODE_PRIVATE)
+                .getString(CONTROLLER_SECRET_KEY, null);
+        if (secret == null || !secret.matches("[0-9a-fA-F]{64}")) {
+            throw new IOException("mihomo 控制器密钥尚未就绪");
+        }
+        return secret.toLowerCase(Locale.ROOT);
+    }
+
+    private static int deriveInternalSocksPort(String secret) {
+        // FNV-1a 32-bit; the patched Go core uses the same derivation.
+        long hash = 0x811c9dc5L;
+        for (byte value : secret.getBytes(StandardCharsets.UTF_8)) {
+            hash ^= value & 0xffL;
+            hash = (hash * 0x01000193L) & 0xffff_ffffL;
+        }
+        return INTERNAL_SOCKS_PORT_BASE
+                + (int) (hash % INTERNAL_SOCKS_PORT_SPAN);
+    }
+
+    @Override
+    public void onCoreStateChanged(MihomoManager.State state, String detail) {
+        if (stopping || tunnel == null) {
+            return;
+        }
+        switch (state) {
+            case STARTING -> {
+                coreRestartPending = true;
+                tunnelReady = false;
+                publish(State.STARTING, "mihomo 正在重启，HEV SOCKS5 隧道等待恢复…");
+            }
+            case RUNNING -> {
+                if (coreRestartPending) {
+                    coreRestartPending = false;
+                    restartHevAfterCore(generation);
+                }
+            }
+            case FAILED -> failAndStop(
+                    detail == null || detail.isBlank()
+                            ? "mihomo 本地代理已停止"
+                            : "mihomo 本地代理已停止：" + detail
+            );
+            case STOPPED -> {
+                coreRestartPending = true;
+                tunnelReady = false;
+                publish(State.STARTING, "mihomo 已停止，正在等待内部 SOCKS5 恢复…");
+            }
+        }
+    }
+
+    private void restartHevAfterCore(long requestGeneration) {
+        vpnExecutor.execute(() -> {
+            try {
+                ParcelFileDescriptor currentTunnel = tunnel;
+                if (currentTunnel == null || !currentTunnel.getFileDescriptor().valid()) {
+                    return;
+                }
+                String socksPassword = readControllerSecret();
+                int socksPort = deriveInternalSocksPort(socksPassword);
+                waitForInternalSocks(requestGeneration, socksPort, socksPassword);
+                ensureCurrent(requestGeneration);
+
+                stopHevQuietly();
+                if (!HevSocks5Tunnel.start(
+                        getCacheDir(),
+                        currentTunnel.getFd(),
+                        MTU,
+                        MAPPED_DNS_ADDRESS,
+                        INTERNAL_SOCKS_HOST,
+                        socksPort,
+                        INTERNAL_SOCKS_USER,
+                        socksPassword
+                )) {
+                    throw new IOException("hev-socks5-tunnel 未能恢复");
+                }
+                ensureCurrent(requestGeneration);
+
+                MAIN_HANDLER.post(() -> {
+                    if (!isCurrent(requestGeneration) || tunnel != currentTunnel) {
+                        return;
+                    }
+                    tunnelReady = true;
+                    publish(State.RUNNING, runningDetail());
+                    updateNotification("VPN 已连接 · HEV SOCKS");
+                });
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                postRuntimeFailure(requestGeneration, "等待内部 SOCKS5 恢复时被中断");
+            } catch (Exception | LinkageError exception) {
+                postRuntimeFailure(
+                        requestGeneration,
+                        "HEV SOCKS5 隧道恢复失败：" + usefulMessage(exception)
+                );
+            }
+        });
+    }
+
+    private void postRuntimeFailure(long requestGeneration, String message) {
+        MAIN_HANDLER.post(() -> {
+            if (isCurrent(requestGeneration)) {
+                failAndStop(message);
+            }
+        });
+    }
+
+    private boolean isCurrent(long requestGeneration) {
+        return requestGeneration == generation && !stopping;
+    }
+
+    private void ensureCurrent(long requestGeneration) throws InterruptedException {
+        if (!isCurrent(requestGeneration)) {
+            throw new InterruptedException("VPN request cancelled");
+        }
+    }
+
+    private static String runningDetail() {
+        return "VPN 已连接 · HEV SOCKS · IPv4/IPv6";
     }
 
     private void stopVpn(String message) {
@@ -328,15 +427,12 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         starting = false;
         tunnelReady = false;
         coreRestartPending = false;
-        activeSocksPort = 0;
         ++generation;
-        publish(State.STARTING, "正在断开 VPN…");
+        publish(State.STARTING, "正在断开 HEV VPN…");
 
         ParcelFileDescriptor currentTunnel = tunnel;
-        File currentConfig = tunnelConfig;
         tunnel = null;
-        tunnelConfig = null;
-        stopTunnelAsync(currentTunnel, currentConfig, () -> {
+        stopTunnelAsync(currentTunnel, () -> {
             publish(State.STOPPED, message);
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
@@ -351,151 +447,24 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         starting = false;
         tunnelReady = false;
         coreRestartPending = false;
-        activeSocksPort = 0;
         ++generation;
         publish(State.FAILED, message);
         updateNotification("VPN 启动失败");
 
         ParcelFileDescriptor currentTunnel = tunnel;
-        File currentConfig = tunnelConfig;
         tunnel = null;
-        tunnelConfig = null;
-        stopTunnelAsync(currentTunnel, currentConfig, () -> {
+        stopTunnelAsync(currentTunnel, () -> {
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
         });
     }
 
-    private void stopTunnelAsync(
-            ParcelFileDescriptor descriptor,
-            File config,
-            Runnable callback
-    ) {
-        tunnelExecutor.execute(() -> {
-            stopNativeTunnel();
+    private void stopTunnelAsync(ParcelFileDescriptor descriptor, Runnable callback) {
+        vpnExecutor.execute(() -> {
+            stopHevQuietly();
             closeTunnel(descriptor);
-            deleteQuietly(config);
             MAIN_HANDLER.post(callback);
         });
-    }
-
-    @Override
-    public void onCoreStateChanged(MihomoManager.State state, String detail) {
-        if (tunnel == null || stopping) {
-            return;
-        }
-        switch (state) {
-            case STARTING -> {
-                coreRestartPending = true;
-                tunnelReady = false;
-                publish(State.STARTING, "mihomo 正在重启，HEV SOCKS5 隧道等待恢复…");
-            }
-            case RUNNING -> {
-                boolean forceRestart = coreRestartPending;
-                coreRestartPending = false;
-                refreshSocksEndpoint(generation, forceRestart);
-            }
-            case FAILED -> failAndStop(
-                    detail == null || detail.isBlank()
-                            ? "mihomo 本地代理已停止"
-                            : "mihomo 本地代理已停止：" + detail
-            );
-            case STOPPED -> {
-                coreRestartPending = true;
-                tunnelReady = false;
-                publish(State.STARTING, "mihomo 已停止，正在等待本地代理恢复…");
-            }
-        }
-    }
-
-    private void refreshSocksEndpoint(long requestGeneration, boolean forceRestart) {
-        tunnelExecutor.execute(() -> {
-            try {
-                int socksPort = awaitSocksPort(requestGeneration);
-                ensureCurrent(requestGeneration);
-                ParcelFileDescriptor currentTunnel = tunnel;
-                if (currentTunnel == null) {
-                    return;
-                }
-
-                boolean nativeRunning = TProxyIsRunning();
-                if (forceRestart || socksPort != activeSocksPort || !nativeRunning) {
-                    stopNativeTunnel();
-                    ensureCurrent(requestGeneration);
-                    File config = writeHevConfig(socksPort);
-                    tunnelConfig = config;
-                    startNativeTunnel(config, currentTunnel, socksPort);
-                    ensureCurrent(requestGeneration);
-                }
-
-                activeSocksPort = socksPort;
-                MAIN_HANDLER.post(() -> {
-                    if (!isCurrent(requestGeneration) || tunnel != currentTunnel) {
-                        return;
-                    }
-                    tunnelReady = true;
-                    publish(State.RUNNING, runningDetail(socksPort));
-                    updateNotification("VPN 已连接");
-                });
-            } catch (InterruptedException exception) {
-                Thread.currentThread().interrupt();
-                if (isCurrent(requestGeneration)) {
-                    postRuntimeFailure(requestGeneration, "等待本地 SOCKS5 入站时被中断");
-                }
-            } catch (IOException | RuntimeException exception) {
-                if (isCurrent(requestGeneration)) {
-                    postRuntimeFailure(
-                            requestGeneration,
-                            "本地 SOCKS5 入站恢复失败：" + usefulMessage(exception)
-                    );
-                }
-            } catch (LinkageError error) {
-                if (isCurrent(requestGeneration)) {
-                    postRuntimeFailure(
-                            requestGeneration,
-                            "HEV SOCKS5 隧道恢复失败：" + usefulMessage(error)
-                    );
-                }
-            }
-        });
-    }
-
-    private void postRuntimeFailure(long requestGeneration, String message) {
-        MAIN_HANDLER.post(() -> {
-            if (isCurrent(requestGeneration)) {
-                failAndStop(message);
-            }
-        });
-    }
-
-    private void stopNativeTunnel() {
-        if (NATIVE_LOAD_ERROR != null) {
-            nativeTunnelStarted = false;
-            return;
-        }
-        try {
-            if (nativeTunnelStarted || TProxyIsRunning()) {
-                TProxyStopService();
-            }
-        } catch (RuntimeException | LinkageError exception) {
-            Log.w(TAG, "Unable to stop HEV SOCKS5 tunnel", exception);
-        } finally {
-            nativeTunnelStarted = false;
-        }
-    }
-
-    private boolean isCurrent(long requestGeneration) {
-        return requestGeneration == generation && !stopping;
-    }
-
-    private void ensureCurrent(long requestGeneration) throws InterruptedException {
-        if (!isCurrent(requestGeneration)) {
-            throw new InterruptedException("VPN request cancelled");
-        }
-    }
-
-    private static String runningDetail(int socksPort) {
-        return "VPN 已连接 · HEV SOCKS5 127.0.0.1:" + socksPort + " · IPv4/IPv6";
     }
 
     @Override
@@ -512,21 +481,15 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         starting = false;
         tunnelReady = false;
         coreRestartPending = false;
-        activeSocksPort = 0;
         ++generation;
 
         ParcelFileDescriptor currentTunnel = tunnel;
-        File currentConfig = tunnelConfig;
         tunnel = null;
-        tunnelConfig = null;
-        if (currentTunnel != null || nativeTunnelStarted) {
-            tunnelExecutor.execute(() -> {
-                stopNativeTunnel();
-                closeTunnel(currentTunnel);
-                deleteQuietly(currentConfig);
-            });
-        }
-        tunnelExecutor.shutdown();
+        vpnExecutor.execute(() -> {
+            stopHevQuietly();
+            closeTunnel(currentTunnel);
+        });
+        vpnExecutor.shutdown();
         if (unexpected) {
             publish(State.STOPPED, "VPN 已停止");
         }
@@ -601,6 +564,14 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         });
     }
 
+    private static void stopHevQuietly() {
+        try {
+            HevSocks5Tunnel.stop();
+        } catch (LinkageError error) {
+            Log.w(TAG, "Unable to stop HEV native runtime", error);
+        }
+    }
+
     private static void closeTunnel(ParcelFileDescriptor descriptor) {
         if (descriptor == null) {
             return;
@@ -612,16 +583,10 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         }
     }
 
-    private static void deleteQuietly(File file) {
-        if (file != null && file.exists() && !file.delete()) {
-            Log.w(TAG, "Unable to remove temporary HEV config: " + file);
-        }
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
+    private static String usefulMessage(Throwable exception) {
+        String message = exception.getMessage();
         return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
+                ? exception.getClass().getSimpleName()
                 : message;
     }
 }
