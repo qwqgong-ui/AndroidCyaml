@@ -210,118 +210,118 @@ index f180bd30..3ed326f3 100644
 +		tunOptions.BuildAndroidRules(nil, l.handler)
 +		return nil
 +	}
-+diff --git a/main.go b/main.go
-+index b68e9d96..8ec6e152 100644
-+--- a/main.go
-++++ b/main.go
-+@@ -3,0 +4,1 @@ import (
-++	"bufio"
-+@@ -9,0 +11,1 @@ import (
-++	"net/netip"
-+@@ -16,0 +19,1 @@ import (
-++	"time"
-+@@ -21,0 +25,1 @@ import (
-++	"github.com/metacubex/mihomo/component/process"
-+@@ -49,0 +54,3 @@ var (
-++	androidVpnFdSocket            string
-++	androidProcessSocket          string
-++	androidDisableTun             bool
-+@@ -71,0 +79,3 @@ func init() {
-++	flag.StringVar(&androidVpnFdSocket, "android-vpn-fd-socket", "", "receive an Android VpnService TUN descriptor from this Unix socket")
-++	flag.StringVar(&androidProcessSocket, "android-process-socket", "", "resolve Android connection owners through this Unix socket")
-++	flag.BoolVar(&androidDisableTun, "android-disable-tun", false, "disable TUN when no Android VpnService is active")
-+@@ -216,0 +227,12 @@ func main() {
-++	if androidProcessSocket != "" {
-++		process.DefaultProcessNameResolver = newAndroidProcessResolver(androidProcessSocket)
-++	}
-++	if androidVpnFdSocket != "" {
-++		fileDescriptor, err := receiveFileDescriptor(androidVpnFdSocket)
-++		if err != nil {
-++			log.Fatalln("Receive Android VPN file descriptor error: %s", err.Error())
-++		}
-++		options = append(options, hub.WithAndroidVPN(fileDescriptor))
-++	} else if androidDisableTun {
-++		options = append(options, hub.WithAndroidTunDisabled())
-++	}
-+@@ -253,0 +276,81 @@ func main() {
-++
-++func newAndroidProcessResolver(socketName string) process.ProcessNameResolver {
-++	return func(network string, src, dst netip.AddrPort) (uint32, string, error) {
-++		if !src.IsValid() || !dst.IsValid() {
-++			return 0, "", process.ErrNotFound
-++		}
-++		connection, err := net.DialTimeout("unix", socketName, 500*time.Millisecond)
-++		if err != nil {
-++			return 0, "", err
-++		}
-++		defer connection.Close()
-++		if err = connection.SetDeadline(time.Now().Add(time.Second)); err != nil {
-++			return 0, "", err
-++		}
-++		if _, err = fmt.Fprintf(
-++			connection,
-++			"%s\t%s\t%d\t%s\t%d\n",
-++			network,
-++			src.Addr(),
-++			src.Port(),
-++			dst.Addr(),
-++			dst.Port(),
-++		); err != nil {
-++			return 0, "", err
-++		}
-++
-++		reader := bufio.NewReader(io.LimitReader(connection, 1025))
-++		response, err := reader.ReadString('\n')
-++		if err != nil {
-++			return 0, "", err
-++		}
-++		if len(response) > 1024 {
-++			return 0, "", fmt.Errorf("Android process response is too long")
-++		}
-++		response = strings.TrimSuffix(strings.TrimSuffix(response, "\n"), "\r")
-++		fields := strings.SplitN(response, "\t", 2)
-++		if len(fields) != 2 || fields[1] == "" {
-++			return 0, "", process.ErrNotFound
-++		}
-++		uid, err := strconv.ParseInt(fields[0], 10, 32)
-++		if err != nil || uid < 0 {
-++			return 0, "", process.ErrNotFound
-++		}
-++		return uint32(uid), fields[1], nil
-++	}
-++}
-++
-++func receiveFileDescriptor(socketName string) (int, error) {
-++	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketName, Net: "unix"})
-++	if err != nil {
-++		return 0, err
-++	}
-++	defer connection.Close()
-++
-++	payload := make([]byte, 1)
-++	control := make([]byte, syscall.CmsgSpace(4))
-++	_, controlLength, flags, _, err := connection.ReadMsgUnix(payload, control)
-++	if err != nil {
-++		return 0, err
-++	}
-++	if flags&syscall.MSG_CTRUNC != 0 {
-++		return 0, fmt.Errorf("Unix control message was truncated")
-++	}
-++	messages, err := syscall.ParseSocketControlMessage(control[:controlLength])
-++	if err != nil {
-++		return 0, err
-++	}
-++	for _, message := range messages {
-++		fileDescriptors, parseErr := syscall.ParseUnixRights(&message)
-++		if parseErr != nil {
-++			return 0, parseErr
-++		}
-++		if len(fileDescriptors) > 0 {
-++			for _, extraDescriptor := range fileDescriptors[1:] {
-++				_ = syscall.Close(extraDescriptor)
-++			}
-++			return fileDescriptors[0], nil
-++		}
-++	}
-++	return 0, fmt.Errorf("Unix control message did not contain a file descriptor")
-++}
+diff --git a/main.go b/main.go
+index b68e9d96..8ec6e152 100644
+--- a/main.go
++++ b/main.go
+@@ -3,0 +4,1 @@ import (
++	"bufio"
+@@ -9,0 +11,1 @@ import (
++	"net/netip"
+@@ -16,0 +19,1 @@ import (
++	"time"
+@@ -21,0 +25,1 @@ import (
++	"github.com/metacubex/mihomo/component/process"
+@@ -49,0 +54,3 @@ var (
++	androidVpnFdSocket            string
++	androidProcessSocket          string
++	androidDisableTun             bool
+@@ -71,0 +79,3 @@ func init() {
++	flag.StringVar(&androidVpnFdSocket, "android-vpn-fd-socket", "", "receive an Android VpnService TUN descriptor from this Unix socket")
++	flag.StringVar(&androidProcessSocket, "android-process-socket", "", "resolve Android connection owners through this Unix socket")
++	flag.BoolVar(&androidDisableTun, "android-disable-tun", false, "disable TUN when no Android VpnService is active")
+@@ -216,0 +227,12 @@ func main() {
++	if androidProcessSocket != "" {
++		process.DefaultProcessNameResolver = newAndroidProcessResolver(androidProcessSocket)
++	}
++	if androidVpnFdSocket != "" {
++		fileDescriptor, err := receiveFileDescriptor(androidVpnFdSocket)
++		if err != nil {
++			log.Fatalln("Receive Android VPN file descriptor error: %s", err.Error())
++		}
++		options = append(options, hub.WithAndroidVPN(fileDescriptor))
++	} else if androidDisableTun {
++		options = append(options, hub.WithAndroidTunDisabled())
++	}
+@@ -253,0 +276,81 @@ func main() {
++
++func newAndroidProcessResolver(socketName string) process.ProcessNameResolver {
++	return func(network string, src, dst netip.AddrPort) (uint32, string, error) {
++		if !src.IsValid() || !dst.IsValid() {
++			return 0, "", process.ErrNotFound
++		}
++		connection, err := net.DialTimeout("unix", socketName, 500*time.Millisecond)
++		if err != nil {
++			return 0, "", err
++		}
++		defer connection.Close()
++		if err = connection.SetDeadline(time.Now().Add(time.Second)); err != nil {
++			return 0, "", err
++		}
++		if _, err = fmt.Fprintf(
++			connection,
++			"%s\t%s\t%d\t%s\t%d\n",
++			network,
++			src.Addr(),
++			src.Port(),
++			dst.Addr(),
++			dst.Port(),
++		); err != nil {
++			return 0, "", err
++		}
++
++		reader := bufio.NewReader(io.LimitReader(connection, 1025))
++		response, err := reader.ReadString('\n')
++		if err != nil {
++			return 0, "", err
++		}
++		if len(response) > 1024 {
++			return 0, "", fmt.Errorf("Android process response is too long")
++		}
++		response = strings.TrimSuffix(strings.TrimSuffix(response, "\n"), "\r")
++		fields := strings.SplitN(response, "\t", 2)
++		if len(fields) != 2 || fields[1] == "" {
++			return 0, "", process.ErrNotFound
++		}
++		uid, err := strconv.ParseInt(fields[0], 10, 32)
++		if err != nil || uid < 0 {
++			return 0, "", process.ErrNotFound
++		}
++		return uint32(uid), fields[1], nil
++	}
++}
++
++func receiveFileDescriptor(socketName string) (int, error) {
++	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketName, Net: "unix"})
++	if err != nil {
++		return 0, err
++	}
++	defer connection.Close()
++
++	payload := make([]byte, 1)
++	control := make([]byte, syscall.CmsgSpace(4))
++	_, controlLength, flags, _, err := connection.ReadMsgUnix(payload, control)
++	if err != nil {
++		return 0, err
++	}
++	if flags&syscall.MSG_CTRUNC != 0 {
++		return 0, fmt.Errorf("Unix control message was truncated")
++	}
++	messages, err := syscall.ParseSocketControlMessage(control[:controlLength])
++	if err != nil {
++		return 0, err
++	}
++	for _, message := range messages {
++		fileDescriptors, parseErr := syscall.ParseUnixRights(&message)
++		if parseErr != nil {
++			return 0, parseErr
++		}
++		if len(fileDescriptors) > 0 {
++			for _, extraDescriptor := range fileDescriptors[1:] {
++				_ = syscall.Close(extraDescriptor)
++			}
++			return fileDescriptors[0], nil
++		}
++	}
++	return 0, fmt.Errorf("Unix control message did not contain a file descriptor")
++}
