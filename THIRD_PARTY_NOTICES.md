@@ -10,9 +10,12 @@ AndroidCyaml packages and launches the following upstream works.
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
 The Android arm64 executable is built by [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh).
-Until Go 1.27 is published, the script changes only the generated checkout's `go` directive from
-1.27 to 1.26; it does not change any Go source file. The exact corresponding source can be obtained
-by checking out the pinned commit from the project URL above.
+The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch) to add the
+Android VpnService file-descriptor transport, the system connection-owner lookup bridge, and
+the Android gVisor runtime compatibility layer. It also avoids inaccessible package-database reads
+when no package filter is configured. Until Go 1.27 is published, the script changes the generated
+checkout's `go` directive from 1.27 to 1.26. The exact corresponding source is the pinned upstream
+commit plus the committed patch.
 
 ## zashboard
 
@@ -24,3 +27,10 @@ by checking out the pinned commit from the project URL above.
 
 The unmodified release files are stored under `app/src/main/assets/zashboard` and served only
 from mihomo's loopback controller.
+
+## MetaCubeX meta-rules-dat
+
+- Project: <https://github.com/MetaCubeX/meta-rules-dat>
+- Pinned data commit: `ab44fa37df7a2939806042c20af3a0bfd07152ea`
+- Bundled files: `GeoIP.dat`, `GeoSite.dat`
+- License: GPL-3.0 (the repository root [`LICENSE`](LICENSE) contains the license text)

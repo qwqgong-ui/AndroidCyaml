@@ -1,0 +1,176 @@
+diff --git a/component/process/process.go b/component/process/process.go
+index ace3bc63..c45a4f0e 100644
+--- a/component/process/process.go
++++ b/component/process/process.go
+@@ -28,0 +29,5 @@ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, str
++	if resolver := DefaultProcessNameResolver; resolver != nil {
++		if uid, path, err := resolver(network, src, dst); err == nil {
++			return uid, path, nil
++		}
++	}
+@@ -30,0 +36,8 @@ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, str
++
++// ProcessNameResolver resolves a connection owner outside the mihomo process.
++// Android VpnService uses this hook because modern Android releases block
++// unprivileged access to /proc/net and restrict INET_DIAG results.
++type ProcessNameResolver func(network string, src, dst netip.AddrPort) (uint32, string, error)
++
++var DefaultProcessNameResolver ProcessNameResolver
++
+diff --git a/hub/hub.go b/hub/hub.go
+index 29ddd2e6..8181d732 100644
+--- a/hub/hub.go
++++ b/hub/hub.go
+@@ -3,0 +4 @@ import (
++	C "github.com/metacubex/mihomo/constant"
+@@ -53,0 +55,22 @@ func WithSecret(secret string) Option {
++// WithAndroidVPN attaches the descriptor created by Android VpnService. gVisor
++// supplies the userspace network stack for an unprivileged Android TUN, while
++// Android owns the interface routes. All other TUN and DNS fields remain config-owned.
++func WithAndroidVPN(fileDescriptor int) Option {
++	return func(cfg *config.Config) {
++		cfg.General.Tun.FileDescriptor = fileDescriptor
++		cfg.General.Tun.Stack = C.TunGvisor
++		cfg.General.Tun.GSO = false
++		cfg.General.Tun.AutoRoute = false
++		cfg.General.Tun.AutoRedirect = false
++		cfg.General.Tun.AutoDetectInterface = false
++	}
++}
++
++// WithAndroidTunDisabled prevents a user-supplied tun.enable from attempting
++// to open /dev/net/tun when AndroidCyaml is running only as a local proxy.
++func WithAndroidTunDisabled() Option {
++	return func(cfg *config.Config) {
++		cfg.General.Tun.Enable = false
++		cfg.General.Tun.FileDescriptor = 0
++	}
++}
++
+diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_android.go
+index f180bd30..3ed326f3 100644
+--- a/listener/sing_tun/server_android.go
++++ b/listener/sing_tun/server_android.go
+@@ -49,0 +50,7 @@ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
++	if len(tunOptions.IncludePackage) == 0 && len(tunOptions.ExcludePackage) == 0 {
++		// VpnService.Builder already decides which applications enter this TUN.
++		// Avoid reading Android's package database, which is inaccessible to a
++		// regular application UID, when no package names need translating.
++		tunOptions.BuildAndroidRules(nil, l.handler)
++		return nil
++	}
+diff --git a/main.go b/main.go
+index b68e9d96..8ec6e152 100644
+--- a/main.go
++++ b/main.go
+@@ -3,0 +4 @@ import (
++	"bufio"
+@@ -9,0 +11 @@ import (
++	"net/netip"
+@@ -16,0 +19 @@ import (
++	"time"
+@@ -21,0 +25 @@ import (
++	"github.com/metacubex/mihomo/component/process"
+@@ -49,0 +54,3 @@ var (
++	androidVpnFdSocket            string
++	androidProcessSocket          string
++	androidDisableTun             bool
+@@ -71,0 +79,3 @@ func init() {
++	flag.StringVar(&androidVpnFdSocket, "android-vpn-fd-socket", "", "receive an Android VpnService TUN descriptor from this Unix socket")
++	flag.StringVar(&androidProcessSocket, "android-process-socket", "", "resolve Android connection owners through this Unix socket")
++	flag.BoolVar(&androidDisableTun, "android-disable-tun", false, "disable TUN when no Android VpnService is active")
+@@ -214,0 +225,12 @@ func main() {
++	if androidProcessSocket != "" {
++		process.DefaultProcessNameResolver = newAndroidProcessResolver(androidProcessSocket)
++	}
++	if androidVpnFdSocket != "" {
++		fileDescriptor, err := receiveFileDescriptor(androidVpnFdSocket)
++		if err != nil {
++			log.Fatalln("Receive Android VPN file descriptor error: %s", err.Error())
++		}
++		options = append(options, hub.WithAndroidVPN(fileDescriptor))
++	} else if androidDisableTun {
++		options = append(options, hub.WithAndroidTunDisabled())
++	}
+@@ -253,0 +276,81 @@ func main() {
++
++func newAndroidProcessResolver(socketName string) process.ProcessNameResolver {
++	return func(network string, src, dst netip.AddrPort) (uint32, string, error) {
++		if !src.IsValid() || !dst.IsValid() {
++			return 0, "", process.ErrNotFound
++		}
++		connection, err := net.DialTimeout("unix", socketName, 500*time.Millisecond)
++		if err != nil {
++			return 0, "", err
++		}
++		defer connection.Close()
++		if err = connection.SetDeadline(time.Now().Add(time.Second)); err != nil {
++			return 0, "", err
++		}
++		if _, err = fmt.Fprintf(
++			connection,
++			"%s\t%s\t%d\t%s\t%d\n",
++			network,
++			src.Addr(),
++			src.Port(),
++			dst.Addr(),
++			dst.Port(),
++		); err != nil {
++			return 0, "", err
++		}
++
++		reader := bufio.NewReader(io.LimitReader(connection, 1025))
++		response, err := reader.ReadString('\n')
++		if err != nil {
++			return 0, "", err
++		}
++		if len(response) > 1024 {
++			return 0, "", fmt.Errorf("Android process response is too long")
++		}
++		response = strings.TrimSuffix(strings.TrimSuffix(response, "\n"), "\r")
++		fields := strings.SplitN(response, "\t", 2)
++		if len(fields) != 2 || fields[1] == "" {
++			return 0, "", process.ErrNotFound
++		}
++		uid, err := strconv.ParseInt(fields[0], 10, 32)
++		if err != nil || uid < 0 {
++			return 0, "", process.ErrNotFound
++		}
++		return uint32(uid), fields[1], nil
++	}
++}
++
++func receiveFileDescriptor(socketName string) (int, error) {
++	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketName, Net: "unix"})
++	if err != nil {
++		return 0, err
++	}
++	defer connection.Close()
++
++	payload := make([]byte, 1)
++	control := make([]byte, syscall.CmsgSpace(4))
++	_, controlLength, flags, _, err := connection.ReadMsgUnix(payload, control)
++	if err != nil {
++		return 0, err
++	}
++	if flags&syscall.MSG_CTRUNC != 0 {
++		return 0, fmt.Errorf("Unix control message was truncated")
++	}
++	messages, err := syscall.ParseSocketControlMessage(control[:controlLength])
++	if err != nil {
++		return 0, err
++	}
++	for _, message := range messages {
++		fileDescriptors, parseErr := syscall.ParseUnixRights(&message)
++		if parseErr != nil {
++			return 0, parseErr
++		}
++		if len(fileDescriptors) > 0 {
++			for _, extraDescriptor := range fileDescriptors[1:] {
++				_ = syscall.Close(extraDescriptor)
++			}
++			return fileDescriptors[0], nil
++		}
++	}
++	return 0, fmt.Errorf("Unix control message did not contain a file descriptor")
++}
