@@ -47,6 +47,8 @@ final class HevSocks5Tunnel {
                         + "  port: %d\n"
                         + "  udp: 'udp'\n"
                         + "  udp-address: '%s'\n"
+                        + "  pipeline: true\n"
+                        + "  tcp-fastopen: true\n"
                         + "  username: '%s'\n"
                         + "  password: '%s'\n"
                         + "mapdns:\n"
