@@ -3,8 +3,19 @@
 AndroidCyaml 是一个仅面向 Android 16 的 mihomo VPN 客户端。它启动
 [`qwqgong-ui/mihomo`](https://github.com/qwqgong-ui/mihomo) 的 arm64 核心，在应用内用
 WebView 打开内置的 [`Zephyruso/zashboard`](https://github.com/Zephyruso/zashboard)，并允许
-从 Android 文件选择器上传 `config.yaml`。原生 `VpnService` 会把系统 TUN 文件描述符交给
-mihomo 的 gVisor 用户态网络栈，无需 root。
+从 Android 文件选择器上传 `config.yaml`。
+
+系统 VPN 不再把 TUN 文件描述符直接交给 mihomo 的 gVisor 栈，而是使用原生
+`VpnService` 建立固定双栈 TUN，再由
+[`heiher/hev-socks5-tunnel`](https://github.com/heiher/hev-socks5-tunnel) 将 IP 包转发到
+mihomo 的应用内部 SOCKS5 入口：
+
+```text
+其他应用 → Android VpnService TUN → hev-socks5-tunnel
+        → 仅回环的内部 SOCKS5 → mihomo 规则/节点 → 底层网络
+```
+
+整个路径无需 root。
 
 ## 平台限制
 
@@ -15,21 +26,21 @@ mihomo 的 gVisor 用户态网络栈，无需 root。
 ## 功能
 
 - mihomo 固定到提交 `a563ca2194edbf560b3857801cb3cceab13d7ff9`
+- hev-socks5-tunnel 固定到提交 `df11261f09ebafc37bac03f81029c9b75a4aa074`，连同其 gitlink
+  固定的子模块从源码构建
 - zashboard 固定到 `v3.15.0` 的无字体构建，静态文件随 APK 离线分发
 - 完整 GeoIP/GeoSite 固定到 `MetaCubeX/meta-rules-dat` 提交 `ab44fa37` 并随 APK 分发，
   配置首次使用 GEO 规则时无需从 GitHub 下载
 - WebView 优先通过固定的 `127.0.0.1:17890` 访问面板，使 Zashboard 设置可跨重启保留；
   端口冲突时自动回退到空闲端口
-- 原生 VPN 滑块申请系统授权并接管全局 IPv4/IPv6 流量
+- 原生 VPN 滑块申请系统授权并接管其他应用的全局 IPv4/IPv6 流量
 - 上传配置、重启核心、运行时覆写和“隐藏后台标签页”集中在右上角二级菜单
-- 运行时覆写面板目前提供进程匹配的 `strict`、`always`、`off` 和“跟随配置”模式，
-  只调用控制器 API，不会写回 YAML
-- VPN 运行时通过 Android `ConnectivityManager` 读取连接 UID，再映射为包名交给 mihomo，
-  Android 16 上的进程规则和连接面板可正常显示进程
 - Android 16 `systemExempted` 前台服务与常驻通知，可从通知直接停止 VPN
-- TUN 文件描述符通过带随机名称的本地 Unix Socket 和 `SCM_RIGHTS` 传给 mihomo 子进程
-- AndroidCyaml 自身从 VPN 中排除，使 mihomo 的上游连接走底层网络并避免路由循环
-- 每次安装随机生成 256 位控制器密钥，控制器只监听回环地址
+- AndroidCyaml 自身从 VPN 中排除，使 HEV、mihomo 上游连接和回环 SOCKS 通道走底层网络，
+  避免路由循环
+- 每次安装随机生成 256 位控制器密钥；控制器与内部 SOCKS5 均只监听回环地址
+- 内部 SOCKS5 端口由控制器密钥派生，并使用该密钥进行用户名/密码认证，不占用或暴露用户
+  配置中的 `socks-port`、`mixed-port` 与认证设置
 - 上传 `config.yaml` 后按原字节复制为只读文件，再由正式核心解析并启动；应用不会改写
   文件选择器中的原文件或把运行参数写回 YAML
 - 新配置不能启动时自动恢复上一份配置
@@ -42,25 +53,44 @@ mihomo 的 gVisor 用户态网络栈，无需 root。
 3. 打开右上角二级菜单，点击“上传 config.yaml”，从系统文件选择器选择 YAML 配置。
 4. 导入成功后核心会自动重启，zashboard 随即重新连接。
 5. 打开 VPN 滑块，在 Android 系统对话框中允许建立 VPN。
-6. 界面显示“VPN 已连接”后，其他应用的 IPv4/IPv6 流量会进入 mihomo。
+6. 界面显示“VPN 已连接 · HEV SOCKS · IPv4/IPv6”后，其他应用的流量会通过 mihomo。
 
 首次启动没有用户配置时，应用使用仅含 `DIRECT` 规则的默认配置。导入文件大小上限为
 32 MiB。内置 GeoIP/GeoSite 只会在文件缺失时复制，不会覆盖已有数据库。未启动 VPN 时，
-mihomo 仍以本地 HTTP/SOCKS 代理模式运行。
+mihomo 仍以用户配置中的本地 HTTP/SOCKS 入站模式运行。
 
-VPN 的生命周期由原生滑块管理，因此 zashboard 中的 TUN 开关被禁用。上传的配置必须明确
-设置 `tun.enable: true`，应用不会替用户强制开启。启动 VPN 时只应用 Android 必需的内存兼容
-层：动态 `file-descriptor`、`stack: gvisor`、`gso: false`，以及关闭由 `VpnService.Builder`
-接管的 `auto-route`、`auto-redirect`、`auto-detect-interface`。节点、规则、策略组、虚拟地址、
-MTU、包过滤和 DNS 等其他解析结果保持不变；这些运行时设置不会写回 `config.yaml`。
+## Android VPN 与配置边界
+
+Android VPN 网络参数完全由 `VpnService.Builder` 和 HEV 运行时配置持有，不从上传的 YAML
+读取，也不会写回 YAML：
+
+| 项目 | 固定值 |
+| --- | --- |
+| MTU | `9000` |
+| IPv4 接口 | `198.18.0.1/30` |
+| IPv4 默认路由 | `0.0.0.0/0` |
+| IPv6 接口 | `fdfe:dcba:9876::1/126` |
+| IPv6 默认路由 | `::/0` |
+| Android DNS | `198.18.0.2` |
+| HEV 映射域名网段 | `100.64.0.0/10` |
+
+上传的配置不需要 `tun.enable: true`。AndroidCyaml 启动 mihomo 时关闭 mihomo 自身的 TUN
+监听，由 Android `VpnService` 和 HEV 单独负责接管系统流量。用户配置中的节点、代理组、规则、
+规则集、嗅探、DNS 策略及普通入站仍由 mihomo 解析；其中 `tun.mtu`、`tun.*-address`、
+`tun.dns-hijack`、`tun.auto-route` 等字段不会成为 Android VPN 接口参数。
+
+Android 把 DNS 查询发往固定映射地址 `198.18.0.2`。HEV 将域名映射为 SOCKS5 域名请求，
+实际解析和规则处理继续交给 mihomo，因此不需要把用户 DNS 地址复制进 `VpnService.Builder`。
 
 每应用路由由 `VpnService.Builder` 负责，当前固定为“除 AndroidCyaml 自身外的所有应用”。
-配置中的 `tun.include-package` 与 `tun.exclude-package` 会被忽略。此版本也明确禁用系统的
-“始终开启 VPN”选项；需要手动在应用中启动连接。
+配置中的 `tun.include-package` 与 `tun.exclude-package` 不控制 Android 应用接管范围。此版本也
+明确禁用系统的“始终开启 VPN”选项，需要手动在应用中启动连接。
 
-进程匹配依赖活动中的 `VpnService`：Android 10 起普通应用不能读取 `/proc/net`，因此仅本地
-代理模式无法可靠获得其他应用的进程。VPN 模式下，AndroidCyaml 使用系统连接所有者 API
-获取 UID，并借助 `QUERY_ALL_PACKAGES` 普通权限解析包名；这些结果只在设备本地传给 mihomo。
+### 进程规则限制
+
+HEV 的 SOCKS5 转发不会携带原始 Android UID/包名。进入 mihomo 的连接表现为内部
+`ANDROID-SOCKS` 入站，因此 `PROCESS-NAME`、`PROCESS-PATH` 等规则不能可靠区分最初发起
+流量的应用。域名、IP、端口、网络类型和其他 mihomo 规则仍正常工作。
 
 ## 构建
 
@@ -68,6 +98,7 @@ MTU、包过滤和 DNS 等其他解析结果保持不变；这些运行时设置
 
 - JDK 17
 - Android SDK Platform 36 与 Build Tools 36.0.0
+- Android NDK `29.0.14206865`
 - Go 1.26.5 或更高版本
 - Git、curl、unzip、sha256sum
 
@@ -86,16 +117,22 @@ sdk.dir=/absolute/path/to/Android/Sdk
 ./gradlew :app:assembleDebug :app:lintDebug
 ```
 
-Gradle 的 `preBuild` 会自动执行 `scripts/build_mihomo.sh`，从指定 fork 取回固定提交、应用
-[`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch)，并生成
-`app/src/main/jniLibs/arm64-v8a/libmihomo.so`。该文件是生成物，不提交到 Git。调试 APK 位于：
+Gradle 的 `preBuild` 会自动完成两项固定源码构建：
+
+1. `scripts/build_mihomo.sh` 从固定提交取回 mihomo、应用
+   [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch)，并生成
+   `app/src/main/jniLibs/arm64-v8a/libmihomo.so`。
+2. `scripts/build_hev_socks5_tunnel.sh` 从固定提交取回 HEV 及其递归子模块，用固定 NDK 构建
+   `app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so`。
+
+这些上游检出位于被忽略的 `.third_party/`，生成的 native 文件不会提交到 Git。调试 APK 位于：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-上游当前提交提前声明了尚未发布的 Go 1.27。使用 Go 1.26 时，构建脚本只在生成的临时检出中
-把 `go` 指令调整为 1.26。Go 1.27 可用后脚本会直接使用原声明。
+上游 mihomo 固定提交提前声明了尚未发布的 Go 1.27。使用 Go 1.26 时，构建脚本只在生成的
+临时检出中把 `go` 指令调整为 1.26。Go 1.27 可用后脚本会直接使用原声明。
 
 ## 实现说明
 
@@ -103,16 +140,15 @@ Android 10 起不允许从应用的可写数据目录执行文件。因此 mihom
 `libmihomo.so` 的名字进入 APK 的 `lib/arm64-v8a`，并通过旧式 native library packaging
 让系统安装器把它提取到只读、可执行的 `nativeLibraryDir`；应用直接从该目录启动核心。
 
+hev-socks5-tunnel 作为普通 JNI 共享库进入同一 ABI 目录。`VpnService` 建立非阻塞 TUN 后将
+其文件描述符直接传给 HEV JNI；停止 VPN 时先停止 HEV 工作线程，再关闭 TUN 文件描述符。
+
 zashboard 在首次启动或版本变化时从 APK assets 原子复制到应用私有目录，再由 mihomo
 自己的 HTTP 路由提供。WebView 禁止文件与 content 访问，只允许回环面板留在应用中；外部
 HTTP(S) 导航会交给系统浏览器。
 
-VPN 服务用 Android API 建立 TUN，然后通过抽象 Unix Socket 发送描述符。提交的 mihomo 补丁
-附加描述符并应用上述 Android 运行时兼容层，同时通过另一条随机命名的本地 Unix Socket 向
-`VpnService` 查询连接 UID/包名。未配置应用包过滤时，它会跳过普通应用无权读取的
-`/data/system/packages.xml`。停止 VPN 后，核心自动重启回本地代理模式。
-
 ## 上游与许可证
 
-AndroidCyaml 采用 GPL-3.0 许可证。mihomo 为 GPL-3.0；zashboard 为 MIT。固定版本、校验值
-和许可证副本见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+AndroidCyaml 采用 GPL-3.0 许可证。mihomo 为 GPL-3.0；hev-socks5-tunnel 及其 HEV 组件为
+MIT；lwIP 为 BSD-3-Clause；zashboard 为 MIT。固定版本、构建方式、校验值与许可证副本见
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。

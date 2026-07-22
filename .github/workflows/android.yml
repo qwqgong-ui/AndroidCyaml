@@ -29,13 +29,28 @@ jobs:
 
       - uses: android-actions/setup-android@v4
 
-      - name: Install Android 16 SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android 16 SDK and NDK
+        run: >-
+          sdkmanager
+          "platforms;android-36"
+          "build-tools;36.0.0"
+          "ndk;29.0.14206865"
 
       - uses: gradle/actions/setup-gradle@v6
 
       - name: Build and lint
-        run: ./gradlew :app:assembleDebug :app:lintDebug --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug :app:lintDebug --stacktrace 2>&1 | tee build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: AndroidCyaml-build-log
+          path: build.log
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@v7
         with:

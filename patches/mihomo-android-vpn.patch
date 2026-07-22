@@ -18,17 +18,38 @@ index ace3bc63..c45a4f0e 100644
 +var DefaultProcessNameResolver ProcessNameResolver
 +
 diff --git a/hub/hub.go b/hub/hub.go
-index 29ddd2e6..8181d732 100644
+index 29ddd2e6..7a947854 100644
 --- a/hub/hub.go
 +++ b/hub/hub.go
-@@ -3,0 +4 @@ import (
+@@ -3,0 +4,2 @@ import (
++	"hash/fnv"
++
+@@ -4,0 +7,1 @@ import (
 +	C "github.com/metacubex/mihomo/constant"
-@@ -53,0 +55,22 @@ func WithSecret(secret string) Option {
-+// WithAndroidVPN attaches the descriptor created by Android VpnService. gVisor
-+// supplies the userspace network stack for an unprivileged Android TUN, while
-+// Android owns the interface routes. All other TUN and DNS fields remain config-owned.
+@@ -6,0 +10,1 @@ import (
++	"github.com/metacubex/mihomo/listener"
+@@ -53,0 +57,49 @@ func WithSecret(secret string) Option {
++
++const (
++	androidSocksUser     = "androidcyaml"
++	androidSocksPortBase = 20000
++	androidSocksPortSpan = 20000
++)
++
++func deriveAndroidSocksPort(secret string) int {
++	hasher := fnv.New32a()
++	_, _ = hasher.Write([]byte(secret))
++	return androidSocksPortBase + int(
++		hasher.Sum32()%uint32(androidSocksPortSpan),
++	)
++}
++
++// WithAndroidVPN attaches the descriptor created by Android VpnService. This
++// legacy gVisor path remains available to the Android container runtime, but
++// AndroidCyaml's VpnService normally uses the HEV SOCKS bridge instead.
 +func WithAndroidVPN(fileDescriptor int) Option {
 +	return func(cfg *config.Config) {
++		listener.SetAndroidSocksConfig(0, "", "")
 +		cfg.General.Tun.FileDescriptor = fileDescriptor
 +		cfg.General.Tun.Stack = C.TunGvisor
 +		cfg.General.Tun.GSO = false
@@ -38,13 +59,143 @@ index 29ddd2e6..8181d732 100644
 +	}
 +}
 +
-+// WithAndroidTunDisabled prevents a user-supplied tun.enable from attempting
-+// to open /dev/net/tun when AndroidCyaml is running only as a local proxy.
++// WithAndroidTunDisabled keeps mihomo in local-proxy mode. AndroidCyaml's
++// VpnService gives its TUN descriptor to hev-socks5-tunnel, which forwards
++// packets into a private SOCKS5 listener without mutating config.yaml.
 +func WithAndroidTunDisabled() Option {
 +	return func(cfg *config.Config) {
 +		cfg.General.Tun.Enable = false
 +		cfg.General.Tun.FileDescriptor = 0
++		if cfg.Controller.Secret == "" {
++			listener.SetAndroidSocksConfig(0, "", "")
++			return
++		}
++		listener.SetAndroidSocksConfig(
++			deriveAndroidSocksPort(cfg.Controller.Secret),
++			androidSocksUser,
++			cfg.Controller.Secret,
++		)
 +	}
++}
++
+diff --git a/hub/executor/executor.go b/hub/executor/executor.go
+index d3b5eb81..15e58795 100644
+--- a/hub/executor/executor.go
++++ b/hub/executor/executor.go
+@@ -187,0 +188,1 @@ func updateListeners(general *config.General, listeners map[string]C.InboundLis
++	listener.ReCreateAndroidSocks(tunnel.Tunnel)
+diff --git a/listener/listener.go b/listener/listener.go
+index 3a0a8aad..fb0470ce 100644
+--- a/listener/listener.go
++++ b/listener/listener.go
+@@ -10,0 +11,1 @@ import (
++	"github.com/metacubex/mihomo/component/auth"
+@@ -11,0 +13,1 @@ import (
++	authStore "github.com/metacubex/mihomo/listener/auth"
+@@ -28,0 +31,7 @@ import (
++
++type androidSocksRuntimeConfig struct {
++	port     int
++	user     string
++	password string
++}
++
+@@ -34,0 +44,4 @@ var (
++	androidSocksListener       *socks.Listener
++	androidSocksUDPListener    *socks.UDPListener
++	androidSocksConfig         androidSocksRuntimeConfig
++	androidSocksActiveConfig   androidSocksRuntimeConfig
+@@ -51,0 +65,1 @@ var (
++	androidSocksMux sync.Mutex
+@@ -106,0 +121,90 @@ func SetBindAddress(host string) {
++
++// SetAndroidSocksConfig stores the private listener parameters supplied by the
++// Android runtime. They are deliberately kept outside parsed config state so a
++// controller reload cannot expose, move or disable the HEV bridge.
++func SetAndroidSocksConfig(port int, user string, password string) {
++	androidSocksMux.Lock()
++	androidSocksConfig = androidSocksRuntimeConfig{
++		port:     port,
++		user:     user,
++		password: password,
++	}
++	androidSocksMux.Unlock()
++}
++
++// ReCreateAndroidSocks maintains a loopback-only SOCKS5 listener for Android's
++// tun2socks bridge. It is independent from the user's socks-port, mixed-port,
++// authentication and LAN exposure settings.
++func ReCreateAndroidSocks(tunnel C.Tunnel) {
++	androidSocksMux.Lock()
++	defer androidSocksMux.Unlock()
++
++	runtimeConfig := androidSocksConfig
++	if runtimeConfig == androidSocksActiveConfig {
++		if runtimeConfig.port == 0 ||
++			(androidSocksListener != nil && androidSocksUDPListener != nil) {
++			return
++		}
++	}
++
++	if androidSocksListener != nil {
++		_ = androidSocksListener.Close()
++		androidSocksListener = nil
++	}
++	if androidSocksUDPListener != nil {
++		_ = androidSocksUDPListener.Close()
++		androidSocksUDPListener = nil
++	}
++	androidSocksActiveConfig = androidSocksRuntimeConfig{}
++
++	if runtimeConfig.port == 0 {
++		return
++	}
++	if runtimeConfig.user == "" || runtimeConfig.password == "" {
++		log.Errorln("Android SOCKS credentials are unavailable")
++		return
++	}
++
++	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(runtimeConfig.port))
++	authenticator := auth.NewAuthenticator([]auth.AuthUser{{
++		User: runtimeConfig.user,
++		Pass: runtimeConfig.password,
++	}})
++	serverConfig := LC.AuthServer{
++		Enable:    true,
++		Listen:    addr,
++		AuthStore: authStore.NewAuthStore(authenticator),
++	}
++	additions := []inbound.Addition{
++		inbound.WithInName("ANDROID-SOCKS"),
++		inbound.WithSpecialRules(""),
++	}
++
++	tcpListener, err := socks.NewWithConfig(
++		serverConfig,
++		inbound.NewListenConfig(),
++		tunnel,
++		additions...,
++	)
++	if err != nil {
++		log.Errorln("Start Android SOCKS TCP server error: %s", err.Error())
++		return
++	}
++	udpListener, err := socks.NewUDPWithConfig(
++		serverConfig,
++		inbound.NewListenConfig(),
++		tunnel,
++		additions...,
++	)
++	if err != nil {
++		_ = tcpListener.Close()
++		log.Errorln("Start Android SOCKS UDP server error: %s", err.Error())
++		return
++	}
++
++	androidSocksListener = tcpListener
++	androidSocksUDPListener = udpListener
++	androidSocksActiveConfig = runtimeConfig
++	log.Infoln("Android SOCKS proxy listening at: %s", addr)
 +}
 +
 diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_android.go
@@ -63,13 +214,13 @@ diff --git a/main.go b/main.go
 index b68e9d96..8ec6e152 100644
 --- a/main.go
 +++ b/main.go
-@@ -3,0 +4 @@ import (
+@@ -3,0 +4,1 @@ import (
 +	"bufio"
-@@ -9,0 +11 @@ import (
+@@ -9,0 +11,1 @@ import (
 +	"net/netip"
-@@ -16,0 +19 @@ import (
+@@ -16,0 +19,1 @@ import (
 +	"time"
-@@ -21,0 +25 @@ import (
+@@ -21,0 +25,1 @@ import (
 +	"github.com/metacubex/mihomo/component/process"
 @@ -49,0 +54,3 @@ var (
 +	androidVpnFdSocket            string

@@ -5,12 +5,14 @@ plugins {
 }
 
 val mihomoCommit = "a563ca2194edbf560b3857801cb3cceab13d7ff9"
+val hevSocks5TunnelCommit = "df11261f09ebafc37bac03f81029c9b75a4aa074"
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 
 android {
     namespace = "io.github.qwqgong.androidcyaml"
     compileSdk = 36
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "io.github.qwqgong.androidcyaml"
@@ -24,6 +26,11 @@ android {
         }
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
+        buildConfigField(
+            "String",
+            "HEV_SOCKS5_TUNNEL_COMMIT",
+            "\"$hevSocks5TunnelCommit\"",
+        )
         buildConfigField("String", "ZASHBOARD_VERSION", "\"$zashboardVersion\"")
         buildConfigField("String", "GEODATA_COMMIT", "\"$geodataCommit\"")
     }
@@ -72,6 +79,10 @@ val mihomoBinary = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libmihomo.so",
 )
 
+val hevSocks5TunnelLibrary = layout.projectDirectory.file(
+    "src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so",
+)
+
 val buildMihomo by tasks.registering(Exec::class) {
     group = "build setup"
     description = "Build the pinned mihomo core for Android arm64"
@@ -83,6 +94,16 @@ val buildMihomo by tasks.registering(Exec::class) {
     outputs.file(mihomoBinary)
 }
 
+val buildHevSocks5Tunnel by tasks.registering(Exec::class) {
+    group = "build setup"
+    description = "Build the pinned HEV SOCKS5 tunnel for Android arm64"
+    workingDir(rootProject.projectDir)
+    commandLine("bash", "scripts/build_hev_socks5_tunnel.sh")
+    inputs.file(rootProject.file("scripts/build_hev_socks5_tunnel.sh"))
+    inputs.property("hevSocks5TunnelCommit", hevSocks5TunnelCommit)
+    outputs.file(hevSocks5TunnelLibrary)
+}
+
 tasks.named("preBuild") {
-    dependsOn(buildMihomo)
+    dependsOn(buildMihomo, buildHevSocks5Tunnel)
 }
