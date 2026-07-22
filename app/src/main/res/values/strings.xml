@@ -27,6 +27,8 @@
     <string name="more_actions_symbol">⋮</string>
     <string name="vpn_switch">VPN</string>
     <string name="vpn_system_settings">VPN 系统设置</string>
+    <string name="auto_start_vpn">打开应用时自动开启 VPN</string>
+    <string name="auto_start_vpn_permission_denied">未授予 VPN 权限，已关闭自动开启</string>
     <string name="vpn_settings_failed">无法打开系统 VPN 设置</string>
     <string name="vpn_always_on_controlled">始终开启 VPN 由系统设置控制；请从“VPN 系统设置”中关闭</string>
     <string name="runtime_overrides">覆写面板</string>

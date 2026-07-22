@@ -44,13 +44,17 @@ public final class MainActivity extends Activity {
     private static final int PREPARE_VPN_REQUEST = 1002;
     private static final String UI_PREFERENCES = "androidcyaml_ui";
     private static final String HIDE_FROM_RECENTS_KEY = "hide_from_recents";
+    private static final String AUTO_START_VPN_KEY = "auto_start_vpn";
     private static final String DASHBOARD_STATE_KEY = "dashboard_state";
     private static final long BACKGROUND_UI_EXIT_DELAY_MILLIS = 750L;
+    private static final long FINISHED_TASK_EXIT_DELAY_MILLIS = 250L;
+    private static boolean anyUiStarted;
     private static final int MENU_IMPORT_CONFIG = 1;
     private static final int MENU_RESTART_CORE = 2;
     private static final int MENU_HIDE_FROM_RECENTS = 3;
     private static final int MENU_RUNTIME_OVERRIDES = 4;
     private static final int MENU_VPN_SETTINGS = 5;
+    private static final int MENU_AUTO_START_VPN = 6;
     private static final String[] PROCESS_MATCH_VALUES = {
             MihomoManager.PROCESS_MATCH_CONFIG,
             MihomoManager.PROCESS_MATCH_STRICT,
@@ -62,11 +66,18 @@ public final class MainActivity extends Activity {
     private boolean controlBound;
     private boolean activityStarted;
     private boolean externalResultPending;
+    private boolean autoStartVpnAttempted;
+    private boolean vpnPermissionRequestedByAutoStart;
     private final Handler lifecycleHandler = new Handler(Looper.getMainLooper());
     private final Runnable exitStoppedUiProcess = () -> {
-        if (!activityStarted && !externalResultPending) {
-            releaseDashboardWebView(false);
-            android.os.Process.killProcess(android.os.Process.myPid());
+        if (!anyUiStarted && !externalResultPending) {
+            finishAndRemoveTask();
+            lifecycleHandler.postDelayed(() -> {
+                if (!anyUiStarted) {
+                    releaseDashboardWebView(false);
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                }
+            }, FINISHED_TASK_EXIT_DELAY_MILLIS);
         }
     };
     private FrameLayout dashboardContainer;
@@ -184,6 +195,7 @@ public final class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         lifecycleHandler.removeCallbacks(exitStoppedUiProcess);
+        anyUiStarted = true;
         activityStarted = true;
         createDashboardWebView();
         bindControlService();
@@ -192,6 +204,7 @@ public final class MainActivity extends Activity {
     @Override
     protected void onStop() {
         activityStarted = false;
+        anyUiStarted = false;
         unbindControlService();
         releaseDashboardWebView(true);
         if (!isChangingConfigurations() && !externalResultPending) {
@@ -299,6 +312,7 @@ public final class MainActivity extends Activity {
         processMatchOverride = newProcessMatchOverride;
         onVpnStateChanged(newVpnState, vpnDetail, alwaysOn);
         onCoreStateChanged(coreState, coreDetail, dashboardUrl);
+        maybeAutoStartVpn();
     }
 
     private static <T> T enumValue(T[] values, int index, T fallback) {
@@ -312,7 +326,11 @@ public final class MainActivity extends Activity {
         popup.getMenu().add(0, MENU_RUNTIME_OVERRIDES, 2, R.string.runtime_overrides);
         popup.getMenu().add(0, MENU_VPN_SETTINGS, 3, R.string.vpn_system_settings);
         popup.getMenu()
-                .add(0, MENU_HIDE_FROM_RECENTS, 4, R.string.hide_from_recents)
+                .add(0, MENU_AUTO_START_VPN, 4, R.string.auto_start_vpn)
+                .setCheckable(true)
+                .setChecked(isAutoStartVpnEnabled());
+        popup.getMenu()
+                .add(0, MENU_HIDE_FROM_RECENTS, 5, R.string.hide_from_recents)
                 .setCheckable(true)
                 .setChecked(isTaskHiddenFromRecents());
         popup.setOnMenuItemClickListener(item -> {
@@ -334,6 +352,9 @@ public final class MainActivity extends Activity {
                 }
                 case MENU_RUNTIME_OVERRIDES -> showRuntimeOverrides();
                 case MENU_VPN_SETTINGS -> openVpnSettings();
+                case MENU_AUTO_START_VPN -> setAutoStartVpnEnabled(
+                        !isAutoStartVpnEnabled()
+                );
                 case MENU_HIDE_FROM_RECENTS -> setTaskHiddenPreference(
                         !isTaskHiddenFromRecents()
                 );
@@ -439,6 +460,32 @@ public final class MainActivity extends Activity {
         }
     }
 
+    private boolean isAutoStartVpnEnabled() {
+        return getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                .getBoolean(AUTO_START_VPN_KEY, false);
+    }
+
+    private void setAutoStartVpnEnabled(boolean enabled) {
+        getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                .edit()
+                .putBoolean(AUTO_START_VPN_KEY, enabled)
+                .apply();
+        autoStartVpnAttempted = false;
+        if (enabled) {
+            maybeAutoStartVpn();
+        }
+    }
+
+    private void maybeAutoStartVpn() {
+        if (autoStartVpnAttempted || !isAutoStartVpnEnabled()) {
+            return;
+        }
+        autoStartVpnAttempted = true;
+        if (!vpnAlwaysOn && vpnState == AndroidVpnService.State.STOPPED) {
+            requestVpnStart(true);
+        }
+    }
+
     private void onVpnSwitchChanged(boolean checked) {
         if (updatingVpnSwitch) {
             return;
@@ -460,19 +507,25 @@ public final class MainActivity extends Activity {
             return;
         }
 
+        requestVpnStart(false);
+    }
+
+    private void requestVpnStart(boolean fromAutoStart) {
         if (vpnState == AndroidVpnService.State.RUNNING) {
             return;
         }
-
         Intent permissionIntent = VpnService.prepare(this);
         if (permissionIntent == null) {
+            vpnPermissionRequestedByAutoStart = false;
             startVpnService();
             return;
         }
         try {
+            vpnPermissionRequestedByAutoStart = fromAutoStart;
             externalResultPending = true;
             startActivityForResult(permissionIntent, PREPARE_VPN_REQUEST);
         } catch (ActivityNotFoundException exception) {
+            vpnPermissionRequestedByAutoStart = false;
             externalResultPending = false;
             setVpnSwitchChecked(false);
             vpnSwitch.setEnabled(true);
@@ -620,12 +673,23 @@ public final class MainActivity extends Activity {
             externalResultPending = false;
         }
         if (requestCode == PREPARE_VPN_REQUEST) {
+            boolean requestedByAutoStart = vpnPermissionRequestedByAutoStart;
+            vpnPermissionRequestedByAutoStart = false;
             if (resultCode == RESULT_OK) {
                 startVpnService();
             } else {
+                if (requestedByAutoStart) {
+                    setAutoStartVpnEnabled(false);
+                }
                 setVpnSwitchChecked(false);
                 vpnSwitch.setEnabled(true);
-                Toast.makeText(this, R.string.vpn_permission_denied, Toast.LENGTH_LONG).show();
+                Toast.makeText(
+                        this,
+                        requestedByAutoStart
+                                ? R.string.auto_start_vpn_permission_denied
+                                : R.string.vpn_permission_denied,
+                        Toast.LENGTH_LONG
+                ).show();
             }
             return;
         }
