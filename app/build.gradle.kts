@@ -6,6 +6,7 @@ plugins {
 
 val mihomoCommit = "a563ca2194edbf560b3857801cb3cceab13d7ff9"
 val zashboardVersion = "v3.15.0"
+val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 
 android {
     namespace = "io.github.qwqgong.androidcyaml"
@@ -15,8 +16,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 5
+        versionName = "0.3.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -24,6 +25,7 @@ android {
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
         buildConfigField("String", "ZASHBOARD_VERSION", "\"$zashboardVersion\"")
+        buildConfigField("String", "GEODATA_COMMIT", "\"$geodataCommit\"")
     }
 
     buildFeatures {

@@ -5,4 +5,5 @@ gradlew text eol=lf
 *.ico binary
 *.ttf binary
 *.woff2 binary
+*.dat binary
 app/src/main/assets/zashboard/** binary

@@ -12,7 +12,6 @@
     <string name="external_link_failed">无法打开外部链接</string>
     <string name="config_validating">正在导入并启动 config.yaml…</string>
     <string name="dashboard_load_failed">面板加载失败：%1$s</string>
-    <string name="start_vpn">启动 VPN</string>
     <string name="stop_vpn">停止 VPN</string>
     <string name="vpn_stopped">VPN 未连接</string>
     <string name="vpn_permission_denied">未授予 VPN 权限</string>
@@ -21,4 +20,20 @@
     <string name="vpn_notification_title">AndroidCyaml VPN</string>
     <string name="vpn_notification_channel">VPN 连接</string>
     <string name="vpn_notification_channel_description">显示 AndroidCyaml 的活动 VPN 连接</string>
+    <string name="hide_from_recents">隐藏后台标签页</string>
+    <string name="more_actions">更多操作</string>
+    <string name="more_actions_symbol">⋮</string>
+    <string name="vpn_switch">VPN</string>
+    <string name="runtime_overrides">覆写面板</string>
+    <string name="process_matching">进程匹配</string>
+    <string name="process_override_applied">进程匹配已切换为“%1$s”；仅运行时生效</string>
+    <string name="process_override_failed">进程匹配覆写失败：%1$s</string>
+    <string name="cancel">取消</string>
+    <string name="apply">应用</string>
+    <string-array name="process_match_labels">
+        <item>跟随 config.yaml（不覆写）</item>
+        <item>严格（strict）</item>
+        <item>总是（always）</item>
+        <item>关闭（off）</item>
+    </string-array>
 </resources>

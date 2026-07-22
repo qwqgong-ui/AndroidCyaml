@@ -2,6 +2,8 @@ package io.github.qwqgong.androidcyaml;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
@@ -21,7 +23,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.widget.PopupMenu;
 import android.widget.ProgressBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -31,15 +35,27 @@ public final class MainActivity extends Activity implements
         AndroidVpnService.Listener {
     private static final int PICK_CONFIG_REQUEST = 1001;
     private static final int PREPARE_VPN_REQUEST = 1002;
+    private static final String UI_PREFERENCES = "androidcyaml_ui";
+    private static final String HIDE_FROM_RECENTS_KEY = "hide_from_recents";
+    private static final int MENU_IMPORT_CONFIG = 1;
+    private static final int MENU_RESTART_CORE = 2;
+    private static final int MENU_HIDE_FROM_RECENTS = 3;
+    private static final int MENU_RUNTIME_OVERRIDES = 4;
+    private static final String[] PROCESS_MATCH_VALUES = {
+            MihomoManager.PROCESS_MATCH_CONFIG,
+            MihomoManager.PROCESS_MATCH_STRICT,
+            MihomoManager.PROCESS_MATCH_ALWAYS,
+            MihomoManager.PROCESS_MATCH_OFF,
+    };
 
     private MihomoManager manager;
     private WebView webView;
     private ProgressBar progress;
     private TextView status;
-    private Button importButton;
-    private Button restartButton;
-    private Button vpnButton;
+    private Button moreActionsButton;
+    private Switch vpnSwitch;
     private TextView vpnStatus;
+    private boolean updatingVpnSwitch;
     private AndroidVpnService.State vpnState = AndroidVpnService.State.STOPPED;
     private String loadedDashboardUrl;
 
@@ -53,19 +69,17 @@ public final class MainActivity extends Activity implements
         webView = findViewById(R.id.dashboard);
         progress = findViewById(R.id.core_progress);
         status = findViewById(R.id.core_status);
-        importButton = findViewById(R.id.import_config);
-        restartButton = findViewById(R.id.restart_core);
-        vpnButton = findViewById(R.id.vpn_toggle);
+        moreActionsButton = findViewById(R.id.more_actions);
+        vpnSwitch = findViewById(R.id.vpn_toggle);
         vpnStatus = findViewById(R.id.vpn_status);
         manager = MihomoManager.getInstance(this);
 
         configureWebView(savedInstanceState);
-        importButton.setOnClickListener(ignored -> chooseConfig());
-        restartButton.setOnClickListener(ignored -> {
-            loadedDashboardUrl = null;
-            manager.restart();
-        });
-        vpnButton.setOnClickListener(ignored -> toggleVpn());
+        moreActionsButton.setOnClickListener(this::showActionsMenu);
+        vpnSwitch.setOnCheckedChangeListener(
+                (button, checked) -> onVpnSwitchChanged(checked)
+        );
+        applySavedRecentsVisibility();
 
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
@@ -83,13 +97,119 @@ public final class MainActivity extends Activity implements
         manager.ensureStarted();
     }
 
-    private void toggleVpn() {
-        if (vpnState == AndroidVpnService.State.RUNNING) {
-            vpnButton.setEnabled(false);
+    private void showActionsMenu(View anchor) {
+        PopupMenu popup = new PopupMenu(this, anchor);
+        popup.getMenu().add(0, MENU_IMPORT_CONFIG, 0, R.string.upload_config);
+        popup.getMenu().add(0, MENU_RESTART_CORE, 1, R.string.restart_core);
+        popup.getMenu().add(0, MENU_RUNTIME_OVERRIDES, 2, R.string.runtime_overrides);
+        popup.getMenu()
+                .add(0, MENU_HIDE_FROM_RECENTS, 3, R.string.hide_from_recents)
+                .setCheckable(true)
+                .setChecked(isTaskHiddenFromRecents());
+        popup.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case MENU_IMPORT_CONFIG -> chooseConfig();
+                case MENU_RESTART_CORE -> {
+                    loadedDashboardUrl = null;
+                    manager.restart();
+                }
+                case MENU_RUNTIME_OVERRIDES -> showRuntimeOverrides();
+                case MENU_HIDE_FROM_RECENTS -> setTaskHiddenPreference(
+                        !isTaskHiddenFromRecents()
+                );
+                default -> {
+                    return false;
+                }
+            }
+            return true;
+        });
+        popup.show();
+    }
+
+    private void showRuntimeOverrides() {
+        String current = manager.getProcessMatchOverride();
+        int checked = 0;
+        for (int index = 0; index < PROCESS_MATCH_VALUES.length; index++) {
+            if (PROCESS_MATCH_VALUES[index].equals(current)) {
+                checked = index;
+                break;
+            }
+        }
+        int[] selected = {checked};
+        String[] labels = getResources().getStringArray(R.array.process_match_labels);
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.process_matching)
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> selected[0] = which)
+                .setNegativeButton(R.string.cancel, null)
+                .setPositiveButton(R.string.apply, (dialog, which) -> {
+                    int selection = selected[0];
+                    String mode = PROCESS_MATCH_VALUES[selection];
+                    if (MihomoManager.PROCESS_MATCH_CONFIG.equals(mode)) {
+                        loadedDashboardUrl = null;
+                    }
+                    manager.setProcessMatchOverride(mode, (success, detail) -> {
+                        if (isFinishing() || isDestroyed()) {
+                            return;
+                        }
+                        Toast.makeText(
+                                this,
+                                success
+                                        ? getString(
+                                                R.string.process_override_applied,
+                                                labels[selection]
+                                        )
+                                        : getString(R.string.process_override_failed, detail),
+                                Toast.LENGTH_LONG
+                        ).show();
+                    });
+                })
+                .show();
+    }
+
+    private void applySavedRecentsVisibility() {
+        setTaskHiddenFromRecents(isTaskHiddenFromRecents());
+    }
+
+    private boolean isTaskHiddenFromRecents() {
+        return getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                .getBoolean(HIDE_FROM_RECENTS_KEY, false);
+    }
+
+    private void setTaskHiddenPreference(boolean hidden) {
+        getSharedPreferences(UI_PREFERENCES, MODE_PRIVATE)
+                .edit()
+                .putBoolean(HIDE_FROM_RECENTS_KEY, hidden)
+                .apply();
+        setTaskHiddenFromRecents(hidden);
+    }
+
+    private void setTaskHiddenFromRecents(boolean hidden) {
+        ActivityManager activityManager = getSystemService(ActivityManager.class);
+        for (ActivityManager.AppTask appTask : activityManager.getAppTasks()) {
+            if (appTask.getTaskInfo().taskId == getTaskId()) {
+                appTask.setExcludeFromRecents(hidden);
+                return;
+            }
+        }
+    }
+
+    private void onVpnSwitchChanged(boolean checked) {
+        if (updatingVpnSwitch) {
+            return;
+        }
+        if (!checked) {
+            if (vpnState != AndroidVpnService.State.RUNNING) {
+                return;
+            }
+            vpnSwitch.setEnabled(false);
             startService(
                     new Intent(this, AndroidVpnService.class)
                             .setAction(AndroidVpnService.ACTION_STOP)
             );
+            return;
+        }
+
+        if (vpnState == AndroidVpnService.State.RUNNING) {
             return;
         }
 
@@ -101,26 +221,35 @@ public final class MainActivity extends Activity implements
         try {
             startActivityForResult(permissionIntent, PREPARE_VPN_REQUEST);
         } catch (ActivityNotFoundException exception) {
+            setVpnSwitchChecked(false);
+            vpnSwitch.setEnabled(true);
             Toast.makeText(this, R.string.vpn_permission_failed, Toast.LENGTH_LONG).show();
         }
     }
 
     private void startVpnService() {
         loadedDashboardUrl = null;
-        vpnButton.setEnabled(false);
+        vpnSwitch.setEnabled(false);
         try {
             startForegroundService(
                     new Intent(this, AndroidVpnService.class)
                             .setAction(AndroidVpnService.ACTION_START)
             );
         } catch (RuntimeException exception) {
-            vpnButton.setEnabled(true);
+            setVpnSwitchChecked(false);
+            vpnSwitch.setEnabled(true);
             Toast.makeText(
                     this,
                     getString(R.string.vpn_start_failed, exception.getMessage()),
                     Toast.LENGTH_LONG
             ).show();
         }
+    }
+
+    private void setVpnSwitchChecked(boolean checked) {
+        updatingVpnSwitch = true;
+        vpnSwitch.setChecked(checked);
+        updatingVpnSwitch = false;
     }
 
     private void configureEdgeToEdge() {
@@ -190,6 +319,8 @@ public final class MainActivity extends Activity implements
             if (resultCode == RESULT_OK) {
                 startVpnService();
             } else {
+                setVpnSwitchChecked(false);
+                vpnSwitch.setEnabled(true);
                 Toast.makeText(this, R.string.vpn_permission_denied, Toast.LENGTH_LONG).show();
             }
             return;
@@ -202,14 +333,12 @@ public final class MainActivity extends Activity implements
             return;
         }
 
-        importButton.setEnabled(false);
-        restartButton.setEnabled(false);
+        moreActionsButton.setEnabled(false);
         loadedDashboardUrl = null;
         progress.setVisibility(View.VISIBLE);
         status.setText(R.string.config_validating);
         manager.importConfig(uri, (success, detail) -> {
-            importButton.setEnabled(true);
-            restartButton.setEnabled(true);
+            moreActionsButton.setEnabled(true);
             if (success) {
                 Toast.makeText(this, R.string.config_imported, Toast.LENGTH_LONG).show();
             } else {
@@ -232,22 +361,22 @@ public final class MainActivity extends Activity implements
         switch (state) {
             case STARTING -> {
                 vpnStatus.setTextColor(getColor(R.color.on_surface));
-                vpnButton.setEnabled(false);
+                vpnSwitch.setEnabled(false);
             }
             case RUNNING -> {
                 vpnStatus.setTextColor(getColor(R.color.status_ok));
-                vpnButton.setText(R.string.stop_vpn);
-                vpnButton.setEnabled(true);
+                setVpnSwitchChecked(true);
+                vpnSwitch.setEnabled(true);
             }
             case FAILED -> {
                 vpnStatus.setTextColor(getColor(R.color.status_error));
-                vpnButton.setText(R.string.start_vpn);
-                vpnButton.setEnabled(true);
+                setVpnSwitchChecked(false);
+                vpnSwitch.setEnabled(true);
             }
             case STOPPED -> {
                 vpnStatus.setTextColor(getColor(R.color.on_surface));
-                vpnButton.setText(R.string.start_vpn);
-                vpnButton.setEnabled(true);
+                setVpnSwitchChecked(false);
+                vpnSwitch.setEnabled(true);
             }
         }
     }
@@ -262,13 +391,13 @@ public final class MainActivity extends Activity implements
                 progress.setVisibility(View.VISIBLE);
                 status.setText(detail.isBlank() ? getString(R.string.core_starting) : detail);
                 status.setTextColor(getColor(R.color.on_surface));
-                restartButton.setEnabled(false);
+                moreActionsButton.setEnabled(false);
             }
             case RUNNING -> {
                 progress.setVisibility(View.GONE);
                 status.setText(detail.isBlank() ? getString(R.string.core_running) : detail);
                 status.setTextColor(getColor(R.color.status_ok));
-                restartButton.setEnabled(true);
+                moreActionsButton.setEnabled(true);
                 String dashboardUrl = manager.getDashboardUrl();
                 if (!dashboardUrl.equals(loadedDashboardUrl)) {
                     loadedDashboardUrl = dashboardUrl;
@@ -279,7 +408,7 @@ public final class MainActivity extends Activity implements
                 progress.setVisibility(View.GONE);
                 status.setText(detail);
                 status.setTextColor(getColor(R.color.status_error));
-                restartButton.setEnabled(true);
+                moreActionsButton.setEnabled(true);
                 if (TextUtils.isEmpty(webView.getUrl())) {
                     showErrorPage(detail);
                 }
@@ -288,7 +417,7 @@ public final class MainActivity extends Activity implements
                 progress.setVisibility(View.GONE);
                 status.setText(R.string.core_stopped);
                 status.setTextColor(getColor(R.color.on_surface));
-                restartButton.setEnabled(true);
+                moreActionsButton.setEnabled(true);
             }
         }
     }
@@ -299,7 +428,7 @@ public final class MainActivity extends Activity implements
                 + "<style>body{font-family:sans-serif;padding:28px;background:#f7f8fc;color:#171a21}"
                 + "h2{color:#b3261e}code{word-break:break-word}</style>"
                 + "<h2>mihomo 启动失败</h2><p><code>" + safeDetail + "</code></p>"
-                + "<p>可修正 config.yaml 后重新上传，或点击“重启”。</p>";
+                + "<p>可修正 config.yaml 后重新上传，或在更多操作中重启 mihomo。</p>";
         webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
     }
 

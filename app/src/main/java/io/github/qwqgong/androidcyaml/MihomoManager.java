@@ -3,7 +3,9 @@ package io.github.qwqgong.androidcyaml;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.AssetManager;
+import android.net.ConnectivityManager;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.net.Uri;
@@ -24,10 +26,12 @@ import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -36,6 +40,7 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -49,6 +54,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 public final class MihomoManager {
+    public static final String PROCESS_MATCH_CONFIG = "config";
+    public static final String PROCESS_MATCH_STRICT = "strict";
+    public static final String PROCESS_MATCH_ALWAYS = "always";
+    public static final String PROCESS_MATCH_OFF = "off";
+
     public enum State {
         STOPPED,
         STARTING,
@@ -71,9 +81,15 @@ public final class MihomoManager {
     private static final String TAG = "AndroidCyaml/Mihomo";
     private static final String PREFERENCES = "androidcyaml";
     private static final String SECRET_KEY = "controller_secret";
+    private static final String PROCESS_MATCH_OVERRIDE_KEY = "process_match_override";
     private static final String HOST = "127.0.0.1";
+    // A stable WebView origin lets Zashboard keep localStorage/IndexedDB data
+    // across core and VPN restarts. Fall back to an ephemeral port only when a
+    // different process already owns this loopback port.
+    private static final int PREFERRED_CONTROLLER_PORT = 17890;
     private static final int MAX_CONFIG_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LOG_LINES = 80;
+    private static final int MAX_PROCESS_QUERY_BYTES = 512;
 
     private static volatile MihomoManager instance;
 
@@ -90,8 +106,10 @@ public final class MihomoManager {
     private volatile State state = State.STOPPED;
     private volatile String detail = "";
     private volatile int controllerPort;
+    private volatile String runtimeOverrideError = "";
     private ParcelFileDescriptor vpnTunnel;
     private Process process;
+    private ProcessLookupBridge processLookupBridge;
 
     private MihomoManager(Context context) {
         this.context = context.getApplicationContext();
@@ -177,6 +195,16 @@ public final class MihomoManager {
         return port > 0 && port == controllerPort;
     }
 
+    public String getProcessMatchOverride() {
+        String mode = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+                .getString(PROCESS_MATCH_OVERRIDE_KEY, PROCESS_MATCH_CONFIG);
+        return isValidProcessMatchMode(mode) ? mode : PROCESS_MATCH_CONFIG;
+    }
+
+    public void setProcessMatchOverride(String mode, OperationCallback callback) {
+        controlExecutor.execute(() -> setProcessMatchOverrideInternal(mode, callback));
+    }
+
     public void importConfig(Uri source, ImportCallback callback) {
         controlExecutor.execute(() -> importConfigInternal(source, callback));
     }
@@ -189,6 +217,7 @@ public final class MihomoManager {
         Process candidate = null;
         LocalServerSocket descriptorServer = null;
         Future<Void> descriptorTransfer = null;
+        ProcessLookupBridge candidateProcessLookupBridge = null;
         try {
             RuntimeFiles files = ensureRuntimeFiles();
             terminateStaleCores();
@@ -223,6 +252,11 @@ public final class MihomoManager {
                 );
                 command.add("-android-vpn-fd-socket");
                 command.add("@" + socketName);
+
+                candidateProcessLookupBridge = new ProcessLookupBridge();
+                candidateProcessLookupBridge.start();
+                command.add("-android-process-socket");
+                command.add("@" + candidateProcessLookupBridge.socketName);
             }
 
             ProcessBuilder builder = new ProcessBuilder(command)
@@ -233,6 +267,7 @@ public final class MihomoManager {
             candidate = builder.start();
             synchronized (processLock) {
                 process = candidate;
+                processLookupBridge = candidateProcessLookupBridge;
             }
             readCoreLogs(candidate);
             watchForExit(candidate);
@@ -249,6 +284,8 @@ public final class MihomoManager {
                         ? "mihomo 控制器未在 90 秒内就绪"
                         : "mihomo 启动失败：" + logs);
             }
+
+            applyPersistedProcessMatchOverride();
 
             publish(
                     State.RUNNING,
@@ -270,12 +307,127 @@ public final class MihomoManager {
                     if (process == candidate) {
                         process = null;
                     }
+                    if (processLookupBridge == candidateProcessLookupBridge) {
+                        processLookupBridge = null;
+                    }
                 }
                 stopSpecificProcess(candidate);
             }
+            closeQuietly(candidateProcessLookupBridge);
             Log.e(TAG, "Unable to start mihomo", exception);
             publish(State.FAILED, usefulMessage(exception));
             return false;
+        }
+    }
+
+    private void setProcessMatchOverrideInternal(String mode, OperationCallback callback) {
+        if (!isValidProcessMatchMode(mode)) {
+            postOperationResult(callback, false, "不支持的进程匹配模式");
+            return;
+        }
+
+        SharedPreferences preferences = context.getSharedPreferences(
+                PREFERENCES,
+                Context.MODE_PRIVATE
+        );
+        String previous = getProcessMatchOverride();
+        if (PROCESS_MATCH_CONFIG.equals(mode)) {
+            preferences.edit().remove(PROCESS_MATCH_OVERRIDE_KEY).apply();
+            stopInternal(false);
+            boolean success = startInternal();
+            if (!success) {
+                restoreProcessMatchPreference(preferences, previous);
+                stopInternal(false);
+                startInternal();
+                postOperationResult(callback, false, detail);
+                return;
+            }
+            postOperationResult(callback, true, "已恢复 config.yaml 中的进程匹配设置");
+            return;
+        }
+
+        preferences.edit().putString(PROCESS_MATCH_OVERRIDE_KEY, mode).apply();
+        try {
+            if (isProcessAlive()) {
+                patchProcessMatchOverride(mode);
+                runtimeOverrideError = "";
+            } else if (!startInternal() || !runtimeOverrideError.isEmpty()) {
+                throw new IOException(
+                        runtimeOverrideError.isEmpty() ? detail : runtimeOverrideError
+                );
+            }
+            postOperationResult(callback, true, "进程匹配已覆写为 " + mode);
+        } catch (IOException exception) {
+            restoreProcessMatchPreference(preferences, previous);
+            if (isProcessAlive() && !PROCESS_MATCH_CONFIG.equals(previous)) {
+                try {
+                    patchProcessMatchOverride(previous);
+                } catch (IOException restoreException) {
+                    Log.w(TAG, "Unable to restore process matching override", restoreException);
+                }
+            }
+            postOperationResult(callback, false, usefulMessage(exception));
+        }
+    }
+
+    private void applyPersistedProcessMatchOverride() {
+        runtimeOverrideError = "";
+        String mode = getProcessMatchOverride();
+        if (PROCESS_MATCH_CONFIG.equals(mode)) {
+            return;
+        }
+        try {
+            patchProcessMatchOverride(mode);
+        } catch (IOException exception) {
+            runtimeOverrideError = usefulMessage(exception);
+            Log.w(TAG, "Unable to apply process matching override", exception);
+        }
+    }
+
+    private void patchProcessMatchOverride(String mode) throws IOException {
+        byte[] body = ("{\"find-process-mode\":\"" + mode + "\"}")
+                .getBytes(StandardCharsets.UTF_8);
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(HOST, controllerPort), 1_000);
+            socket.setSoTimeout(2_000);
+            String headers = "PATCH /configs HTTP/1.1\r\n"
+                    + "Host: " + HOST + ":" + controllerPort + "\r\n"
+                    + "Authorization: Bearer " + controllerSecret + "\r\n"
+                    + "Content-Type: application/json\r\n"
+                    + "Content-Length: " + body.length + "\r\n"
+                    + "Connection: close\r\n\r\n";
+            socket.getOutputStream().write(headers.getBytes(StandardCharsets.UTF_8));
+            socket.getOutputStream().write(body);
+            socket.getOutputStream().flush();
+
+            try (BufferedReader response = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
+                String statusLine = response.readLine();
+                if (statusLine == null
+                        || (!statusLine.contains(" 200 ") && !statusLine.contains(" 204 "))) {
+                    throw new IOException(
+                            statusLine == null ? "mihomo 控制器未响应" : statusLine
+                    );
+                }
+            }
+        }
+    }
+
+    private static boolean isValidProcessMatchMode(String mode) {
+        return PROCESS_MATCH_CONFIG.equals(mode)
+                || PROCESS_MATCH_STRICT.equals(mode)
+                || PROCESS_MATCH_ALWAYS.equals(mode)
+                || PROCESS_MATCH_OFF.equals(mode);
+    }
+
+    private static void restoreProcessMatchPreference(
+            SharedPreferences preferences,
+            String previous
+    ) {
+        if (PROCESS_MATCH_CONFIG.equals(previous)) {
+            preferences.edit().remove(PROCESS_MATCH_OVERRIDE_KEY).apply();
+        } else {
+            preferences.edit().putString(PROCESS_MATCH_OVERRIDE_KEY, previous).apply();
         }
     }
 
@@ -313,6 +465,105 @@ public final class MihomoManager {
                     cause
             );
         }
+    }
+
+    private void handleProcessLookup(LocalSocket connection) throws IOException {
+        connection.setSoTimeout(1_000);
+        String request = readBoundedLine(connection.getInputStream(), MAX_PROCESS_QUERY_BYTES);
+        String response = resolveProcessOwner(request);
+        try (OutputStream output = connection.getOutputStream()) {
+            output.write(response.getBytes(StandardCharsets.UTF_8));
+            output.flush();
+        }
+    }
+
+    private String resolveProcessOwner(String request) {
+        if (request == null) {
+            return "-1\t\n";
+        }
+        try {
+            String[] fields = request.split("\t", -1);
+            if (fields.length != 5) {
+                return "-1\t\n";
+            }
+
+            int protocol;
+            if (fields[0].startsWith("tcp")) {
+                protocol = OsConstants.IPPROTO_TCP;
+            } else if (fields[0].startsWith("udp")) {
+                protocol = OsConstants.IPPROTO_UDP;
+            } else {
+                return "-1\t\n";
+            }
+
+            InetSocketAddress local = parseProcessEndpoint(fields[1], fields[2]);
+            InetSocketAddress remote = parseProcessEndpoint(fields[3], fields[4]);
+            ConnectivityManager connectivityManager = context.getSystemService(
+                    ConnectivityManager.class
+            );
+            if (connectivityManager == null) {
+                return "-1\t\n";
+            }
+            int uid = connectivityManager.getConnectionOwnerUid(protocol, local, remote);
+            if (uid == android.os.Process.INVALID_UID) {
+                return "-1\t\n";
+            }
+
+            PackageManager packageManager = context.getPackageManager();
+            String[] packages = packageManager.getPackagesForUid(uid);
+            String packageName = null;
+            if (packages != null && packages.length > 0) {
+                Arrays.sort(packages);
+                packageName = packages[0];
+            }
+            if (packageName == null || packageName.isBlank()) {
+                packageName = packageManager.getNameForUid(uid);
+            }
+            if (packageName == null || packageName.isBlank()) {
+                packageName = "uid:" + uid;
+            }
+            return uid + "\t" + packageName + "\n";
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Android connection-owner lookup failed", exception);
+            return "-1\t\n";
+        }
+    }
+
+    private static InetSocketAddress parseProcessEndpoint(
+            String address,
+            String portText
+    ) {
+        if (address.isEmpty() || !address.matches("[0-9A-Fa-f:.]+")) {
+            throw new IllegalArgumentException("Invalid numeric IP address");
+        }
+        int port = Integer.parseInt(portText);
+        if (port < 0 || port > 65535) {
+            throw new IllegalArgumentException("Invalid port");
+        }
+        try {
+            return new InetSocketAddress(InetAddress.getByName(address), port);
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("Invalid numeric IP address", exception);
+        }
+    }
+
+    private static String readBoundedLine(InputStream input, int maximumBytes) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        while (output.size() <= maximumBytes) {
+            int value = input.read();
+            if (value == -1) {
+                return output.size() == 0
+                        ? null
+                        : output.toString(StandardCharsets.UTF_8);
+            }
+            if (value == '\n') {
+                return output.toString(StandardCharsets.UTF_8);
+            }
+            if (value != '\r') {
+                output.write(value);
+            }
+        }
+        throw new IOException("进程查询请求过长");
     }
 
     private void importConfigInternal(Uri source, ImportCallback callback) {
@@ -405,6 +656,13 @@ public final class MihomoManager {
         if (!config.isFile()) {
             copyAssetFile("default-config.yaml", config);
         }
+        makeConfigReadOnly(config);
+
+        // Ship the large rule databases with the APK so a first import never
+        // depends on GitHub being reachable from the phone. Existing user or
+        // previously downloaded databases are deliberately preserved.
+        copyAssetFileIfMissing("geodata/GeoIP.dat", new File(home, "GeoIP.dat"));
+        copyAssetFileIfMissing("geodata/GeoSite.dat", new File(home, "GeoSite.dat"));
 
         File ui = new File(home, "ui");
         File marker = new File(ui, ".androidcyaml-version");
@@ -414,6 +672,23 @@ public final class MihomoManager {
             installDashboard(home, ui);
         }
         return new RuntimeFiles(home, config, ui);
+    }
+
+    private void copyAssetFileIfMissing(String assetPath, File destination) throws IOException {
+        if (!destination.isFile()) {
+            copyAssetFile(assetPath, destination);
+        }
+    }
+
+    private void makeConfigReadOnly(File config) throws IOException {
+        try {
+            // The selected SAF document is only read. Its byte-for-byte copy is
+            // owner-readable so neither mihomo nor its dashboard can write
+            // runtime overrides back into config.yaml.
+            Os.chmod(config.getAbsolutePath(), OsConstants.S_IRUSR);
+        } catch (ErrnoException exception) {
+            throw new IOException("无法将 config.yaml 设为只读", exception);
+        }
     }
 
     private void installDashboard(File home, File ui) throws IOException {
@@ -509,6 +784,24 @@ public final class MihomoManager {
 
     private int findAvailableControllerPort() throws IOException {
         try (ServerSocket reservation = new ServerSocket()) {
+            // mihomo restarts while WebView connections to the previous
+            // listener can still be in TIME_WAIT. SO_REUSEADDR permits the
+            // same loopback origin to be reclaimed without allowing a second
+            // live listener to take the port.
+            reservation.setReuseAddress(true);
+            reservation.bind(
+                    new InetSocketAddress(InetAddress.getByName(HOST), PREFERRED_CONTROLLER_PORT),
+                    1
+            );
+            return PREFERRED_CONTROLLER_PORT;
+        } catch (IOException exception) {
+            Log.w(
+                    TAG,
+                    "Preferred controller port is unavailable; Zashboard uses a temporary origin",
+                    exception
+            );
+        }
+        try (ServerSocket reservation = new ServerSocket()) {
             reservation.setReuseAddress(false);
             reservation.bind(
                     new InetSocketAddress(InetAddress.getByName(HOST), 0),
@@ -544,12 +837,16 @@ public final class MihomoManager {
         ioExecutor.execute(() -> {
             try {
                 int exitCode = source.waitFor();
+                ProcessLookupBridge bridge;
                 synchronized (processLock) {
                     if (process != source) {
                         return;
                     }
                     process = null;
+                    bridge = processLookupBridge;
+                    processLookupBridge = null;
                 }
+                closeQuietly(bridge);
                 String logs = recentLogSummary();
                 publish(
                         State.FAILED,
@@ -564,10 +861,14 @@ public final class MihomoManager {
 
     private void stopInternal(boolean publishStopped) {
         Process current;
+        ProcessLookupBridge bridge;
         synchronized (processLock) {
             current = process;
             process = null;
+            bridge = processLookupBridge;
+            processLookupBridge = null;
         }
+        closeQuietly(bridge);
         if (current != null) {
             stopSpecificProcess(current);
         }
@@ -778,6 +1079,49 @@ public final class MihomoManager {
             socket.close();
         } catch (IOException ignored) {
             // The socket may already have been closed by the descriptor sender.
+        }
+    }
+
+    private static void closeQuietly(ProcessLookupBridge bridge) {
+        if (bridge != null) {
+            bridge.close();
+        }
+    }
+
+    private final class ProcessLookupBridge implements AutoCloseable {
+        final String socketName = "androidcyaml-process-" + UUID.randomUUID();
+        final LocalServerSocket server;
+        volatile boolean closed;
+        Future<?> serverTask;
+
+        ProcessLookupBridge() throws IOException {
+            server = new LocalServerSocket(socketName);
+        }
+
+        void start() {
+            serverTask = ioExecutor.submit(this::serve);
+        }
+
+        private void serve() {
+            while (!closed) {
+                try (LocalSocket connection = server.accept()) {
+                    handleProcessLookup(connection);
+                } catch (IOException exception) {
+                    if (!closed) {
+                        Log.w(TAG, "Android process lookup bridge failed", exception);
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            closed = true;
+            closeQuietly(server);
+            Future<?> task = serverTask;
+            if (task != null) {
+                task.cancel(true);
+            }
         }
     }
 

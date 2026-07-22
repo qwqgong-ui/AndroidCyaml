@@ -11,9 +11,10 @@ AndroidCyaml packages and launches the following upstream works.
 
 The Android arm64 executable is built by [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh).
 The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch) to add the
-Android VpnService file-descriptor transport and unprivileged TUN defaults. Until Go 1.27 is
-published, the script also changes the generated checkout's `go` directive from 1.27 to 1.26.
-The exact corresponding source is the pinned upstream commit plus the committed patch.
+Android VpnService file-descriptor transport, the system connection-owner lookup bridge, and
+unprivileged TUN defaults. Until Go 1.27 is published, the script also changes the generated
+checkout's `go` directive from 1.27 to 1.26. The exact corresponding source is the pinned upstream
+commit plus the committed patch.
 
 ## zashboard
 
@@ -25,3 +26,10 @@ The exact corresponding source is the pinned upstream commit plus the committed 
 
 The unmodified release files are stored under `app/src/main/assets/zashboard` and served only
 from mihomo's loopback controller.
+
+## MetaCubeX meta-rules-dat
+
+- Project: <https://github.com/MetaCubeX/meta-rules-dat>
+- Pinned data commit: `ab44fa37df7a2939806042c20af3a0bfd07152ea`
+- Bundled files: `GeoIP.dat`, `GeoSite.dat`
+- License: GPL-3.0 (the repository root [`LICENSE`](LICENSE) contains the license text)
