@@ -5,7 +5,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/heiher/hev-socks5-tunnel.git"
 readonly HEV_COMMIT="df11261f09ebafc37bac03f81029c9b75a4aa074"
 readonly NDK_VERSION="29.0.14206865"
-readonly BUILD_RECIPE_VERSION="4"
+readonly BUILD_RECIPE_VERSION="5"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/hev-socks5-tunnel-src"
 readonly BUILD_DIR="${ROOT_DIR}/.third_party/hev-socks5-tunnel-build"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
@@ -119,7 +119,8 @@ for candidate in \
     fi
 done
 if [[ -n "${readelf_bin}" ]]; then
-    "${readelf_bin}" -h "${BUILT_LIBRARY}" | grep -q 'Machine:.*AArch64' || {
+    readonly ELF_HEADER="$("${readelf_bin}" -h "${BUILT_LIBRARY}")"
+    grep -q 'Machine:.*AArch64' <<<"${ELF_HEADER}" || {
         echo "Built HEV library is not AArch64" >&2
         exit 1
     }
