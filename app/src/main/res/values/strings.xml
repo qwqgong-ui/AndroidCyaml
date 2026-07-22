@@ -6,10 +6,19 @@
     <string name="core_starting">mihomo 正在启动…</string>
     <string name="core_running">mihomo 已运行</string>
     <string name="core_stopped">mihomo 已停止</string>
-    <string name="config_imported">配置有效，已导入并重启核心</string>
+    <string name="config_imported">配置已导入，mihomo 已成功重启</string>
     <string name="config_import_failed">配置导入失败：%1$s</string>
     <string name="choose_yaml">选择 config.yaml</string>
     <string name="external_link_failed">无法打开外部链接</string>
-    <string name="config_validating">正在校验 config.yaml…</string>
+    <string name="config_validating">正在导入并启动 config.yaml…</string>
     <string name="dashboard_load_failed">面板加载失败：%1$s</string>
+    <string name="start_vpn">启动 VPN</string>
+    <string name="stop_vpn">停止 VPN</string>
+    <string name="vpn_stopped">VPN 未连接</string>
+    <string name="vpn_permission_denied">未授予 VPN 权限</string>
+    <string name="vpn_permission_failed">无法打开系统 VPN 授权界面</string>
+    <string name="vpn_start_failed">VPN 启动失败：%1$s</string>
+    <string name="vpn_notification_title">AndroidCyaml VPN</string>
+    <string name="vpn_notification_channel">VPN 连接</string>
+    <string name="vpn_notification_channel_description">显示 AndroidCyaml 的活动 VPN 连接</string>
 </resources>

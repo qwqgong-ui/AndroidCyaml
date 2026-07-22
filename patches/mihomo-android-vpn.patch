@@ -1,0 +1,122 @@
+diff --git a/hub/hub.go b/hub/hub.go
+index 29ddd2e6..d09d2c1a 100644
+--- a/hub/hub.go
++++ b/hub/hub.go
+@@ -3,0 +4,2 @@ import (
++	"net/netip"
++
+@@ -4,0 +7 @@ import (
++	C "github.com/metacubex/mihomo/constant"
+@@ -53,0 +57,44 @@ func WithSecret(secret string) Option {
++// WithAndroidVPN attaches mihomo's userspace TUN stack to a descriptor created
++// by Android VpnService. Android owns interface addressing and routing, so the
++// core must not attempt privileged netlink changes itself.
++func WithAndroidVPN(fileDescriptor int) Option {
++	return func(cfg *config.Config) {
++		cfg.General.Tun.Enable = true
++		cfg.General.Tun.FileDescriptor = fileDescriptor
++		cfg.General.Tun.Device = "AndroidCyaml"
++		cfg.General.Tun.Stack = C.TunGvisor
++		cfg.General.Tun.MTU = 1500
++		cfg.General.Tun.GSO = false
++		cfg.General.Tun.AutoRoute = false
++		cfg.General.Tun.AutoRedirect = false
++		cfg.General.Tun.AutoDetectInterface = false
++		cfg.General.Tun.Inet4Address = []netip.Prefix{
++			netip.MustParsePrefix("172.19.0.1/30"),
++		}
++		cfg.General.Tun.Inet6Address = []netip.Prefix{
++			netip.MustParsePrefix("fdfe:dcba:9876::1/126"),
++		}
++		// Package filtering is handled by VpnService.Builder. Resolving Android
++		// packages inside an unprivileged standalone core would require access
++		// to /data/system/packages.xml, which normal applications cannot read.
++		cfg.General.Tun.IncludePackage = nil
++		cfg.General.Tun.ExcludePackage = nil
++
++		// The virtual gateway is Android's DNS server. Preserve user DNS
++		// settings, but enable the parsed defaults when the YAML omitted DNS.
++		cfg.DNS.Enable = true
++		if len(cfg.DNS.NameServer) == 0 {
++			cfg.DNS.NameServer = append(cfg.DNS.NameServer, cfg.DNS.DefaultNameserver...)
++		}
++	}
++}
++
++// WithAndroidTunDisabled prevents a user-supplied tun.enable from attempting
++// to open /dev/net/tun when AndroidCyaml is running only as a local proxy.
++func WithAndroidTunDisabled() Option {
++	return func(cfg *config.Config) {
++		cfg.General.Tun.Enable = false
++		cfg.General.Tun.FileDescriptor = 0
++	}
++}
++
+diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_android.go
+index f180bd30..3ed326f3 100644
+--- a/listener/sing_tun/server_android.go
++++ b/listener/sing_tun/server_android.go
+@@ -49,0 +50,7 @@ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
++	if len(tunOptions.IncludePackage) == 0 && len(tunOptions.ExcludePackage) == 0 {
++		// VpnService.Builder already decides which applications enter this TUN.
++		// Avoid reading Android's package database, which is inaccessible to a
++		// regular application UID, when no package names need translating.
++		tunOptions.BuildAndroidRules(nil, l.handler)
++		return nil
++	}
+diff --git a/main.go b/main.go
+index b68e9d96..b6d79699 100644
+--- a/main.go
++++ b/main.go
+@@ -49,0 +50,2 @@ var (
++	androidVpnFdSocket            string
++	androidDisableTun             bool
+@@ -71,0 +74,2 @@ func init() {
++	flag.StringVar(&androidVpnFdSocket, "android-vpn-fd-socket", "", "receive an Android VpnService TUN descriptor from this Unix socket")
++	flag.BoolVar(&androidDisableTun, "android-disable-tun", false, "disable TUN when no Android VpnService is active")
+@@ -214,0 +219,9 @@ func main() {
++	if androidVpnFdSocket != "" {
++		fileDescriptor, err := receiveFileDescriptor(androidVpnFdSocket)
++		if err != nil {
++			log.Fatalln("Receive Android VPN file descriptor error: %s", err.Error())
++		}
++		options = append(options, hub.WithAndroidVPN(fileDescriptor))
++	} else if androidDisableTun {
++		options = append(options, hub.WithAndroidTunDisabled())
++	}
+@@ -253,0 +267,35 @@ func main() {
++
++func receiveFileDescriptor(socketName string) (int, error) {
++	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketName, Net: "unix"})
++	if err != nil {
++		return 0, err
++	}
++	defer connection.Close()
++
++	payload := make([]byte, 1)
++	control := make([]byte, syscall.CmsgSpace(4))
++	_, controlLength, flags, _, err := connection.ReadMsgUnix(payload, control)
++	if err != nil {
++		return 0, err
++	}
++	if flags&syscall.MSG_CTRUNC != 0 {
++		return 0, fmt.Errorf("Unix control message was truncated")
++	}
++	messages, err := syscall.ParseSocketControlMessage(control[:controlLength])
++	if err != nil {
++		return 0, err
++	}
++	for _, message := range messages {
++		fileDescriptors, parseErr := syscall.ParseUnixRights(&message)
++		if parseErr != nil {
++			return 0, parseErr
++		}
++		if len(fileDescriptors) > 0 {
++			for _, extraDescriptor := range fileDescriptors[1:] {
++				_ = syscall.Close(extraDescriptor)
++			}
++			return fileDescriptors[0], nil
++		}
++	}
++	return 0, fmt.Errorf("Unix control message did not contain a file descriptor")
++}

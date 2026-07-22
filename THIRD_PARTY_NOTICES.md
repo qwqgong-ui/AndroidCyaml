@@ -10,9 +10,10 @@ AndroidCyaml packages and launches the following upstream works.
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
 The Android arm64 executable is built by [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh).
-Until Go 1.27 is published, the script changes only the generated checkout's `go` directive from
-1.27 to 1.26; it does not change any Go source file. The exact corresponding source can be obtained
-by checking out the pinned commit from the project URL above.
+The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch) to add the
+Android VpnService file-descriptor transport and unprivileged TUN defaults. Until Go 1.27 is
+published, the script also changes the generated checkout's `go` directive from 1.27 to 1.26.
+The exact corresponding source is the pinned upstream commit plus the committed patch.
 
 ## zashboard
 

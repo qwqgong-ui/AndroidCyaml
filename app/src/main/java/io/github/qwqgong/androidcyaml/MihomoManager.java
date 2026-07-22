@@ -4,9 +4,15 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.AssetManager;
+import android.net.LocalServerSocket;
+import android.net.LocalSocket;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 
 import java.io.BufferedReader;
@@ -14,10 +20,14 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileDescriptor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -26,9 +36,12 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -51,11 +64,14 @@ public final class MihomoManager {
         void onComplete(boolean success, String detail);
     }
 
+    public interface OperationCallback {
+        void onComplete(boolean success, String detail);
+    }
+
     private static final String TAG = "AndroidCyaml/Mihomo";
     private static final String PREFERENCES = "androidcyaml";
     private static final String SECRET_KEY = "controller_secret";
     private static final String HOST = "127.0.0.1";
-    private static final int CONTROLLER_PORT = 9090;
     private static final int MAX_CONFIG_BYTES = 32 * 1024 * 1024;
     private static final int MAX_LOG_LINES = 80;
 
@@ -73,6 +89,8 @@ public final class MihomoManager {
 
     private volatile State state = State.STOPPED;
     private volatile String detail = "";
+    private volatile int controllerPort;
+    private ParcelFileDescriptor vpnTunnel;
     private Process process;
 
     private MihomoManager(Context context) {
@@ -119,12 +137,44 @@ public final class MihomoManager {
         });
     }
 
+    public void activateVpn(ParcelFileDescriptor tunnel, OperationCallback callback) {
+        controlExecutor.execute(() -> {
+            if (tunnel == null || !tunnel.getFileDescriptor().valid()) {
+                postOperationResult(callback, false, "系统返回了无效的 VPN TUN 接口");
+                return;
+            }
+            vpnTunnel = tunnel;
+            stopInternal(false);
+            boolean success = startInternal();
+            if (!success && vpnTunnel == tunnel) {
+                vpnTunnel = null;
+            }
+            postOperationResult(callback, success, detail);
+        });
+    }
+
+    public void deactivateVpn(ParcelFileDescriptor tunnel, Runnable callback) {
+        controlExecutor.execute(() -> {
+            if (tunnel == null || vpnTunnel == tunnel) {
+                vpnTunnel = null;
+            }
+            stopInternal(false);
+            mainHandler.post(callback);
+            startInternal();
+        });
+    }
+
     public String getDashboardUrl() {
-        return "http://" + HOST + ":" + CONTROLLER_PORT
+        int port = controllerPort;
+        return "http://" + HOST + ":" + port
                 + "/ui/#/setup?hostname=" + HOST
-                + "&port=" + CONTROLLER_PORT
+                + "&port=" + port
                 + "&secret=" + controllerSecret
                 + "&disableUpgradeCore=1&disableTunMode=1&type=clash";
+    }
+
+    public boolean isControllerPort(int port) {
+        return port > 0 && port == controllerPort;
     }
 
     public void importConfig(Uri source, ImportCallback callback) {
@@ -136,8 +186,15 @@ public final class MihomoManager {
             recentLogs.clear();
         }
         publish(State.STARTING, "正在准备内置面板和 mihomo 核心…");
+        Process candidate = null;
+        LocalServerSocket descriptorServer = null;
+        Future<Void> descriptorTransfer = null;
         try {
             RuntimeFiles files = ensureRuntimeFiles();
+            terminateStaleCores();
+            ParcelFileDescriptor activeTunnel = vpnTunnel;
+            int activeControllerPort = findAvailableControllerPort();
+            controllerPort = activeControllerPort;
             File binary = new File(context.getApplicationInfo().nativeLibraryDir, "libmihomo.so");
             if (!binary.isFile()) {
                 throw new IOException("APK 中缺少 arm64 mihomo 核心：" + binary);
@@ -152,32 +209,44 @@ public final class MihomoManager {
             command.add("-ext-ui");
             command.add(files.ui.getAbsolutePath());
             command.add("-ext-ctl");
-            command.add(HOST + ":" + CONTROLLER_PORT);
+            command.add(HOST + ":" + activeControllerPort);
             command.add("-secret");
             command.add(controllerSecret);
+            if (activeTunnel == null) {
+                command.add("-android-disable-tun");
+            } else {
+                String socketName = "androidcyaml-vpn-" + UUID.randomUUID();
+                descriptorServer = new LocalServerSocket(socketName);
+                LocalServerSocket transferServer = descriptorServer;
+                descriptorTransfer = ioExecutor.submit(
+                        () -> sendTunDescriptor(transferServer, activeTunnel)
+                );
+                command.add("-android-vpn-fd-socket");
+                command.add("@" + socketName);
+            }
 
             ProcessBuilder builder = new ProcessBuilder(command)
                     .directory(files.home)
                     .redirectErrorStream(true);
             builder.environment().put("TMPDIR", context.getCacheDir().getAbsolutePath());
 
-            Process candidate = builder.start();
+            candidate = builder.start();
             synchronized (processLock) {
                 process = candidate;
             }
             readCoreLogs(candidate);
             watchForExit(candidate);
 
-            if (!waitForController(candidate, 15, TimeUnit.SECONDS)) {
-                String logs = recentLogSummary();
-                stopSpecificProcess(candidate);
-                synchronized (processLock) {
-                    if (process == candidate) {
-                        process = null;
-                    }
-                }
+            if (descriptorTransfer != null) {
+                waitForTunDescriptorTransfer(descriptorTransfer, descriptorServer);
+                descriptorTransfer = null;
+                descriptorServer = null;
+            }
+
+            if (!waitForController(candidate, activeControllerPort, 90, TimeUnit.SECONDS)) {
+                String logs = diagnosticLogSummary();
                 throw new IOException(logs.isEmpty()
-                        ? "mihomo 控制器未在 15 秒内就绪"
+                        ? "mihomo 控制器未在 90 秒内就绪"
                         : "mihomo 启动失败：" + logs);
             }
 
@@ -185,12 +254,64 @@ public final class MihomoManager {
                     State.RUNNING,
                     "mihomo " + BuildConfig.MIHOMO_COMMIT.substring(0, 8)
                             + " · zashboard " + BuildConfig.ZASHBOARD_VERSION
+                            + (activeTunnel == null ? " · 本地代理" : " · Android VPN")
             );
             return true;
         } catch (Exception exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            if (descriptorTransfer != null) {
+                descriptorTransfer.cancel(true);
+            }
+            closeQuietly(descriptorServer);
+            if (candidate != null) {
+                synchronized (processLock) {
+                    if (process == candidate) {
+                        process = null;
+                    }
+                }
+                stopSpecificProcess(candidate);
+            }
             Log.e(TAG, "Unable to start mihomo", exception);
             publish(State.FAILED, usefulMessage(exception));
             return false;
+        }
+    }
+
+    private Void sendTunDescriptor(
+            LocalServerSocket descriptorServer,
+            ParcelFileDescriptor tunnel
+    ) throws IOException {
+        try (LocalServerSocket server = descriptorServer;
+             LocalSocket connection = server.accept()) {
+            FileDescriptor descriptor = tunnel.getFileDescriptor();
+            if (!descriptor.valid()) {
+                throw new IOException("VPN TUN 文件描述符已关闭");
+            }
+            connection.setFileDescriptorsForSend(new FileDescriptor[]{descriptor});
+            connection.getOutputStream().write(1);
+            connection.getOutputStream().flush();
+        }
+        return null;
+    }
+
+    private void waitForTunDescriptorTransfer(
+            Future<Void> transfer,
+            LocalServerSocket server
+    ) throws IOException, InterruptedException {
+        try {
+            transfer.get(5, TimeUnit.SECONDS);
+        } catch (TimeoutException exception) {
+            closeQuietly(server);
+            transfer.cancel(true);
+            throw new IOException("mihomo 未在 5 秒内接收 VPN TUN 接口", exception);
+        } catch (ExecutionException exception) {
+            Throwable cause = exception.getCause();
+            throw new IOException(
+                    cause == null ? "无法向 mihomo 传递 VPN TUN 接口" : cause.getMessage(),
+                    cause
+            );
         }
     }
 
@@ -203,11 +324,6 @@ public final class MihomoManager {
             backup = new File(files.home, "config.previous.yaml");
             copyUriWithLimit(source, candidate, MAX_CONFIG_BYTES);
 
-            ValidationResult validation = validateConfig(files.home, candidate);
-            if (!validation.valid) {
-                throw new IOException("mihomo 校验未通过：" + validation.output);
-            }
-
             Files.deleteIfExists(backup.toPath());
             if (files.config.isFile()) {
                 moveReplacing(files.config, backup);
@@ -216,13 +332,16 @@ public final class MihomoManager {
 
             stopInternal(false);
             if (!startInternal()) {
+                String failedConfigDetail = detail;
                 stopInternal(false);
                 Files.deleteIfExists(files.config.toPath());
                 if (backup.isFile()) {
                     moveReplacing(backup, files.config);
                     startInternal();
                 }
-                throw new IOException("新配置无法启动，已恢复原配置");
+                throw new IOException(
+                        "新配置无法启动，已恢复原配置：" + failedConfigDetail
+                );
             }
 
             try {
@@ -230,7 +349,7 @@ public final class MihomoManager {
             } catch (IOException exception) {
                 Log.w(TAG, "Unable to remove previous config backup", exception);
             }
-            postImportResult(callback, true, "配置已通过 mihomo 校验");
+            postImportResult(callback, true, "配置已导入并由 mihomo 成功启动");
         } catch (Exception exception) {
             Log.e(TAG, "Unable to import config", exception);
             if (backup != null && backup.isFile()) {
@@ -252,51 +371,6 @@ public final class MihomoManager {
                     // A stale candidate is harmless and will be replaced on the next import.
                 }
             }
-        }
-    }
-
-    private ValidationResult validateConfig(File home, File candidate) throws Exception {
-        File binary = new File(context.getApplicationInfo().nativeLibraryDir, "libmihomo.so");
-        Process validator = new ProcessBuilder(
-                binary.getAbsolutePath(),
-                "-t",
-                "-d", home.getAbsolutePath(),
-                "-f", candidate.getAbsolutePath()
-        ).directory(home).redirectErrorStream(true).start();
-
-        Future<String> outputFuture = ioExecutor.submit(() -> readLimitedOutput(validator));
-        if (!validator.waitFor(20, TimeUnit.SECONDS)) {
-            validator.destroyForcibly();
-            throw new IOException("配置校验超时");
-        }
-
-        String output;
-        try {
-            output = outputFuture.get(2, TimeUnit.SECONDS).trim();
-        } catch (TimeoutException exception) {
-            outputFuture.cancel(true);
-            output = "无法读取 mihomo 校验结果";
-        }
-        if (output.length() > 600) {
-            output = output.substring(output.length() - 600);
-        }
-        return new ValidationResult(validator.exitValue() == 0, output);
-    }
-
-    private String readLimitedOutput(Process source) throws IOException {
-        try (InputStream input = source.getInputStream();
-             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[4096];
-            int total = 0;
-            int read;
-            while ((read = input.read(buffer)) != -1) {
-                int accepted = Math.min(read, 64 * 1024 - total);
-                if (accepted > 0) {
-                    output.write(buffer, 0, accepted);
-                    total += accepted;
-                }
-            }
-            return new String(output.toByteArray(), StandardCharsets.UTF_8);
         }
     }
 
@@ -398,12 +472,17 @@ public final class MihomoManager {
         }
     }
 
-    private boolean waitForController(Process candidate, long timeout, TimeUnit unit) {
+    private boolean waitForController(
+            Process candidate,
+            int port,
+            long timeout,
+            TimeUnit unit
+    ) {
         long deadline = System.nanoTime() + unit.toNanos(timeout);
         while (System.nanoTime() < deadline && candidate.isAlive()) {
             HttpURLConnection connection = null;
             try {
-                URL url = new URL("http://" + HOST + ":" + CONTROLLER_PORT + "/version");
+                URL url = new URL("http://" + HOST + ":" + port + "/version");
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setConnectTimeout(300);
                 connection.setReadTimeout(300);
@@ -426,6 +505,17 @@ public final class MihomoManager {
             }
         }
         return false;
+    }
+
+    private int findAvailableControllerPort() throws IOException {
+        try (ServerSocket reservation = new ServerSocket()) {
+            reservation.setReuseAddress(false);
+            reservation.bind(
+                    new InetSocketAddress(InetAddress.getByName(HOST), 0),
+                    1
+            );
+            return reservation.getLocalPort();
+        }
     }
 
     private void readCoreLogs(Process source) {
@@ -505,6 +595,81 @@ public final class MihomoManager {
         }
     }
 
+    private void terminateStaleCores() throws IOException {
+        LinkedHashSet<Integer> candidates = new LinkedHashSet<>();
+        File proc = new File("/proc");
+        File[] processes = proc.listFiles();
+        if (processes != null) {
+            for (File processDirectory : processes) {
+                try {
+                    candidates.add(Integer.parseInt(processDirectory.getName()));
+                } catch (NumberFormatException ignored) {
+                    // Non-process entries such as /proc/net are expected.
+                }
+            }
+        }
+
+        String expectedBinary = new File(
+                context.getApplicationInfo().nativeLibraryDir,
+                "libmihomo.so"
+        ).getAbsolutePath();
+        for (int pid : candidates) {
+            if (pid <= 0 || pid == android.os.Process.myPid()) {
+                continue;
+            }
+            String command = readProcessCommand(pid);
+            if (!expectedBinary.equals(command)) {
+                continue;
+            }
+            Log.w(TAG, "Stopping stale mihomo process " + pid);
+            signalProcess(pid, OsConstants.SIGTERM);
+            waitForProcessExit(pid, 800);
+            if (isProcessAlive(pid)) {
+                signalProcess(pid, OsConstants.SIGKILL);
+                waitForProcessExit(pid, 800);
+            }
+            if (isProcessAlive(pid)) {
+                throw new IOException("无法停止残留的 mihomo 进程 " + pid);
+            }
+        }
+    }
+
+    private String readProcessCommand(int pid) {
+        try {
+            String commandLine = readFile(new File("/proc/" + pid + "/cmdline"));
+            int separator = commandLine.indexOf('\0');
+            return separator < 0 ? commandLine : commandLine.substring(0, separator);
+        } catch (IOException ignored) {
+            return "";
+        }
+    }
+
+    private void signalProcess(int pid, int signal) throws IOException {
+        try {
+            Os.kill(pid, signal);
+        } catch (ErrnoException exception) {
+            if (exception.errno != OsConstants.ESRCH) {
+                throw new IOException("无法向残留 mihomo 进程发送信号", exception);
+            }
+        }
+    }
+
+    private void waitForProcessExit(int pid, long timeoutMillis) throws IOException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        while (isProcessAlive(pid) && System.nanoTime() < deadline) {
+            try {
+                Thread.sleep(40);
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IOException("等待残留 mihomo 进程退出时被中断", exception);
+            }
+        }
+    }
+
+    private static boolean isProcessAlive(int pid) {
+        return new File("/proc/" + pid).isDirectory();
+    }
+
     private String loadOrCreateSecret() {
         SharedPreferences preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE);
         String existing = preferences.getString(SECRET_KEY, null);
@@ -536,6 +701,10 @@ public final class MihomoManager {
         mainHandler.post(() -> callback.onComplete(success, message));
     }
 
+    private void postOperationResult(OperationCallback callback, boolean success, String message) {
+        mainHandler.post(() -> callback.onComplete(success, message));
+    }
+
     private String recentLogSummary() {
         synchronized (logLock) {
             if (recentLogs.isEmpty()) {
@@ -543,6 +712,18 @@ public final class MihomoManager {
             }
             String last = recentLogs.peekLast();
             return last == null ? "" : last.trim();
+        }
+    }
+
+    private String diagnosticLogSummary() {
+        synchronized (logLock) {
+            String lastError = "";
+            for (String line : recentLogs) {
+                if (line.contains("level=error") || line.contains("level=fatal")) {
+                    lastError = line.trim();
+                }
+            }
+            return lastError.isEmpty() ? recentLogSummary() : lastError;
         }
     }
 
@@ -589,6 +770,17 @@ public final class MihomoManager {
         }
     }
 
+    private static void closeQuietly(LocalServerSocket socket) {
+        if (socket == null) {
+            return;
+        }
+        try {
+            socket.close();
+        } catch (IOException ignored) {
+            // The socket may already have been closed by the descriptor sender.
+        }
+    }
+
     private static void deleteRecursively(File target) throws IOException {
         if (!target.exists()) {
             return;
@@ -616,13 +808,4 @@ public final class MihomoManager {
         }
     }
 
-    private static final class ValidationResult {
-        final boolean valid;
-        final String output;
-
-        ValidationResult(boolean valid, String output) {
-            this.valid = valid;
-            this.output = output;
-        }
-    }
 }

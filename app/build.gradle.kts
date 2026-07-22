@@ -15,8 +15,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -76,6 +76,7 @@ val buildMihomo by tasks.registering(Exec::class) {
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
+    inputs.file(rootProject.file("patches/mihomo-android-vpn.patch"))
     inputs.property("mihomoCommit", mihomoCommit)
     outputs.file(mihomoBinary)
 }

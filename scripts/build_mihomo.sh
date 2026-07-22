@@ -4,12 +4,14 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="a563ca2194edbf560b3857801cb3cceab13d7ff9"
-readonly BUILD_RECIPE_VERSION="1"
+readonly BUILD_RECIPE_VERSION="2"
+readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo-android-vpn.patch"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
 readonly OUTPUT_FILE="${OUTPUT_DIR}/libmihomo.so"
 readonly MARKER_FILE="${ROOT_DIR}/.third_party/mihomo.commit"
-readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:android-arm64-v${BUILD_RECIPE_VERSION}"
+readonly PATCH_SHA256="$(sha256sum "${PATCH_FILE}" | awk '{print $1}')"
+readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:android-arm64-v${BUILD_RECIPE_VERSION}:${PATCH_SHA256}"
 
 if [[ -f "${OUTPUT_FILE}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
@@ -38,10 +40,13 @@ fi
 
 git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
+git -C "${SOURCE_DIR}" apply --unidiff-zero --check "${PATCH_FILE}"
+git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_FILE}"
 
 # The pinned Alpha commit declares the not-yet-published Go 1.27 toolchain, but
-# currently compiles cleanly with Go 1.26.5. Only the generated checkout's
-# language-version declaration is adjusted; no Go source file is changed.
+# currently compiles cleanly with Go 1.26.5. The generated checkout's
+# language-version declaration is adjusted alongside the committed Android
+# VpnService integration patch.
 readonly INSTALLED_GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION)"
 case "${INSTALLED_GO_VERSION}" in
     go1.26.*)

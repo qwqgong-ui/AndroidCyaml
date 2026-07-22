@@ -8,6 +8,7 @@ import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.graphics.Insets;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
@@ -25,8 +26,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 @SuppressWarnings("deprecation")
-public final class MainActivity extends Activity implements MihomoManager.Listener {
+public final class MainActivity extends Activity implements
+        MihomoManager.Listener,
+        AndroidVpnService.Listener {
     private static final int PICK_CONFIG_REQUEST = 1001;
+    private static final int PREPARE_VPN_REQUEST = 1002;
 
     private MihomoManager manager;
     private WebView webView;
@@ -34,6 +38,9 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
     private TextView status;
     private Button importButton;
     private Button restartButton;
+    private Button vpnButton;
+    private TextView vpnStatus;
+    private AndroidVpnService.State vpnState = AndroidVpnService.State.STOPPED;
     private String loadedDashboardUrl;
 
     @Override
@@ -48,6 +55,9 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
         status = findViewById(R.id.core_status);
         importButton = findViewById(R.id.import_config);
         restartButton = findViewById(R.id.restart_core);
+        vpnButton = findViewById(R.id.vpn_toggle);
+        vpnStatus = findViewById(R.id.vpn_status);
+        manager = MihomoManager.getInstance(this);
 
         configureWebView(savedInstanceState);
         importButton.setOnClickListener(ignored -> chooseConfig());
@@ -55,6 +65,7 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
             loadedDashboardUrl = null;
             manager.restart();
         });
+        vpnButton.setOnClickListener(ignored -> toggleVpn());
 
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
@@ -67,9 +78,49 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
                 }
         );
 
-        manager = MihomoManager.getInstance(this);
         manager.addListener(this);
+        AndroidVpnService.addListener(this);
         manager.ensureStarted();
+    }
+
+    private void toggleVpn() {
+        if (vpnState == AndroidVpnService.State.RUNNING) {
+            vpnButton.setEnabled(false);
+            startService(
+                    new Intent(this, AndroidVpnService.class)
+                            .setAction(AndroidVpnService.ACTION_STOP)
+            );
+            return;
+        }
+
+        Intent permissionIntent = VpnService.prepare(this);
+        if (permissionIntent == null) {
+            startVpnService();
+            return;
+        }
+        try {
+            startActivityForResult(permissionIntent, PREPARE_VPN_REQUEST);
+        } catch (ActivityNotFoundException exception) {
+            Toast.makeText(this, R.string.vpn_permission_failed, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startVpnService() {
+        loadedDashboardUrl = null;
+        vpnButton.setEnabled(false);
+        try {
+            startForegroundService(
+                    new Intent(this, AndroidVpnService.class)
+                            .setAction(AndroidVpnService.ACTION_START)
+            );
+        } catch (RuntimeException exception) {
+            vpnButton.setEnabled(true);
+            Toast.makeText(
+                    this,
+                    getString(R.string.vpn_start_failed, exception.getMessage()),
+                    Toast.LENGTH_LONG
+            ).show();
+        }
     }
 
     private void configureEdgeToEdge() {
@@ -135,6 +186,14 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PREPARE_VPN_REQUEST) {
+            if (resultCode == RESULT_OK) {
+                startVpnService();
+            } else {
+                Toast.makeText(this, R.string.vpn_permission_denied, Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
         if (requestCode != PICK_CONFIG_REQUEST || resultCode != RESULT_OK || data == null) {
             return;
         }
@@ -161,6 +220,36 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
                 ).show();
             }
         });
+    }
+
+    @Override
+    public void onVpnStateChanged(AndroidVpnService.State state, String detail) {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        vpnState = state;
+        vpnStatus.setText(detail);
+        switch (state) {
+            case STARTING -> {
+                vpnStatus.setTextColor(getColor(R.color.on_surface));
+                vpnButton.setEnabled(false);
+            }
+            case RUNNING -> {
+                vpnStatus.setTextColor(getColor(R.color.status_ok));
+                vpnButton.setText(R.string.stop_vpn);
+                vpnButton.setEnabled(true);
+            }
+            case FAILED -> {
+                vpnStatus.setTextColor(getColor(R.color.status_error));
+                vpnButton.setText(R.string.start_vpn);
+                vpnButton.setEnabled(true);
+            }
+            case STOPPED -> {
+                vpnStatus.setTextColor(getColor(R.color.on_surface));
+                vpnButton.setText(R.string.start_vpn);
+                vpnButton.setEnabled(true);
+            }
+        }
     }
 
     @Override
@@ -225,6 +314,7 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
         if (manager != null) {
             manager.removeListener(this);
         }
+        AndroidVpnService.removeListener(this);
         if (webView != null) {
             webView.stopLoading();
             webView.setWebChromeClient(null);
@@ -262,7 +352,7 @@ public final class MainActivity extends Activity implements MihomoManager.Listen
             String host = uri.getHost();
             return "http".equalsIgnoreCase(uri.getScheme())
                     && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host))
-                    && uri.getPort() == 9090;
+                    && manager.isControllerPort(uri.getPort());
         }
 
         private void openExternal(Uri uri) {
