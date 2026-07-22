@@ -10,12 +10,30 @@ AndroidCyaml packages and launches the following upstream works.
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
 The Android arm64 executable is built by [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh).
-The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch) to add the
-Android VpnService file-descriptor transport, the system connection-owner lookup bridge, and
-the Android gVisor runtime compatibility layer. It also avoids inaccessible package-database reads
-when no package filter is configured. Until Go 1.27 is published, the script changes the generated
-checkout's `go` directive from 1.27 to 1.26. The exact corresponding source is the pinned upstream
-commit plus the committed patch.
+The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch). The patch
+contains Android descriptor/process compatibility hooks retained from the previous direct-TUN data
+path and, for the HEV path, the `-android-disable-tun` guard that prevents a user-supplied
+`tun.enable` from opening `/dev/net/tun` while mihomo is running as a local proxy. The current build
+does not enable the `with_gvisor` tag because HEV owns the VPN data plane. Until Go 1.27 is
+published, the script changes the generated checkout's `go` directive from 1.27 to 1.26. The exact
+corresponding source is the pinned upstream commit plus the committed patch.
+
+## HEV SOCKS5 tunnel
+
+- Project: <https://github.com/heiher/hev-socks5-tunnel>
+- Pinned commit: `df11261f09ebafc37bac03f81029c9b75a4aa074`
+- License: MIT
+- Local license copy: [`LICENSES/hev-socks5-tunnel-MIT.txt`](LICENSES/hev-socks5-tunnel-MIT.txt)
+
+The Android arm64 JNI shared library is built from the pinned recursive checkout by
+[`scripts/build_hev_socks5_tunnel.sh`](scripts/build_hev_socks5_tunnel.sh). The binary statically
+includes the following pinned git submodules selected by the HEV superproject:
+
+- `heiher/hev-socks5-core` — MIT
+- `heiher/hev-task-system` — MIT
+- `heiher/yaml` — MIT
+- `heiher/lwip` — BSD-3-Clause; local license copy:
+  [`LICENSES/lwip-BSD-3-Clause.txt`](LICENSES/lwip-BSD-3-Clause.txt)
 
 ## zashboard
 

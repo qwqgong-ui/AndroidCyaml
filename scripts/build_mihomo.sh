@@ -4,7 +4,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="a563ca2194edbf560b3857801cb3cceab13d7ff9"
-readonly BUILD_RECIPE_VERSION="2"
+readonly BUILD_RECIPE_VERSION="3"
 readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo-android-vpn.patch"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
@@ -46,7 +46,7 @@ git -C "${SOURCE_DIR}" apply --unidiff-zero "${PATCH_FILE}"
 # The pinned Alpha commit declares the not-yet-published Go 1.27 toolchain, but
 # currently compiles cleanly with Go 1.26.5. The generated checkout's
 # language-version declaration is adjusted alongside the committed Android
-# VpnService integration patch.
+# Android local-proxy compatibility patch.
 readonly INSTALLED_GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION)"
 case "${INSTALLED_GO_VERSION}" in
     go1.26.*)
@@ -72,12 +72,13 @@ readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X 
 
 (
     cd "${SOURCE_DIR}"
+    # HEV owns the Android TUN data plane, so the core only needs its
+    # loopback proxy listeners and does not embed the gVisor network stack.
     GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
     CGO_ENABLED=0 \
     GOOS=android \
     GOARCH=arm64 \
         go build \
-        -tags with_gvisor \
         -trimpath \
         -ldflags "${LDFLAGS}" \
         -o "${TEMP_OUTPUT}" \
