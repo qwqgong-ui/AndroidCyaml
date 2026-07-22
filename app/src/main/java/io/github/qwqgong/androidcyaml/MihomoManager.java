@@ -133,6 +133,41 @@ public final class MihomoManager {
         return local;
     }
 
+    static int trimMemoryCachesIfCreated() {
+        MihomoManager local = instance;
+        if (local == null) {
+            return 0;
+        }
+        synchronized (local.logLock) {
+            int removed = local.recentLogs.size();
+            local.recentLogs.clear();
+            return removed;
+        }
+    }
+
+    static boolean persistStateForMemoryKill() {
+        MihomoManager local = instance;
+        if (local == null) {
+            return true;
+        }
+        SharedPreferences preferences = local.context.getSharedPreferences(
+                PREFERENCES,
+                Context.MODE_PRIVATE
+        );
+        SharedPreferences.Editor editor = preferences.edit()
+                .putString(SECRET_KEY, local.controllerSecret);
+        String processMatchOverride = preferences.getString(
+                PROCESS_MATCH_OVERRIDE_KEY,
+                PROCESS_MATCH_CONFIG
+        );
+        if (PROCESS_MATCH_CONFIG.equals(processMatchOverride)) {
+            editor.remove(PROCESS_MATCH_OVERRIDE_KEY);
+        } else {
+            editor.putString(PROCESS_MATCH_OVERRIDE_KEY, processMatchOverride);
+        }
+        return editor.commit();
+    }
+
     public void addListener(Listener listener) {
         listeners.add(listener);
         mainHandler.post(() -> listener.onCoreStateChanged(state, detail));
@@ -196,6 +231,10 @@ public final class MihomoManager {
 
     public boolean isControllerPort(int port) {
         return port > 0 && port == controllerPort;
+    }
+
+    public int getControllerPort() {
+        return controllerPort;
     }
 
     public String getProcessMatchOverride() {

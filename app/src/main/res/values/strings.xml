@@ -6,6 +6,8 @@
     <string name="core_starting">mihomo 正在启动…</string>
     <string name="core_running">mihomo 已运行</string>
     <string name="core_stopped">mihomo 已停止</string>
+    <string name="control_service_disconnected">核心控制进程已断开</string>
+    <string name="control_service_unavailable">核心控制进程暂不可用</string>
     <string name="config_imported">配置已导入，mihomo 已成功重启</string>
     <string name="config_import_failed">配置导入失败：%1$s</string>
     <string name="choose_yaml">选择 config.yaml</string>

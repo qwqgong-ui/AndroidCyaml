@@ -98,8 +98,8 @@
             android:textColor="@color/on_surface" />
     </LinearLayout>
 
-    <WebView
-        android:id="@+id/dashboard"
+    <FrameLayout
+        android:id="@+id/dashboard_container"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1" />

@@ -1,6 +1,6 @@
 # AndroidCyaml
 
-AndroidCyaml 是一个仅面向 Android 16 的 mihomo VPN 客户端。它启动
+AndroidCyaml 是一个面向 Android 16、并提前适配 Android 17 内存限制的 mihomo VPN 客户端。它启动
 [`qwqgong-ui/mihomo`](https://github.com/qwqgong-ui/mihomo) 的 arm64 核心，在应用内用
 WebView 打开内置的 [`Zephyruso/zashboard`](https://github.com/Zephyruso/zashboard)，并允许
 从 Android 文件选择器上传 `config.yaml`。
@@ -19,7 +19,8 @@ mihomo 的应用内部 SOCKS5 入口：
 
 ## 平台限制
 
-- 仅 Android 16：`minSdk = targetSdk = compileSdk = 36`
+- Android 16 及以上：`minSdk = targetSdk = compileSdk = 36`；Android 17（API 37）行为已提前适配，
+  待正式 SDK 可用后再单独提升编译与目标版本
 - 仅 ARMv8 64 位：APK 只包含 `arm64-v8a`
 - 不兼容 Android 15 及以下、`armeabi-v7a`、`x86` 或 `x86_64`
 
@@ -33,6 +34,15 @@ mihomo 的应用内部 SOCKS5 入口：
   配置首次使用 GEO 规则时无需从 GitHub 下载
 - WebView 优先通过固定的 `127.0.0.1:17890` 访问面板，使 Zashboard 设置可跨重启保留；
   端口冲突时自动回退到空闲端口
+- MainActivity 与 WebView 固定运行在独立 `:ui` 进程；界面进入后台时保存轻量导航状态并主动
+  销毁 WebView，普通退后台后结束独立 UI 进程，回到前台再冷重建；UI 暂停、回收或 WebView 异常不会直接结束原应用进程中的
+  VPN Service 与 HEV，跨进程控制使用仅限同 UID 的非导出 Binder 服务
+- 每次进程启动从系统历史退出记录中缓存本应用 native crash tombstone；缓存位于不参与备份的
+  应用私有目录，单份最多 4 MiB、最多保留 8 份且总量不超过 16 MiB
+- 接入金标联盟“公平运行内存适配”的 `TRIM`/`KILL` 通知，在独立工作线程释放可回收缓存并通过
+  Binder 单向事务回执；通知处理不停止 VPN、不重启 mihomo，也不阻塞 UI 线程
+- 识别 Android 17 `MemoryLimiter:AnonSwap` 退出原因并缓存结构化诊断元数据，便于区分系统内存
+  红线终止与普通崩溃
 - 原生 VPN 滑块申请系统授权并接管其他应用的全局 IPv4/IPv6 流量
 - 上传配置、重启核心、运行时覆写和“隐藏后台标签页”集中在右上角二级菜单
 - Android 16 `systemExempted` 前台服务与常驻通知；普通模式可从通知直接停止 VPN
@@ -50,7 +60,7 @@ mihomo 的应用内部 SOCKS5 入口：
 
 ## 使用
 
-1. 在 Android 16 arm64 设备上安装 APK。
+1. 在 Android 16 或以上的 arm64 设备上安装 APK。
 2. 打开 AndroidCyaml，等待状态栏显示 mihomo 已运行。
 3. 打开右上角二级菜单，点击“上传 config.yaml”，从系统文件选择器选择 YAML 配置。
 4. 导入成功后核心会自动重启，zashboard 随即重新连接。
@@ -159,6 +169,39 @@ Android 10 起不允许从应用的可写数据目录执行文件。因此 mihom
 
 hev-socks5-tunnel 作为普通 JNI 共享库进入同一 ABI 目录。`VpnService` 建立非阻塞 TUN 后将
 其文件描述符直接传给 HEV JNI；停止 VPN 时先停止 HEV 工作线程，再关闭 TUN 文件描述符。
+
+MainActivity/WebView 运行在独立的 `:ui` 进程，VPN Service、HEV JNI 与核心监管器仍留在默认
+应用进程，mihomo 仍由默认进程作为独立子进程启动。UI 在停止状态会解除 Binder 绑定，因此
+系统可以单独回收 UI；同时应用会主动销毁不可见的 WebView，并在普通退后台后结束独立 UI 进程，
+避免 Chromium 映射仍被计入高优先级进程总 PSS。文件选择器和首次 VPN 授权等等待 Activity
+结果的系统流程会暂时保留 UI。重新进入前台后会重建 WebView、恢复导航状态并取得完整状态快照，
+不会启动第二份核心。
+
+系统为本包保留的 `REASON_CRASH_NATIVE` 历史退出 trace 会在下次任一进程启动时复制到
+`noBackupFilesDir/tombstones`。多个进程通过文件锁去重，trace 与元数据使用临时文件同步后
+原子替换。Android 17 因应用内存限制退出时，`REASON_OTHER` 且描述包含
+`MemoryLimiter:AnonSwap` 的记录会在同一目录保存为 `.memory-limit.json`（最多 16 份）；普通
+Java 异常、ANR 和其他应用的退出记录不会进入该缓存。
+
+### Android 17 与公平运行内存
+
+依据 [Android 17 行为变更](https://developer.android.com/about/versions/17/behavior-changes-all)
+和 OPPO 开放平台的[公平运行内存适配](https://open.oppomobile.com/documentation/page/info?id=13825)，
+Android 17 的应用内存限制由系统按设备 RAM 动态决定，本项目不硬编码单一“红线”。默认进程
+动态接收金标联盟规定的 `itgsa.intent.action.TRIM` 与 `itgsa.intent.action.KILL`：
+
+| 通知/场景 | AndroidCyaml 的处理 |
+| --- | --- |
+| UI 进入后台 | 销毁不可见 WebView，并在 750 ms 回前台宽限期后结束独立 UI 进程；等待系统 Activity 结果时除外 |
+| `TRIM` | 清理默认进程的短期诊断日志缓存，低频采集当前 PSS/Java heap 并回执 |
+| `KILL` | 再次清理可回收缓存；配置、密钥、运行时覆写与 UI 偏好本来就已落盘，然后回执 |
+| Android 系统 `onTrimMemory`/`onLowMemory` | 执行相同的本地缓存释放，不影响 VPN 数据面 |
+| Android 17 内存限制退出 | 下次启动缓存 `ApplicationExitInfo` 元数据用于诊断 |
+
+厂商回调只在默认进程注册，避免多进程对同一个 `notifyId` 重复响应；接收、PSS 采样和 Binder
+回执都在专用 `HandlerThread` 中执行。PSS 最短采样间隔为 30 秒，避免高频调用
+`Debug.getPss()` 本身造成额外开销。回执使用 `IBinder.FIRST_CALL_TRANSACTION` 与
+`FLAG_ONEWAY`，正常路径远低于文档要求的 3 秒。
 
 zashboard 在首次启动或版本变化时从 APK assets 原子复制到应用私有目录，再由 mihomo
 自己的 HTTP 路由提供。WebView 禁止文件与 content 访问，只允许回环面板留在应用中；外部
