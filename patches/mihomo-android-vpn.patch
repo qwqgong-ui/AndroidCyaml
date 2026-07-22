@@ -18,47 +18,23 @@ index ace3bc63..c45a4f0e 100644
 +var DefaultProcessNameResolver ProcessNameResolver
 +
 diff --git a/hub/hub.go b/hub/hub.go
-index 29ddd2e6..d09d2c1a 100644
+index 29ddd2e6..8181d732 100644
 --- a/hub/hub.go
 +++ b/hub/hub.go
-@@ -3,0 +4,2 @@ import (
-+	"net/netip"
-+
-@@ -4,0 +7 @@ import (
+@@ -3,0 +4 @@ import (
 +	C "github.com/metacubex/mihomo/constant"
-@@ -53,0 +57,44 @@ func WithSecret(secret string) Option {
-+// WithAndroidVPN attaches mihomo's userspace TUN stack to a descriptor created
-+// by Android VpnService. Android owns interface addressing and routing, so the
-+// core must not attempt privileged netlink changes itself.
+@@ -53,0 +55,22 @@ func WithSecret(secret string) Option {
++// WithAndroidVPN attaches the descriptor created by Android VpnService. gVisor
++// supplies the userspace network stack for an unprivileged Android TUN, while
++// Android owns the interface routes. All other TUN and DNS fields remain config-owned.
 +func WithAndroidVPN(fileDescriptor int) Option {
 +	return func(cfg *config.Config) {
-+		cfg.General.Tun.Enable = true
 +		cfg.General.Tun.FileDescriptor = fileDescriptor
-+		cfg.General.Tun.Device = "AndroidCyaml"
 +		cfg.General.Tun.Stack = C.TunGvisor
-+		cfg.General.Tun.MTU = 1500
 +		cfg.General.Tun.GSO = false
 +		cfg.General.Tun.AutoRoute = false
 +		cfg.General.Tun.AutoRedirect = false
 +		cfg.General.Tun.AutoDetectInterface = false
-+		cfg.General.Tun.Inet4Address = []netip.Prefix{
-+			netip.MustParsePrefix("172.19.0.1/30"),
-+		}
-+		cfg.General.Tun.Inet6Address = []netip.Prefix{
-+			netip.MustParsePrefix("fdfe:dcba:9876::1/126"),
-+		}
-+		// Package filtering is handled by VpnService.Builder. Resolving Android
-+		// packages inside an unprivileged standalone core would require access
-+		// to /data/system/packages.xml, which normal applications cannot read.
-+		cfg.General.Tun.IncludePackage = nil
-+		cfg.General.Tun.ExcludePackage = nil
-+
-+		// The virtual gateway is Android's DNS server. Preserve user DNS
-+		// settings, but enable the parsed defaults when the YAML omitted DNS.
-+		cfg.DNS.Enable = true
-+		if len(cfg.DNS.NameServer) == 0 {
-+			cfg.DNS.NameServer = append(cfg.DNS.NameServer, cfg.DNS.DefaultNameserver...)
-+		}
 +	}
 +}
 +

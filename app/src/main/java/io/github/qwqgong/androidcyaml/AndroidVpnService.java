@@ -39,9 +39,9 @@ public final class AndroidVpnService extends VpnService {
     private static final String TAG = "AndroidCyaml/VPN";
     private static final String NOTIFICATION_CHANNEL = "androidcyaml_vpn";
     private static final int NOTIFICATION_ID = 36;
-    private static final int MTU = 1500;
-    private static final String IPV4_ADDRESS = "172.19.0.1";
-    private static final String IPV4_DNS = "172.19.0.2";
+    private static final int MTU = 9000;
+    private static final String IPV4_ADDRESS = "198.18.0.1";
+    private static final String IPV4_DNS = "198.18.0.2";
     private static final String IPV6_ADDRESS = "fdfe:dcba:9876::1";
     private static final String IPV6_DNS = "fdfe:dcba:9876::2";
 

@@ -12,7 +12,8 @@ AndroidCyaml packages and launches the following upstream works.
 The Android arm64 executable is built by [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh).
 The build applies [`patches/mihomo-android-vpn.patch`](patches/mihomo-android-vpn.patch) to add the
 Android VpnService file-descriptor transport, the system connection-owner lookup bridge, and
-unprivileged TUN defaults. Until Go 1.27 is published, the script also changes the generated
+the Android gVisor runtime compatibility layer. It also avoids inaccessible package-database reads
+when no package filter is configured. Until Go 1.27 is published, the script changes the generated
 checkout's `go` directive from 1.27 to 1.26. The exact corresponding source is the pinned upstream
 commit plus the committed patch.
 

@@ -17,6 +17,9 @@ import android.system.Os;
 import android.system.OsConstants;
 import android.util.Log;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -283,6 +286,10 @@ public final class MihomoManager {
                 throw new IOException(logs.isEmpty()
                         ? "mihomo 控制器未在 90 秒内就绪"
                         : "mihomo 启动失败：" + logs);
+            }
+
+            if (activeTunnel != null) {
+                waitForAndroidTunActive(candidate, activeControllerPort, 5, TimeUnit.SECONDS);
             }
 
             applyPersistedProcessMatchOverride();
@@ -780,6 +787,70 @@ public final class MihomoManager {
             }
         }
         return false;
+    }
+
+    private void waitForAndroidTunActive(
+            Process candidate,
+            int port,
+            long timeout,
+            TimeUnit unit
+    ) throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + unit.toNanos(timeout);
+        IOException lastFailure = null;
+        while (System.nanoTime() < deadline && candidate.isAlive()) {
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL("http://" + HOST + ":" + port + "/configs");
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setConnectTimeout(500);
+                connection.setReadTimeout(500);
+                connection.setRequestProperty("Authorization", "Bearer " + controllerSecret);
+                if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                    throw new IOException("mihomo 控制器无法读取 TUN 状态");
+                }
+                JSONObject tun = new JSONObject(readResponseBody(connection)).optJSONObject("tun");
+                if (tun != null
+                        && tun.optBoolean("enable", false)
+                        && tun.optInt("file-descriptor", 0) > 0) {
+                    return;
+                }
+                lastFailure = new IOException(
+                        "config.yaml 必须设置 tun.enable: true，且 TUN 监听必须成功启动"
+                );
+            } catch (JSONException | IOException exception) {
+                lastFailure = exception instanceof IOException
+                        ? (IOException) exception
+                        : new IOException("无法解析 mihomo TUN 状态", exception);
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+            Thread.sleep(120);
+        }
+        if (!candidate.isAlive()) {
+            throw new IOException("mihomo 在建立 Android TUN 时退出");
+        }
+        throw lastFailure == null
+                ? new IOException("mihomo TUN 未在 5 秒内就绪")
+                : lastFailure;
+    }
+
+    private static String readResponseBody(HttpURLConnection connection) throws IOException {
+        try (InputStream input = connection.getInputStream();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int total = 0;
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > 1024 * 1024) {
+                    throw new IOException("mihomo 控制器响应过大");
+                }
+                output.write(buffer, 0, read);
+            }
+            return new String(output.toByteArray(), StandardCharsets.UTF_8);
+        }
     }
 
     private int findAvailableControllerPort() throws IOException {
