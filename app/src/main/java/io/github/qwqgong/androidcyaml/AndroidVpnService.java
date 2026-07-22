@@ -43,6 +43,8 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
             "io.github.qwqgong.androidcyaml.action.START_VPN";
     public static final String ACTION_STOP =
             "io.github.qwqgong.androidcyaml.action.STOP_VPN";
+    public static final String ACTION_REFRESH =
+            "io.github.qwqgong.androidcyaml.action.REFRESH_VPN_STATE";
 
     private static final String TAG = "AndroidCyaml/VPN";
     private static final String NOTIFICATION_CHANNEL = "androidcyaml_vpn";
@@ -72,6 +74,8 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     private static final Set<Listener> LISTENERS = new CopyOnWriteArraySet<>();
     private static volatile State sharedState = State.STOPPED;
     private static volatile String sharedDetail = "VPN 未连接";
+    private static volatile boolean sharedAlwaysOn;
+    private static volatile boolean sharedLockdown;
 
     private final ExecutorService vpnExecutor = Executors.newSingleThreadExecutor();
 
@@ -92,6 +96,14 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
         LISTENERS.remove(listener);
     }
 
+    public static boolean isAlwaysOnMode() {
+        return sharedAlwaysOn;
+    }
+
+    public static boolean isLockdownMode() {
+        return sharedLockdown;
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -104,8 +116,12 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getAction();
         if (ACTION_STOP.equals(action)) {
-            stopVpn("VPN 已断开");
-            return START_NOT_STICKY;
+            if (isAlwaysOn()) {
+                Log.i(TAG, "Ignoring app stop request while always-on VPN is enabled");
+            } else {
+                stopVpn("VPN 已断开");
+                return START_NOT_STICKY;
+            }
         }
         if (stopping) {
             return START_NOT_STICKY;
@@ -510,29 +526,31 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     }
 
     private Notification buildNotification(String text) {
-        PendingIntent stopIntent = PendingIntent.getService(
-                this,
-                1,
-                new Intent(this, AndroidVpnService.class).setAction(ACTION_STOP),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-        return new Notification.Builder(this, NOTIFICATION_CHANNEL)
+        Notification.Builder builder = new Notification.Builder(this, NOTIFICATION_CHANNEL)
                 .setSmallIcon(R.drawable.ic_vpn_key)
                 .setContentTitle(getString(R.string.vpn_notification_title))
-                .setContentText(text)
+                .setContentText(withSystemMode(text))
                 .setContentIntent(openAppPendingIntent())
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
                 .setOnlyAlertOnce(true)
-                .setOngoing(true)
-                .addAction(
+                .setOngoing(true);
+        if (!isAlwaysOn()) {
+            PendingIntent stopIntent = PendingIntent.getService(
+                    this,
+                    1,
+                    new Intent(this, AndroidVpnService.class).setAction(ACTION_STOP),
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+            builder.addAction(
                         new Notification.Action.Builder(
                                 Icon.createWithResource(this, R.drawable.ic_vpn_key),
                                 getString(R.string.stop_vpn),
                                 stopIntent
                         ).build()
-                )
-                .build();
+                );
+        }
+        return builder.build();
     }
 
     private PendingIntent openAppPendingIntent() {
@@ -555,13 +573,25 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     }
 
     private void publish(State state, String detail) {
+        sharedAlwaysOn = isAlwaysOn();
+        sharedLockdown = isLockdownEnabled();
         sharedState = state;
-        sharedDetail = detail;
+        sharedDetail = withSystemMode(detail);
         MAIN_HANDLER.post(() -> {
             for (Listener listener : LISTENERS) {
                 listener.onVpnStateChanged(sharedState, sharedDetail);
             }
         });
+    }
+
+    private String withSystemMode(String detail) {
+        if (isLockdownEnabled()) {
+            return detail + " · 始终开启/锁定";
+        }
+        if (isAlwaysOn()) {
+            return detail + " · 始终开启";
+        }
+        return detail;
     }
 
     private static void stopHevQuietly() {

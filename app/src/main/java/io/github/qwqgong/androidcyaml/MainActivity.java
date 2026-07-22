@@ -12,6 +12,7 @@ import android.graphics.Insets;
 import android.net.Uri;
 import android.net.VpnService;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.Window;
@@ -41,6 +42,7 @@ public final class MainActivity extends Activity implements
     private static final int MENU_RESTART_CORE = 2;
     private static final int MENU_HIDE_FROM_RECENTS = 3;
     private static final int MENU_RUNTIME_OVERRIDES = 4;
+    private static final int MENU_VPN_SETTINGS = 5;
     private static final String[] PROCESS_MATCH_VALUES = {
             MihomoManager.PROCESS_MATCH_CONFIG,
             MihomoManager.PROCESS_MATCH_STRICT,
@@ -97,13 +99,26 @@ public final class MainActivity extends Activity implements
         manager.ensureStarted();
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (vpnState == AndroidVpnService.State.STARTING
+                || vpnState == AndroidVpnService.State.RUNNING) {
+            startService(
+                    new Intent(this, AndroidVpnService.class)
+                            .setAction(AndroidVpnService.ACTION_REFRESH)
+            );
+        }
+    }
+
     private void showActionsMenu(View anchor) {
         PopupMenu popup = new PopupMenu(this, anchor);
         popup.getMenu().add(0, MENU_IMPORT_CONFIG, 0, R.string.upload_config);
         popup.getMenu().add(0, MENU_RESTART_CORE, 1, R.string.restart_core);
         popup.getMenu().add(0, MENU_RUNTIME_OVERRIDES, 2, R.string.runtime_overrides);
+        popup.getMenu().add(0, MENU_VPN_SETTINGS, 3, R.string.vpn_system_settings);
         popup.getMenu()
-                .add(0, MENU_HIDE_FROM_RECENTS, 3, R.string.hide_from_recents)
+                .add(0, MENU_HIDE_FROM_RECENTS, 4, R.string.hide_from_recents)
                 .setCheckable(true)
                 .setChecked(isTaskHiddenFromRecents());
         popup.setOnMenuItemClickListener(item -> {
@@ -114,6 +129,7 @@ public final class MainActivity extends Activity implements
                     manager.restart();
                 }
                 case MENU_RUNTIME_OVERRIDES -> showRuntimeOverrides();
+                case MENU_VPN_SETTINGS -> openVpnSettings();
                 case MENU_HIDE_FROM_RECENTS -> setTaskHiddenPreference(
                         !isTaskHiddenFromRecents()
                 );
@@ -124,6 +140,14 @@ public final class MainActivity extends Activity implements
             return true;
         });
         popup.show();
+    }
+
+    private void openVpnSettings() {
+        try {
+            startActivity(new Intent(Settings.ACTION_VPN_SETTINGS));
+        } catch (ActivityNotFoundException exception) {
+            Toast.makeText(this, R.string.vpn_settings_failed, Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showRuntimeOverrides() {
@@ -195,6 +219,11 @@ public final class MainActivity extends Activity implements
 
     private void onVpnSwitchChanged(boolean checked) {
         if (updatingVpnSwitch) {
+            return;
+        }
+        if (!checked && AndroidVpnService.isAlwaysOnMode()) {
+            setVpnSwitchChecked(true);
+            Toast.makeText(this, R.string.vpn_always_on_controlled, Toast.LENGTH_LONG).show();
             return;
         }
         if (!checked) {
@@ -358,25 +387,29 @@ public final class MainActivity extends Activity implements
         }
         vpnState = state;
         vpnStatus.setText(detail);
+        boolean alwaysOn = AndroidVpnService.isAlwaysOnMode();
         switch (state) {
             case STARTING -> {
                 vpnStatus.setTextColor(getColor(R.color.on_surface));
+                if (alwaysOn) {
+                    setVpnSwitchChecked(true);
+                }
                 vpnSwitch.setEnabled(false);
             }
             case RUNNING -> {
                 vpnStatus.setTextColor(getColor(R.color.status_ok));
                 setVpnSwitchChecked(true);
-                vpnSwitch.setEnabled(true);
+                vpnSwitch.setEnabled(!alwaysOn);
             }
             case FAILED -> {
                 vpnStatus.setTextColor(getColor(R.color.status_error));
-                setVpnSwitchChecked(false);
-                vpnSwitch.setEnabled(true);
+                setVpnSwitchChecked(alwaysOn);
+                vpnSwitch.setEnabled(!alwaysOn);
             }
             case STOPPED -> {
                 vpnStatus.setTextColor(getColor(R.color.on_surface));
-                setVpnSwitchChecked(false);
-                vpnSwitch.setEnabled(true);
+                setVpnSwitchChecked(alwaysOn);
+                vpnSwitch.setEnabled(!alwaysOn);
             }
         }
     }
