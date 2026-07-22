@@ -1,0 +1,101 @@
+name: Signed Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version name from app/build.gradle.kts, without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate release source
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          grep -Fq "versionName = \"${RELEASE_VERSION}\"" app/build.gradle.kts
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.x"
+          cache: false
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android 16 SDK and NDK
+        run: >-
+          sdkmanager
+          "platforms;android-36"
+          "build-tools;36.0.0"
+          "ndk;29.0.14206865"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Restore release signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "${KEYSTORE_BASE64}" ]]
+          [[ -n "${STORE_PASSWORD}" ]]
+          [[ -n "${KEY_ALIAS}" ]]
+          [[ -n "${KEY_PASSWORD}" ]]
+          keystore="${RUNNER_TEMP}/androidcyaml-release.p12"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          chmod 600 "${keystore}"
+          echo "ANDROID_SIGNING_STORE_FILE=${keystore}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SIGNING_STORE_PASSWORD=${STORE_PASSWORD}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SIGNING_KEY_ALIAS=${KEY_ALIAS}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SIGNING_KEY_PASSWORD=${KEY_PASSWORD}" >> "${GITHUB_ENV}"
+
+      - name: Build signed release and lint
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease :app:lintRelease --stacktrace 2>&1 | tee build-release.log
+
+      - name: Verify and name release APK
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          source_apk="app/build/outputs/apk/release/app-release.apk"
+          release_apk="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk"
+          apksigner verify --verbose --print-certs "${source_apk}"
+          cp "${source_apk}" "${release_apk}"
+          sha256sum "${release_apk}" | tee SHA256SUMS
+
+      - name: Upload signed release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: AndroidCyaml-v${{ inputs.version }}-signed
+          path: |
+            AndroidCyaml-v${{ inputs.version }}-arm64-v8a.apk
+            SHA256SUMS
+            build-release.log
+          if-no-files-found: error
+          retention-days: 30

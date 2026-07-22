@@ -10,5 +10,8 @@ app/src/main/jniLibs/arm64-v8a/libmihomo.so
 app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so
 *.apk
 *.aab
+*.jks
+*.keystore
+signing.properties
 captures/
 .DS_Store
