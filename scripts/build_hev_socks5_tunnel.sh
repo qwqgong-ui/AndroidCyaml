@@ -5,7 +5,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/heiher/hev-socks5-tunnel.git"
 readonly HEV_COMMIT="df11261f09ebafc37bac03f81029c9b75a4aa074"
 readonly NDK_VERSION="29.0.14206865"
-readonly BUILD_RECIPE_VERSION="3"
+readonly BUILD_RECIPE_VERSION="4"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/hev-socks5-tunnel-src"
 readonly BUILD_DIR="${ROOT_DIR}/.third_party/hev-socks5-tunnel-build"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
@@ -80,7 +80,7 @@ APP_OPTIM := release
 APP_PLATFORM := android-35
 APP_ABI := arm64-v8a
 APP_MODULES := hev-socks5-tunnel
-APP_CFLAGS := -O3 -DPKGNAME=io/github/qwqgong/androidcyaml -DCLSNAME=AndroidVpnService
+APP_CFLAGS := -O3 -DPKGNAME=io/github/qwqgong/androidcyaml -DCLSNAME=HevSocks5Tunnel
 APP_LDFLAGS := -Wl,--build-id=none
 APP_SHORT_COMMANDS := true
 APP_SUPPORT_FLEXIBLE_PAGE_SIZES := true
