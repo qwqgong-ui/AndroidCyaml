@@ -10,7 +10,7 @@ import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Serializes every transition that can replace the TUN or mihomo process. */
+/** Serializes every transition that can replace the TUN or embedded mihomo runtime. */
 final class RuntimeCoordinator {
     interface OperationCallback {
         void onComplete(boolean success, String detail);
@@ -29,7 +29,8 @@ final class RuntimeCoordinator {
     private final Ipv6EnvironmentMonitor ipv6Monitor;
 
     private AndroidVpnService service;
-    private AndroidPlatformBridge platformBridge;
+    private AndroidTunManager tunManager;
+    private NativePlatformCallbacks platformCallbacks;
     private volatile MihomoRuntime runtime;
     private volatile boolean ipv6EnvironmentUsable;
     private volatile boolean effectiveIpv6Enabled;
@@ -62,7 +63,7 @@ final class RuntimeCoordinator {
     static int trimMemoryCachesIfCreated() {
         RuntimeCoordinator local = instance;
         MihomoRuntime current = local == null ? null : local.runtime;
-        return current == null ? 0 : current.trimLogCache();
+        return current == null ? MihomoNative.trimMemory() : current.trimLogCache();
     }
 
     static boolean persistStateForMemoryKill() {
@@ -96,7 +97,7 @@ final class RuntimeCoordinator {
                 return;
             }
             if (stateBus.snapshot().state() != RuntimeState.STOPPED) {
-                publish(RuntimeState.STOPPING, "正在停止 mihomo TUN…");
+                publish(RuntimeState.STOPPING, "正在停止 mihomo JNI TUN…");
             }
             cleanupAll();
             service = null;
@@ -107,13 +108,13 @@ final class RuntimeCoordinator {
 
     void restart(OperationCallback callback) {
         executor.execute(() -> {
-            if (service == null || platformBridge == null) {
+            if (!hasActiveService()) {
                 postOperation(callback, false, "VPN 未启动");
                 return;
             }
             try {
-                publish(RuntimeState.STARTING, "正在重启 mihomo 内核…");
-                String detail = startRuntimeOnExistingBridge();
+                publish(RuntimeState.STARTING, "正在重启 mihomo JNI 核心…");
+                String detail = startRuntimeOnExistingService();
                 publish(RuntimeState.RUNNING, detail);
                 postOperation(callback, true, "mihomo 已重启");
             } catch (Exception exception) {
@@ -129,12 +130,20 @@ final class RuntimeCoordinator {
     }
 
     void setRuntimeOverrides(
+            String stackValue,
             boolean processMatching,
             boolean ipv6Enabled,
             OperationCallback callback
     ) {
+        final TunStackMode stack;
+        try {
+            stack = TunStackMode.fromWireValue(stackValue);
+        } catch (IllegalArgumentException exception) {
+            postOperation(callback, false, usefulMessage(exception));
+            return;
+        }
         executor.execute(() -> setRuntimeOverridesInternal(
-                new RuntimeOverrideSettings(processMatching, ipv6Enabled),
+                new RuntimeOverrideSettings(stack, processMatching, ipv6Enabled),
                 callback
         ));
     }
@@ -152,13 +161,14 @@ final class RuntimeCoordinator {
 
         cleanupAll();
         service = requestedService;
+        tunManager = new AndroidTunManager(requestedService);
+        platformCallbacks = new NativePlatformCallbacks(requestedService);
         ipv6EnvironmentUsable = ipv6Monitor.start(
                 usable -> executor.execute(() -> onIpv6EnvironmentChanged(usable))
         );
-        publish(RuntimeState.STARTING, "正在启动 mihomo 并申请原生 TUN…");
+        publish(RuntimeState.STARTING, "正在启动同进程 mihomo JNI TUN…");
         try {
-            platformBridge = new AndroidPlatformBridge(requestedService);
-            String detail = startRuntimeOnExistingBridge();
+            String detail = startRuntimeOnExistingService();
             publish(RuntimeState.RUNNING, detail);
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
@@ -168,7 +178,7 @@ final class RuntimeCoordinator {
         }
     }
 
-    private String startRuntimeOnExistingBridge() throws IOException, InterruptedException {
+    private String startRuntimeOnExistingService() throws IOException, InterruptedException {
         RuntimeOverrideSettings settings = overrideStore.settings();
         boolean requestedIpv6 = settings.ipv6Enabled() && ipv6EnvironmentUsable;
         try {
@@ -201,38 +211,43 @@ final class RuntimeCoordinator {
             RuntimeOverrideSettings settings,
             boolean ipv6Enabled
     ) throws IOException, InterruptedException {
-        if (platformBridge == null) {
-            throw new IOException("Android 平台桥未启动");
+        if (!hasActiveService()) {
+            throw new IOException("Android VPN 服务尚未初始化");
         }
         closeRuntime();
         MihomoRuntime candidate = new MihomoRuntime(
                 context,
-                platformBridge.coreSocketAddress(),
                 fileStore,
-                settings.processMatching(),
-                ipv6Enabled,
-                this::onUnexpectedExit
+                tunManager,
+                platformCallbacks,
+                settings,
+                ipv6Enabled
         );
         runtime = candidate;
-        String runningDetail = candidate.start();
-        if (!platformBridge.hasUsableTunnel()) {
-            closeRuntime();
-            throw new IOException("mihomo 未建立 Android TUN");
+        try {
+            String runningDetail = candidate.start();
+            if (!tunManager.hasUsableTunnel()) {
+                throw new IOException("mihomo 未建立 Android TUN");
+            }
+            effectiveIpv6Enabled = ipv6Enabled;
+            return runningDetail;
+        } catch (IOException | InterruptedException exception) {
+            candidate.close();
+            runtime = null;
+            throw exception;
         }
-        effectiveIpv6Enabled = ipv6Enabled;
-        return runningDetail;
     }
 
     private void importConfigInternal(Uri source, OperationCallback callback) {
         try (ConfigInstaller.Transaction transaction = configInstaller.install(source)) {
-            if (service != null && platformBridge != null) {
-                publish(RuntimeState.STARTING, "配置已校验，正在重启 mihomo TUN…");
+            if (hasActiveService()) {
+                publish(RuntimeState.STARTING, "配置已校验，正在重启 mihomo JNI TUN…");
                 try {
-                    String detail = startRuntimeOnExistingBridge();
+                    String detail = startRuntimeOnExistingService();
                     publish(RuntimeState.RUNNING, detail);
                 } catch (Exception startFailure) {
                     transaction.rollback();
-                    String restoredDetail = startRuntimeOnExistingBridge();
+                    String restoredDetail = startRuntimeOnExistingService();
                     publish(RuntimeState.RUNNING, restoredDetail);
                     throw new IOException(
                             "新配置无法启动，已恢复上一份配置：" + usefulMessage(startFailure),
@@ -241,7 +256,7 @@ final class RuntimeCoordinator {
                 }
             }
             transaction.commit();
-            postOperation(callback, true, "配置已通过 mihomo 校验并安装");
+            postOperation(callback, true, "配置已通过嵌入式 mihomo 校验并安装");
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -273,16 +288,16 @@ final class RuntimeCoordinator {
         }
 
         ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
-        if (service == null || platformBridge == null) {
+        if (!hasActiveService()) {
             effectiveIpv6Enabled = requested.ipv6Enabled() && ipv6EnvironmentUsable;
             stateBus.publish(stateBus.snapshot());
             postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
             return;
         }
 
-        publish(RuntimeState.STARTING, "正在应用运行时覆写并重启 mihomo…");
+        publish(RuntimeState.STARTING, "正在应用运行时覆写并重建 JNI TUN…");
         try {
-            String detail = startRuntimeOnExistingBridge();
+            String detail = startRuntimeOnExistingService();
             publish(RuntimeState.RUNNING, detail);
             postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
         } catch (Exception applyFailure) {
@@ -290,7 +305,7 @@ final class RuntimeCoordinator {
                 overrideStore.setSettings(previous);
                 ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
                 publish(RuntimeState.STARTING, "覆写应用失败，正在恢复上一状态…");
-                String detail = startRuntimeOnExistingBridge();
+                String detail = startRuntimeOnExistingService();
                 publish(RuntimeState.RUNNING, detail);
                 postOperation(
                         callback,
@@ -315,7 +330,7 @@ final class RuntimeCoordinator {
         ipv6EnvironmentUsable = usable;
         RuntimeOverrideSettings settings = overrideStore.settings();
         boolean targetIpv6 = settings.ipv6Enabled() && usable;
-        if (service == null || platformBridge == null) {
+        if (!hasActiveService()) {
             effectiveIpv6Enabled = targetIpv6;
             stateBus.publish(stateBus.snapshot());
             return;
@@ -328,26 +343,19 @@ final class RuntimeCoordinator {
         publish(
                 RuntimeState.STARTING,
                 usable
-                        ? "IPv6 环境已恢复，正在重载 mihomo…"
-                        : "当前 IPv6 环境不可用，正在重载并关闭 IPv6…"
+                        ? "IPv6 环境已恢复，正在重建 JNI TUN…"
+                        : "当前 IPv6 环境不可用，正在重建为 IPv4-only…"
         );
         try {
-            String detail = startRuntimeOnExistingBridge();
+            String detail = startRuntimeOnExistingService();
             publish(RuntimeState.RUNNING, detail);
         } catch (Exception exception) {
             failActiveService("IPv6 环境切换失败：" + usefulMessage(exception));
         }
     }
 
-    private void onUnexpectedExit(MihomoRuntime source, int exitCode, String diagnostics) {
-        executor.execute(() -> {
-            if (runtime != source) {
-                return;
-            }
-            String message = "mihomo 异常退出（" + exitCode + ")"
-                    + (diagnostics == null || diagnostics.isBlank() ? "" : "：" + diagnostics);
-            failActiveService(message);
-        });
+    private boolean hasActiveService() {
+        return service != null && tunManager != null && platformCallbacks != null;
     }
 
     private void failActiveService(String message) {
@@ -363,10 +371,11 @@ final class RuntimeCoordinator {
     private void cleanupAll() {
         ipv6Monitor.stop();
         closeRuntime();
-        if (platformBridge != null) {
-            platformBridge.close();
-            platformBridge = null;
+        if (tunManager != null) {
+            tunManager.close();
+            tunManager = null;
         }
+        platformCallbacks = null;
         effectiveIpv6Enabled = false;
     }
 
@@ -404,6 +413,11 @@ final class RuntimeCoordinator {
             RuntimeOverrideSettings settings,
             boolean ipv6Effective
     ) {
+        String stack = switch (settings.tunStack()) {
+            case SYSTEM -> "system 全栈";
+            case GVISOR -> "gVisor 全栈";
+            case MIXED -> "mixed（TCP system / UDP gVisor）";
+        };
         String process = settings.processMatching() ? "进程匹配已开启" : "进程匹配已关闭";
         String ipv6;
         if (!settings.ipv6Enabled()) {
@@ -413,7 +427,7 @@ final class RuntimeCoordinator {
         } else {
             ipv6 = "IPv6 已开启，但当前环境不可用，已自动使用 IPv4";
         }
-        return "强制 gVisor；" + process + "；" + ipv6;
+        return stack + "；" + process + "；" + ipv6;
     }
 
     private static String usefulMessage(Throwable throwable) {
