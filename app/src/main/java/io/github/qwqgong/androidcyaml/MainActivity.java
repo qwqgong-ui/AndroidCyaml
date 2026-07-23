@@ -34,7 +34,9 @@ public final class MainActivity extends Activity implements
 
     private RuntimeState runtimeState = RuntimeState.STOPPED;
     private String runtimeDetail = "VPN 未连接";
-    private TunStackOverride tunStackOverride = TunStackOverride.CONFIG;
+    private boolean processMatching = true;
+    private boolean ipv6Enabled = true;
+    private boolean ipv6Effective = true;
     private boolean alwaysOn;
     private boolean lockdown;
     private boolean updatingVpnToggle;
@@ -124,17 +126,17 @@ public final class MainActivity extends Activity implements
             boolean newLockdown,
             String dashboardUrl,
             int controllerPort,
-            String newTunStackOverride
+            boolean newProcessMatching,
+            boolean newIpv6Enabled,
+            boolean newIpv6Effective
     ) {
         RuntimeState[] values = RuntimeState.values();
         RuntimeState parsed = state >= 0 && state < values.length
                 ? values[state]
                 : RuntimeState.FAILED;
-        try {
-            tunStackOverride = TunStackOverride.fromWireValue(newTunStackOverride);
-        } catch (IllegalArgumentException ignored) {
-            tunStackOverride = TunStackOverride.CONFIG;
-        }
+        processMatching = newProcessMatching;
+        ipv6Enabled = newIpv6Enabled;
+        ipv6Effective = newIpv6Effective;
         applySnapshot(
                 new RuntimeSnapshot(parsed, detail, dashboardUrl, controllerPort),
                 newAlwaysOn,
@@ -165,9 +167,12 @@ public final class MainActivity extends Activity implements
     public void onOpenRuntimeOverrides() {
         RuntimeOverridesDialog.show(
                 this,
-                tunStackOverride,
-                override -> controlClient.setTunStackOverride(
-                        override,
+                processMatching,
+                ipv6Enabled,
+                ipv6Effective,
+                (newProcessMatching, newIpv6Enabled) -> controlClient.setRuntimeOverrides(
+                        newProcessMatching,
+                        newIpv6Enabled,
                         (success, detail) -> showToast(success
                                 ? getString(R.string.runtime_override_applied, detail)
                                 : getString(R.string.runtime_override_failed, detail))
