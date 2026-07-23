@@ -90,12 +90,16 @@ jobs:
           echo "ANDROID_SIGNING_KEY_ALIAS=${KEY_ALIAS}" >> "${GITHUB_ENV}"
           echo "ANDROID_SIGNING_KEY_PASSWORD=${KEY_PASSWORD}" >> "${GITHUB_ENV}"
 
-      - name: Build signed release and lint
+      - name: Build, lint and verify native runtime
         shell: bash
         run: |
           set -o pipefail
           status=0
           ./gradlew :app:assembleRelease :app:lintRelease --stacktrace 2>&1 | tee build-release.log || status=$?
+          if (( status == 0 )); then
+            bash scripts/verify_native_runtime.sh \
+              app/build/outputs/apk/release/app-release.apk 2>&1 | tee -a build-release.log || status=$?
+          fi
           if (( status != 0 )); then
             while IFS= read -r report; do
               {
