@@ -19,6 +19,7 @@ final class RuntimeControlClient {
                 boolean lockdown,
                 String dashboardUrl,
                 int controllerPort,
+                String tunStack,
                 boolean processMatching,
                 boolean ipv6Enabled,
                 boolean ipv6Effective
@@ -47,6 +48,7 @@ final class RuntimeControlClient {
                 boolean lockdown,
                 String dashboardUrl,
                 int controllerPort,
+                String tunStack,
                 boolean processMatching,
                 boolean ipv6Enabled,
                 boolean ipv6Effective
@@ -58,6 +60,7 @@ final class RuntimeControlClient {
                     lockdown,
                     dashboardUrl,
                     controllerPort,
+                    tunStack,
                     processMatching,
                     ipv6Enabled,
                     ipv6Effective
@@ -166,6 +169,7 @@ final class RuntimeControlClient {
     }
 
     void setRuntimeOverrides(
+            TunStackMode tunStack,
             boolean processMatching,
             boolean ipv6Enabled,
             ResultCallback result
@@ -175,8 +179,10 @@ final class RuntimeControlClient {
             result.onComplete(false, "运行时控制服务暂不可用");
             return;
         }
+        TunStackMode stack = tunStack == null ? TunStackMode.SYSTEM : tunStack;
         try {
             current.setRuntimeOverrides(
+                    stack.wireValue(),
                     processMatching,
                     ipv6Enabled,
                     operationCallback(result)
