@@ -8,6 +8,8 @@ oneway interface IControlCallback {
             boolean lockdown,
             String dashboardUrl,
             int controllerPort,
-            String tunStackOverride
+            boolean processMatching,
+            boolean ipv6Enabled,
+            boolean ipv6Effective
     );
 }
