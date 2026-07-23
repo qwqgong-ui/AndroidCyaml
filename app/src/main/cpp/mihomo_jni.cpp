@@ -126,9 +126,8 @@ jobject localCallback(JNIEnv* env, jmethodID* protect, jmethodID* resolve) {
     }
     return env->NewLocalRef(g_callback);
 }
-}  // namespace
 
-extern "C" int androidcyaml_protect_socket(int fd) {
+int protectSocketCallback(int fd) {
     AttachedEnv attached;
     JNIEnv* env = attached.get();
     if (env == nullptr) {
@@ -148,7 +147,7 @@ extern "C" int androidcyaml_protect_socket(int fd) {
     return protected_socket == JNI_TRUE ? 1 : 0;
 }
 
-extern "C" char* androidcyaml_resolve_process(
+char* resolveProcessCallback(
         int protocol,
         const char* source_address,
         int source_port,
@@ -207,13 +206,19 @@ extern "C" char* androidcyaml_resolve_process(
     env->DeleteLocalRef(result);
     return copy;
 }
+}  // namespace
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     g_vm = vm;
+    AndroidCyamlInstallCallbacks(
+            reinterpret_cast<void*>(&protectSocketCallback),
+            reinterpret_cast<void*>(&resolveProcessCallback)
+    );
     return JNI_VERSION_1_6;
 }
 
 extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void*) {
+    AndroidCyamlInstallCallbacks(nullptr, nullptr);
     JNIEnv* env = nullptr;
     if (vm != nullptr && vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
         clearCallback(env);
