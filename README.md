@@ -1,7 +1,7 @@
 # AndroidCyaml
 
 AndroidCyaml 是一个面向 Android 16（API 36）、仅提供 `arm64-v8a` 构建的 mihomo VPN 外壳。
-版本 1.0 起，项目废弃 HEV/tun2socks/SOCKS 中转路径，系统流量由 mihomo 自身的 TUN 栈直接处理：
+自 0.6.130 起，项目废弃 HEV/tun2socks/SOCKS 中转路径，系统流量由 mihomo 自身的 TUN 栈直接处理：
 
 ```text
 Android 应用

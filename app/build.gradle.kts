@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "1aae4d5ea2dafaaa819490882c013492495f9d12"
+val mihomoCommit = "f8d525565d3d1488835749b9cab8450ad9248b07"
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 
@@ -27,8 +27,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.0.0"
+        versionCode = 130
+        versionName = "0.6.130"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
