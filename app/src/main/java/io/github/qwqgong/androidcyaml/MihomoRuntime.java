@@ -14,7 +14,8 @@ final class MihomoRuntime implements AutoCloseable {
     private final String platformSocket;
     private final ExitListener exitListener;
     private final MihomoFileStore fileStore;
-    private final TunStackOverride tunStackOverride;
+    private final boolean processMatching;
+    private final boolean ipv6Enabled;
     private final String controllerSecret;
 
     private MihomoProcess process;
@@ -24,15 +25,15 @@ final class MihomoRuntime implements AutoCloseable {
             Context context,
             String platformSocket,
             MihomoFileStore fileStore,
-            TunStackOverride tunStackOverride,
+            boolean processMatching,
+            boolean ipv6Enabled,
             ExitListener exitListener
     ) {
         this.context = context.getApplicationContext();
         this.platformSocket = platformSocket;
         this.fileStore = fileStore;
-        this.tunStackOverride = tunStackOverride == null
-                ? TunStackOverride.CONFIG
-                : tunStackOverride;
+        this.processMatching = processMatching;
+        this.ipv6Enabled = ipv6Enabled;
         this.exitListener = exitListener;
         controllerSecret = ControllerSecretStore.getOrCreate(this.context);
     }
@@ -46,7 +47,8 @@ final class MihomoRuntime implements AutoCloseable {
                 platformSocket,
                 controller,
                 controllerSecret,
-                tunStackOverride,
+                processMatching,
+                ipv6Enabled,
                 this::handleUnexpectedExit
         );
         try {
@@ -54,10 +56,10 @@ final class MihomoRuntime implements AutoCloseable {
             controller.awaitReady(rawProcess, 90, TimeUnit.SECONDS);
             controller.awaitTun(rawProcess, 10, TimeUnit.SECONDS);
             process.markReady();
-            String stackDetail = tunStackOverride == TunStackOverride.GVISOR
-                    ? "gVisor 覆写"
-                    : "跟随配置";
-            return "mihomo " + shortCommit() + " · 原生 TUN · " + stackDetail
+            return "mihomo " + shortCommit()
+                    + " · gVisor"
+                    + (processMatching ? " · 进程匹配" : " · 不匹配进程")
+                    + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
                     + " · zashboard " + BuildConfig.ZASHBOARD_VERSION;
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
