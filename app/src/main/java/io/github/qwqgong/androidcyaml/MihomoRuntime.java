@@ -14,6 +14,7 @@ final class MihomoRuntime implements AutoCloseable {
     private final String platformSocket;
     private final ExitListener exitListener;
     private final MihomoFileStore fileStore;
+    private final TunStackOverride tunStackOverride;
     private final String controllerSecret;
 
     private MihomoProcess process;
@@ -23,11 +24,15 @@ final class MihomoRuntime implements AutoCloseable {
             Context context,
             String platformSocket,
             MihomoFileStore fileStore,
+            TunStackOverride tunStackOverride,
             ExitListener exitListener
     ) {
         this.context = context.getApplicationContext();
         this.platformSocket = platformSocket;
         this.fileStore = fileStore;
+        this.tunStackOverride = tunStackOverride == null
+                ? TunStackOverride.CONFIG
+                : tunStackOverride;
         this.exitListener = exitListener;
         controllerSecret = ControllerSecretStore.getOrCreate(this.context);
     }
@@ -41,6 +46,7 @@ final class MihomoRuntime implements AutoCloseable {
                 platformSocket,
                 controller,
                 controllerSecret,
+                tunStackOverride,
                 this::handleUnexpectedExit
         );
         try {
@@ -48,8 +54,11 @@ final class MihomoRuntime implements AutoCloseable {
             controller.awaitReady(rawProcess, 90, TimeUnit.SECONDS);
             controller.awaitTun(rawProcess, 10, TimeUnit.SECONDS);
             process.markReady();
-            return "mihomo " + shortCommit() + " · 原生 TUN · zashboard "
-                    + BuildConfig.ZASHBOARD_VERSION;
+            String stackDetail = tunStackOverride == TunStackOverride.GVISOR
+                    ? "gVisor 覆写"
+                    : "跟随配置";
+            return "mihomo " + shortCommit() + " · 原生 TUN · " + stackDetail
+                    + " · zashboard " + BuildConfig.ZASHBOARD_VERSION;
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
