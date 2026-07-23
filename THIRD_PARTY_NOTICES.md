@@ -5,7 +5,7 @@ AndroidCyaml packages and launches the following upstream works.
 ## mihomo
 
 - Project: <https://github.com/qwqgong-ui/mihomo>
-- Pinned commit: `6f5e165f4ad98a07d9a8284bf46617580aa05e8a`
+- Pinned commit: `88e9f2110ff7946ec62018ee73a8e3c5a74b8687`
 - License: GNU General Public License v3.0
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
@@ -16,10 +16,11 @@ to the C++ JNI wrapper `libandroidcyaml.so` and runs in the Android VPN service 
 
 AndroidCyaml applies no post-checkout source patch. The pinned fork contains the exported embedded
 runtime API used to validate and apply configuration, start sing-tun on an Android-provided file
-descriptor, protect each real outbound socket through `VpnService.protect(fd)`, resolve Android
-connection owners, and select the system, gVisor, or mixed TUN stack. The Android interface contract
-uses `172.19.0.1/30`, optional `fdfe:dcba:9876::1/126`, MTU 9000, and disabled GSO so the system stack
-has the adjacent addresses required by its TCP NAT listener.
+descriptor, register non-circular JNI function-pointer callbacks, protect each real outbound socket
+through `VpnService.protect(fd)`, resolve Android connection owners, and select the system, gVisor, or
+mixed TUN stack. The Android interface contract uses `172.19.0.1/30`, optional
+`fdfe:dcba:9876::1/126`, MTU 9000, and disabled GSO so the system stack has the adjacent addresses
+required by its TCP NAT listener.
 
 ## zashboard
 
