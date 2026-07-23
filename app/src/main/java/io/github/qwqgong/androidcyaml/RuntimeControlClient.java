@@ -19,7 +19,9 @@ final class RuntimeControlClient {
                 boolean lockdown,
                 String dashboardUrl,
                 int controllerPort,
-                String tunStackOverride
+                boolean processMatching,
+                boolean ipv6Enabled,
+                boolean ipv6Effective
         );
 
         void onControlDisconnected();
@@ -45,7 +47,9 @@ final class RuntimeControlClient {
                 boolean lockdown,
                 String dashboardUrl,
                 int controllerPort,
-                String tunStackOverride
+                boolean processMatching,
+                boolean ipv6Enabled,
+                boolean ipv6Effective
         ) {
             mainHandler.post(() -> listener.onRuntimeSnapshot(
                     state,
@@ -54,7 +58,9 @@ final class RuntimeControlClient {
                     lockdown,
                     dashboardUrl,
                     controllerPort,
-                    tunStackOverride
+                    processMatching,
+                    ipv6Enabled,
+                    ipv6Effective
             ));
         }
     };
@@ -159,15 +165,22 @@ final class RuntimeControlClient {
         }
     }
 
-    void setTunStackOverride(TunStackOverride override, ResultCallback result) {
+    void setRuntimeOverrides(
+            boolean processMatching,
+            boolean ipv6Enabled,
+            ResultCallback result
+    ) {
         IAppControl current = service;
         if (current == null) {
             result.onComplete(false, "运行时控制服务暂不可用");
             return;
         }
-        TunStackOverride value = override == null ? TunStackOverride.CONFIG : override;
         try {
-            current.setTunStackOverride(value.wireValue(), operationCallback(result));
+            current.setRuntimeOverrides(
+                    processMatching,
+                    ipv6Enabled,
+                    operationCallback(result)
+            );
         } catch (RemoteException exception) {
             disconnect();
             result.onComplete(false, usefulMessage(exception));
