@@ -41,14 +41,14 @@ final class RuntimeOverridesDialog {
                 R.string.override_process_matching,
                 processMatching
         );
-        content.addView(process, topSpaced());
+        content.addView(process, topSpaced(context));
         content.addView(summary(
                 context,
                 context.getString(R.string.override_process_matching_summary)
         ), matchWidth());
 
         Switch ipv6 = switchView(context, R.string.override_ipv6, ipv6Enabled);
-        content.addView(ipv6, topSpaced());
+        content.addView(ipv6, topSpaced(context));
         TextView ipv6Status = summary(context, ipv6Status(context, ipv6Enabled, ipv6Effective));
         content.addView(ipv6Status, matchWidth());
         ipv6.setOnCheckedChangeListener((button, checked) -> ipv6Status.setText(
@@ -107,9 +107,9 @@ final class RuntimeOverridesDialog {
         );
     }
 
-    private static LinearLayout.LayoutParams topSpaced() {
+    private static LinearLayout.LayoutParams topSpaced(Context context) {
         LinearLayout.LayoutParams params = matchWidth();
-        params.topMargin = 12;
+        params.topMargin = dp(context, 12);
         return params;
     }
 
