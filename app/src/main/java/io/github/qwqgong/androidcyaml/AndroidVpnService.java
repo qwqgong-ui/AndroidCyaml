@@ -4,19 +4,20 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
 import android.net.VpnService;
 import android.util.Log;
 
-public final class AndroidVpnService extends VpnService implements RuntimeCoordinator.Listener {
+public final class AndroidVpnService extends VpnService implements
+        RuntimeStateBus.Listener,
+        VpnPlatformHost {
     public static final String ACTION_START =
             "io.github.qwqgong.androidcyaml.action.START_VPN";
     public static final String ACTION_STOP =
             "io.github.qwqgong.androidcyaml.action.STOP_VPN";
-    public static final String ACTION_REFRESH =
-            "io.github.qwqgong.androidcyaml.action.REFRESH_VPN_STATE";
 
     private static final String TAG = "AndroidCyaml/VPN";
     private static final String NOTIFICATION_CHANNEL = "androidcyaml_vpn";
@@ -27,6 +28,7 @@ public final class AndroidVpnService extends VpnService implements RuntimeCoordi
 
     private RuntimeCoordinator coordinator;
     private volatile boolean stopping;
+    private volatile boolean foregroundActive;
 
     public static boolean isAlwaysOnMode() {
         return sharedAlwaysOn;
@@ -57,16 +59,15 @@ public final class AndroidVpnService extends VpnService implements RuntimeCoordi
             requestStop();
             return START_NOT_STICKY;
         }
-        if (stopping) {
-            return START_NOT_STICKY;
-        }
 
+        stopping = false;
         try {
             startForeground(
                     NOTIFICATION_ID,
                     buildNotification(getString(R.string.vpn_starting)),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
             );
+            foregroundActive = true;
         } catch (RuntimeException exception) {
             Log.e(TAG, "Unable to enter foreground mode", exception);
             stopSelf();
@@ -92,32 +93,32 @@ public final class AndroidVpnService extends VpnService implements RuntimeCoordi
     }
 
     @Override
-    public void onRuntimeStateChanged(
-            RuntimeCoordinator.State state,
-            String detail,
-            String dashboardUrl,
-            int controllerPort
-    ) {
+    public void onRuntimeStateChanged(RuntimeSnapshot snapshot) {
         updateManagedMode();
-        switch (state) {
+        if (!foregroundActive) {
+            return;
+        }
+        switch (snapshot.state()) {
             case STARTING -> updateNotification(getString(R.string.vpn_starting));
             case RUNNING -> updateNotification(getString(R.string.vpn_connected_native_tun));
             case STOPPING -> updateNotification(getString(R.string.vpn_stopping));
-            case FAILED -> updateNotification(detail);
-            case STOPPED -> {
-                if (!stopping && !sharedAlwaysOn) {
-                    stopForeground(STOP_FOREGROUND_REMOVE);
-                    stopSelf();
-                }
-            }
+            case FAILED -> updateNotification(snapshot.detail());
+            case STOPPED -> updateNotification(getString(R.string.vpn_stopped));
         }
     }
 
-    Builder newPlatformBuilder() {
+    @Override
+    public Context platformContext() {
+        return this;
+    }
+
+    @Override
+    public Builder newPlatformBuilder() {
         return new Builder();
     }
 
-    PendingIntent openAppPendingIntent() {
+    @Override
+    public PendingIntent openAppPendingIntent() {
         Intent intent = new Intent(this, MainActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         return PendingIntent.getActivity(
@@ -131,6 +132,7 @@ public final class AndroidVpnService extends VpnService implements RuntimeCoordi
     void onCoordinatorFailure(String message) {
         updateNotification(message);
         stopping = true;
+        foregroundActive = false;
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -142,6 +144,7 @@ public final class AndroidVpnService extends VpnService implements RuntimeCoordi
         stopping = true;
         updateNotification(getString(R.string.vpn_stopping));
         coordinator.stop(this, () -> {
+            foregroundActive = false;
             stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
         });
@@ -182,27 +185,24 @@ public final class AndroidVpnService extends VpnService implements RuntimeCoordi
                 .setCategory(Notification.CATEGORY_SERVICE)
                 .setOnlyAlertOnce(true);
         if (!sharedAlwaysOn) {
-            Intent stopIntent = new Intent(this, AndroidVpnService.class).setAction(ACTION_STOP);
-            PendingIntent stopPendingIntent = PendingIntent.getService(
+            PendingIntent stop = PendingIntent.getService(
                     this,
                     1,
-                    stopIntent,
+                    new Intent(this, AndroidVpnService.class).setAction(ACTION_STOP),
                     PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
             );
-            builder.addAction(
-                    new Notification.Action.Builder(
-                            Icon.createWithResource(this, R.mipmap.ic_launcher),
-                            getString(R.string.stop_vpn),
-                            stopPendingIntent
-                    ).build()
-            );
+            builder.addAction(new Notification.Action.Builder(
+                    Icon.createWithResource(this, R.mipmap.ic_launcher),
+                    getString(R.string.stop_vpn),
+                    stop
+            ).build());
         }
         return builder.build();
     }
 
     private void updateNotification(String text) {
         NotificationManager manager = getSystemService(NotificationManager.class);
-        if (manager != null) {
+        if (manager != null && foregroundActive) {
             manager.notify(NOTIFICATION_ID, buildNotification(text));
         }
     }

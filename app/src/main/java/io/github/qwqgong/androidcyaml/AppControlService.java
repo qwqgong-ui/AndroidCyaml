@@ -10,15 +10,12 @@ import android.os.Looper;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 
-public final class AppControlService extends Service implements RuntimeCoordinator.Listener {
+public final class AppControlService extends Service implements RuntimeStateBus.Listener {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final RemoteCallbackList<IControlCallback> callbacks = new RemoteCallbackList<>();
 
     private RuntimeCoordinator coordinator;
-    private RuntimeCoordinator.State state = RuntimeCoordinator.State.STOPPED;
-    private String detail = "VPN 未连接";
-    private String dashboardUrl = "";
-    private int controllerPort;
+    private RuntimeSnapshot snapshot = RuntimeSnapshot.stopped();
 
     private final IAppControl.Stub binder = new IAppControl.Stub() {
         @Override
@@ -76,16 +73,8 @@ public final class AppControlService extends Service implements RuntimeCoordinat
     }
 
     @Override
-    public void onRuntimeStateChanged(
-            RuntimeCoordinator.State newState,
-            String newDetail,
-            String newDashboardUrl,
-            int newControllerPort
-    ) {
-        state = newState;
-        detail = newDetail;
-        dashboardUrl = newDashboardUrl;
-        controllerPort = newControllerPort;
+    public void onRuntimeStateChanged(RuntimeSnapshot next) {
+        snapshot = next;
         broadcastSnapshot();
     }
 
@@ -101,14 +90,15 @@ public final class AppControlService extends Service implements RuntimeCoordinat
     }
 
     private void sendSnapshot(IControlCallback callback) {
+        RuntimeSnapshot current = snapshot;
         try {
             callback.onStateChanged(
-                    state.ordinal(),
-                    detail,
+                    current.state().ordinal(),
+                    current.detail(),
                     AndroidVpnService.isAlwaysOnMode(),
                     AndroidVpnService.isLockdownMode(),
-                    state == RuntimeCoordinator.State.RUNNING ? dashboardUrl : "",
-                    state == RuntimeCoordinator.State.RUNNING ? controllerPort : 0
+                    current.state() == RuntimeState.RUNNING ? current.dashboardUrl() : "",
+                    current.state() == RuntimeState.RUNNING ? current.controllerPort() : 0
             );
         } catch (RemoteException ignored) {
             // RemoteCallbackList removes dead UI callbacks automatically.
