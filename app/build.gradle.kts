@@ -10,8 +10,8 @@ val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 
 val releaseStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE")
 val releaseStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
-val releaseKeyAlias = System.getenv("ANDROID_RELEASE_KEY_ALIAS")
-val releaseKeyPassword = System.getenv("ANDROID_RELEASE_KEY_PASSWORD")
+val releaseKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD")
 val releaseSigningConfigured = listOf(
     releaseStoreFile,
     releaseStorePassword,
