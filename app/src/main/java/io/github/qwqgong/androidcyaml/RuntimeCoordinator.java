@@ -26,16 +26,23 @@ final class RuntimeCoordinator {
     private final MihomoFileStore fileStore;
     private final ConfigInstaller configInstaller;
     private final RuntimeOverrideStore overrideStore;
+    private final Ipv6EnvironmentMonitor ipv6Monitor;
 
     private AndroidVpnService service;
     private AndroidPlatformBridge platformBridge;
     private volatile MihomoRuntime runtime;
+    private volatile boolean ipv6EnvironmentUsable;
+    private volatile boolean effectiveIpv6Enabled;
 
     private RuntimeCoordinator(Context context) {
         this.context = context.getApplicationContext();
         fileStore = new MihomoFileStore(this.context);
         configInstaller = new ConfigInstaller(this.context, fileStore);
         overrideStore = new RuntimeOverrideStore(this.context);
+        ipv6Monitor = new Ipv6EnvironmentMonitor(this.context);
+        RuntimeOverrideSettings settings = overrideStore.settings();
+        ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
+        effectiveIpv6Enabled = settings.ipv6Enabled() && ipv6EnvironmentUsable;
     }
 
     static RuntimeCoordinator getInstance(Context context) {
@@ -62,8 +69,12 @@ final class RuntimeCoordinator {
         return true;
     }
 
-    TunStackOverride tunStackOverride() {
-        return overrideStore.tunStackOverride();
+    RuntimeOverrideSettings runtimeOverrideSettings() {
+        return overrideStore.settings();
+    }
+
+    boolean effectiveIpv6Enabled() {
+        return effectiveIpv6Enabled;
     }
 
     void addListener(RuntimeStateBus.Listener listener) {
@@ -102,7 +113,8 @@ final class RuntimeCoordinator {
             }
             try {
                 publish(RuntimeState.STARTING, "正在重启 mihomo 内核…");
-                startRuntimeOnExistingBridge();
+                String detail = startRuntimeOnExistingBridge();
+                publish(RuntimeState.RUNNING, detail);
                 postOperation(callback, true, "mihomo 已重启");
             } catch (Exception exception) {
                 String message = usefulMessage(exception);
@@ -116,8 +128,15 @@ final class RuntimeCoordinator {
         executor.execute(() -> importConfigInternal(source, callback));
     }
 
-    void setTunStackOverride(String value, OperationCallback callback) {
-        executor.execute(() -> setTunStackOverrideInternal(value, callback));
+    void setRuntimeOverrides(
+            boolean processMatching,
+            boolean ipv6Enabled,
+            OperationCallback callback
+    ) {
+        executor.execute(() -> setRuntimeOverridesInternal(
+                new RuntimeOverrideSettings(processMatching, ipv6Enabled),
+                callback
+        ));
     }
 
     private void startInternal(AndroidVpnService requestedService) {
@@ -133,10 +152,14 @@ final class RuntimeCoordinator {
 
         cleanupAll();
         service = requestedService;
+        ipv6EnvironmentUsable = ipv6Monitor.start(
+                usable -> executor.execute(() -> onIpv6EnvironmentChanged(usable))
+        );
         publish(RuntimeState.STARTING, "正在启动 mihomo 并申请原生 TUN…");
         try {
             platformBridge = new AndroidPlatformBridge(requestedService);
-            startRuntimeOnExistingBridge();
+            String detail = startRuntimeOnExistingBridge();
+            publish(RuntimeState.RUNNING, detail);
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -145,7 +168,39 @@ final class RuntimeCoordinator {
         }
     }
 
-    private void startRuntimeOnExistingBridge() throws IOException, InterruptedException {
+    private String startRuntimeOnExistingBridge() throws IOException, InterruptedException {
+        RuntimeOverrideSettings settings = overrideStore.settings();
+        boolean requestedIpv6 = settings.ipv6Enabled() && ipv6EnvironmentUsable;
+        try {
+            return startRuntime(settings, requestedIpv6);
+        } catch (IOException | InterruptedException firstFailure) {
+            if (!requestedIpv6) {
+                throw firstFailure;
+            }
+            if (firstFailure instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+                throw firstFailure;
+            }
+            Log.w(TAG, "IPv6 runtime startup failed; retrying with IPv6 disabled", firstFailure);
+            try {
+                return startRuntime(settings, false) + " · IPv6 自动关闭";
+            } catch (IOException | InterruptedException fallbackFailure) {
+                if (fallbackFailure instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                throw new IOException(
+                        "IPv6 模式启动失败：" + usefulMessage(firstFailure)
+                                + "；IPv4 回退也失败：" + usefulMessage(fallbackFailure),
+                        fallbackFailure
+                );
+            }
+        }
+    }
+
+    private String startRuntime(
+            RuntimeOverrideSettings settings,
+            boolean ipv6Enabled
+    ) throws IOException, InterruptedException {
         if (platformBridge == null) {
             throw new IOException("Android 平台桥未启动");
         }
@@ -154,15 +209,18 @@ final class RuntimeCoordinator {
                 context,
                 platformBridge.coreSocketAddress(),
                 fileStore,
-                overrideStore.tunStackOverride(),
+                settings.processMatching(),
+                ipv6Enabled,
                 this::onUnexpectedExit
         );
         runtime = candidate;
         String runningDetail = candidate.start();
         if (!platformBridge.hasUsableTunnel()) {
+            closeRuntime();
             throw new IOException("mihomo 未建立 Android TUN");
         }
-        publish(RuntimeState.RUNNING, runningDetail);
+        effectiveIpv6Enabled = ipv6Enabled;
+        return runningDetail;
     }
 
     private void importConfigInternal(Uri source, OperationCallback callback) {
@@ -170,10 +228,12 @@ final class RuntimeCoordinator {
             if (service != null && platformBridge != null) {
                 publish(RuntimeState.STARTING, "配置已校验，正在重启 mihomo TUN…");
                 try {
-                    startRuntimeOnExistingBridge();
+                    String detail = startRuntimeOnExistingBridge();
+                    publish(RuntimeState.RUNNING, detail);
                 } catch (Exception startFailure) {
                     transaction.rollback();
-                    startRuntimeOnExistingBridge();
+                    String restoredDetail = startRuntimeOnExistingBridge();
+                    publish(RuntimeState.RUNNING, restoredDetail);
                     throw new IOException(
                             "新配置无法启动，已恢复上一份配置：" + usefulMessage(startFailure),
                             startFailure
@@ -194,59 +254,88 @@ final class RuntimeCoordinator {
         }
     }
 
-    private void setTunStackOverrideInternal(String value, OperationCallback callback) {
-        final TunStackOverride requested;
-        try {
-            requested = TunStackOverride.fromWireValue(value);
-        } catch (IllegalArgumentException exception) {
-            postOperation(callback, false, usefulMessage(exception));
-            return;
-        }
-
-        TunStackOverride previous = overrideStore.tunStackOverride();
-        if (requested == previous) {
+    private void setRuntimeOverridesInternal(
+            RuntimeOverrideSettings requested,
+            OperationCallback callback
+    ) {
+        RuntimeOverrideSettings previous = overrideStore.settings();
+        if (requested.equals(previous)) {
             stateBus.publish(stateBus.snapshot());
-            postOperation(callback, true, "TUN 栈覆写未变更");
+            postOperation(callback, true, "覆写未变更");
             return;
         }
 
         try {
-            overrideStore.setTunStackOverride(requested);
+            overrideStore.setSettings(requested);
         } catch (RuntimeException exception) {
             postOperation(callback, false, usefulMessage(exception));
             return;
         }
 
+        ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
         if (service == null || platformBridge == null) {
+            effectiveIpv6Enabled = requested.ipv6Enabled() && ipv6EnvironmentUsable;
             stateBus.publish(stateBus.snapshot());
-            postOperation(callback, true, "TUN 栈覆写已保存，下次启动生效");
+            postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
             return;
         }
 
-        publish(RuntimeState.STARTING, "正在应用 TUN 栈覆写并重启 mihomo…");
+        publish(RuntimeState.STARTING, "正在应用运行时覆写并重启 mihomo…");
         try {
-            startRuntimeOnExistingBridge();
-            postOperation(callback, true, requested == TunStackOverride.GVISOR
-                    ? "已强制使用 gVisor TUN 栈"
-                    : "已恢复跟随 config.yaml");
+            String detail = startRuntimeOnExistingBridge();
+            publish(RuntimeState.RUNNING, detail);
+            postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
         } catch (Exception applyFailure) {
             try {
-                overrideStore.setTunStackOverride(previous);
-                publish(RuntimeState.STARTING, "TUN 栈覆写失败，正在恢复上一状态…");
-                startRuntimeOnExistingBridge();
+                overrideStore.setSettings(previous);
+                ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
+                publish(RuntimeState.STARTING, "覆写应用失败，正在恢复上一状态…");
+                String detail = startRuntimeOnExistingBridge();
+                publish(RuntimeState.RUNNING, detail);
                 postOperation(
                         callback,
                         false,
-                        "无法应用 TUN 栈覆写，已恢复上一状态：" + usefulMessage(applyFailure)
+                        "无法应用运行时覆写，已恢复上一状态：" + usefulMessage(applyFailure)
                 );
             } catch (Exception restoreFailure) {
-                String message = "TUN 栈覆写失败且无法恢复："
+                String message = "运行时覆写失败且无法恢复："
                         + usefulMessage(applyFailure)
                         + "；"
                         + usefulMessage(restoreFailure);
                 failActiveService(message);
                 postOperation(callback, false, message);
             }
+        }
+    }
+
+    private void onIpv6EnvironmentChanged(boolean usable) {
+        if (ipv6EnvironmentUsable == usable) {
+            return;
+        }
+        ipv6EnvironmentUsable = usable;
+        RuntimeOverrideSettings settings = overrideStore.settings();
+        boolean targetIpv6 = settings.ipv6Enabled() && usable;
+        if (service == null || platformBridge == null) {
+            effectiveIpv6Enabled = targetIpv6;
+            stateBus.publish(stateBus.snapshot());
+            return;
+        }
+        if (!settings.ipv6Enabled() || targetIpv6 == effectiveIpv6Enabled) {
+            stateBus.publish(stateBus.snapshot());
+            return;
+        }
+
+        publish(
+                RuntimeState.STARTING,
+                usable
+                        ? "IPv6 环境已恢复，正在重载 mihomo…"
+                        : "当前 IPv6 环境不可用，正在重载并关闭 IPv6…"
+        );
+        try {
+            String detail = startRuntimeOnExistingBridge();
+            publish(RuntimeState.RUNNING, detail);
+        } catch (Exception exception) {
+            failActiveService("IPv6 环境切换失败：" + usefulMessage(exception));
         }
     }
 
@@ -272,11 +361,13 @@ final class RuntimeCoordinator {
     }
 
     private void cleanupAll() {
+        ipv6Monitor.stop();
         closeRuntime();
         if (platformBridge != null) {
             platformBridge.close();
             platformBridge = null;
         }
+        effectiveIpv6Enabled = false;
     }
 
     private void closeRuntime() {
@@ -307,6 +398,22 @@ final class RuntimeCoordinator {
         if (completion != null) {
             mainHandler.post(completion);
         }
+    }
+
+    private static String describeOverrides(
+            RuntimeOverrideSettings settings,
+            boolean ipv6Effective
+    ) {
+        String process = settings.processMatching() ? "进程匹配已开启" : "进程匹配已关闭";
+        String ipv6;
+        if (!settings.ipv6Enabled()) {
+            ipv6 = "IPv6 已关闭";
+        } else if (ipv6Effective) {
+            ipv6 = "IPv6 已开启";
+        } else {
+            ipv6 = "IPv6 已开启，但当前环境不可用，已自动使用 IPv4";
+        }
+        return "强制 gVisor；" + process + "；" + ipv6;
     }
 
     private static String usefulMessage(Throwable throwable) {
