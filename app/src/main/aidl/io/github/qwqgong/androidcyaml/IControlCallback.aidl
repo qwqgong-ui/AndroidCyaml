@@ -7,6 +7,7 @@ oneway interface IControlCallback {
             boolean alwaysOn,
             boolean lockdown,
             String dashboardUrl,
-            int controllerPort
+            int controllerPort,
+            String tunStackOverride
     );
 }
