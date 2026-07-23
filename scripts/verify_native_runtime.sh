@@ -62,9 +62,7 @@ for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeValidate \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart \
-    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop \
-    androidcyaml_protect_socket \
-    androidcyaml_resolve_process; do
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop; do
     readelf -Ws "${WRAPPER}" | grep -q "GLOBAL.*${symbol}$" || {
         echo "JNI wrapper is missing exported symbol ${symbol}" >&2
         exit 1
@@ -72,6 +70,7 @@ for symbol in \
 done
 
 for symbol in \
+    AndroidCyamlInstallCallbacks \
     AndroidCyamlValidate \
     AndroidCyamlPrepareTun \
     AndroidCyamlStart \
@@ -83,5 +82,11 @@ for symbol in \
         exit 1
     }
 done
+
+if readelf -Ws "${CORE}" | awk '$7 == "UND" { print $8 }' \
+        | grep -Eq '^androidcyaml_(protect_socket|resolve_process)$'; then
+    echo "Go core contains circular undefined JNI callback symbols" >&2
+    exit 1
+fi
 
 echo "Verified embedded mihomo JNI runtime in ${APK}"
