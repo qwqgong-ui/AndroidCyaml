@@ -42,10 +42,17 @@ final class MihomoProcess implements AutoCloseable {
             String platformSocket,
             MihomoController controller,
             String secret,
+            TunStackOverride tunStackOverride,
             ExitListener exitListener
     ) throws IOException {
         StaleCoreReaper.stopMatching(paths.binary());
-        List<String> command = command(paths, platformSocket, controller, secret);
+        List<String> command = command(
+                paths,
+                platformSocket,
+                controller,
+                secret,
+                tunStackOverride
+        );
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(paths.home())
                 .redirectErrorStream(true);
@@ -164,7 +171,8 @@ final class MihomoProcess implements AutoCloseable {
             MihomoPaths paths,
             String platformSocket,
             MihomoController controller,
-            String secret
+            String secret,
+            TunStackOverride tunStackOverride
     ) {
         ArrayList<String> command = new ArrayList<>();
         command.add(paths.binary().getAbsolutePath());
@@ -180,6 +188,10 @@ final class MihomoProcess implements AutoCloseable {
         command.add(secret);
         command.add("-android-platform-socket");
         command.add(platformSocket);
+        if (tunStackOverride != null && tunStackOverride.forcesCoreStack()) {
+            command.add("-android-tun-stack-override");
+            command.add(tunStackOverride.wireValue());
+        }
         return command;
     }
 
