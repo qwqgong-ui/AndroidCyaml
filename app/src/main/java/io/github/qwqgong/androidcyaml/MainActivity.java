@@ -34,6 +34,7 @@ public final class MainActivity extends Activity implements
 
     private RuntimeState runtimeState = RuntimeState.STOPPED;
     private String runtimeDetail = "VPN 未连接";
+    private TunStackOverride tunStackOverride = TunStackOverride.CONFIG;
     private boolean alwaysOn;
     private boolean lockdown;
     private boolean updatingVpnToggle;
@@ -122,12 +123,18 @@ public final class MainActivity extends Activity implements
             boolean newAlwaysOn,
             boolean newLockdown,
             String dashboardUrl,
-            int controllerPort
+            int controllerPort,
+            String newTunStackOverride
     ) {
         RuntimeState[] values = RuntimeState.values();
         RuntimeState parsed = state >= 0 && state < values.length
                 ? values[state]
                 : RuntimeState.FAILED;
+        try {
+            tunStackOverride = TunStackOverride.fromWireValue(newTunStackOverride);
+        } catch (IllegalArgumentException ignored) {
+            tunStackOverride = TunStackOverride.CONFIG;
+        }
         applySnapshot(
                 new RuntimeSnapshot(parsed, detail, dashboardUrl, controllerPort),
                 newAlwaysOn,
@@ -152,6 +159,20 @@ public final class MainActivity extends Activity implements
         controlClient.restart((success, detail) -> showToast(success
                 ? getString(R.string.core_restarted)
                 : getString(R.string.core_restart_failed, detail)));
+    }
+
+    @Override
+    public void onOpenRuntimeOverrides() {
+        RuntimeOverridesDialog.show(
+                this,
+                tunStackOverride,
+                override -> controlClient.setTunStackOverride(
+                        override,
+                        (success, detail) -> showToast(success
+                                ? getString(R.string.runtime_override_applied, detail)
+                                : getString(R.string.runtime_override_failed, detail))
+                )
+        );
     }
 
     @Override
