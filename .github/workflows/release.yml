@@ -8,8 +8,8 @@ on:
         required: true
         type: string
   push:
-    tags:
-      - "v*"
+    branches:
+      - "release/v*"
 
 permissions:
   contents: write
@@ -32,13 +32,19 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             [[ "${GITHUB_REF}" == "refs/heads/main" ]]
             version="${INPUT_VERSION}"
+            publish=false
           else
-            [[ "${GITHUB_REF}" == refs/tags/v* ]]
-            version="${GITHUB_REF_NAME#v}"
+            [[ "${GITHUB_REF}" == refs/heads/release/v* ]]
+            version="${GITHUB_REF_NAME#release/v}"
+            main_sha="$(git ls-remote origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+            [[ -n "${main_sha}" && "${GITHUB_SHA}" == "${main_sha}" ]]
+            publish=true
           fi
           [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           grep -Fq "versionName = \"${version}\"" app/build.gradle.kts
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
 
       - uses: actions/setup-java@v5
@@ -122,15 +128,16 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub release
-        if: github.event_name == 'push'
+        if: steps.release.outputs.publish == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release create "${RELEASE_TAG}" \
             "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk" \
             "SHA256SUMS" \
+            --target "${GITHUB_SHA}" \
             --title "AndroidCyaml v${RELEASE_VERSION}" \
-            --generate-notes \
-            --verify-tag
+            --generate-notes
