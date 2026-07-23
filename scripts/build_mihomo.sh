@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
-readonly MIHOMO_COMMIT="9e9d172ae728c070e8dbee91504dda51d9a5e500"
-readonly BUILD_RECIPE_VERSION="5"
+readonly MIHOMO_COMMIT="268fd7981bc0f94f29cd29471b7df30a55596c77"
+readonly BUILD_RECIPE_VERSION="6"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
 readonly OUTPUT_FILE="${OUTPUT_DIR}/libmihomo.so"
