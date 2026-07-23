@@ -4,14 +4,14 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "9e9d172ae728c070e8dbee91504dda51d9a5e500"
+val mihomoCommit = "268fd7981bc0f94f29cd29471b7df30a55596c77"
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 
 val releaseStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE")
 val releaseStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
-val releaseKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
-val releaseKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD")
+val releaseKeyAlias = System.getenv("ANDROID_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("ANDROID_RELEASE_KEY_PASSWORD")
 val releaseSigningConfigured = listOf(
     releaseStoreFile,
     releaseStorePassword,
@@ -27,8 +27,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 36
-        versionCode = 131
-        versionName = "0.6.131"
+        versionCode = 132
+        versionName = "0.6.132"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
