@@ -30,7 +30,6 @@ final class HevSocks5Tunnel {
             int mtu,
             String tunnelIpv4Address,
             String tunnelIpv6Address,
-            String mappedDnsAddress,
             String socksAddress,
             int socksPort,
             String socksUsername,
@@ -43,7 +42,6 @@ final class HevSocks5Tunnel {
                 Locale.ROOT,
                 "tunnel:\n"
                         + "  mtu: %d\n"
-                        + "  multi-queue: true\n"
                         + "  ipv4: '%s'\n"
                         + "  ipv6: '%s'\n"
                         + "  icmp: 'reply'\n"
@@ -56,12 +54,6 @@ final class HevSocks5Tunnel {
                         + "  tcp-fastopen: true\n"
                         + "  username: '%s'\n"
                         + "  password: '%s'\n"
-                        + "mapdns:\n"
-                        + "  address: %s\n"
-                        + "  port: 53\n"
-                        + "  network: 100.64.0.0\n"
-                        + "  netmask: 255.192.0.0\n"
-                        + "  cache-size: 10000\n"
                         + "misc:\n"
                         + "  task-stack-size: 86016\n"
                         + "  tcp-buffer-size: 65536\n"
@@ -75,8 +67,7 @@ final class HevSocks5Tunnel {
                 socksPort,
                 yamlSingleQuoted(socksAddress),
                 yamlSingleQuoted(socksUsername),
-                yamlSingleQuoted(socksPassword),
-                mappedDnsAddress
+                yamlSingleQuoted(socksPassword)
         );
         try (FileOutputStream output = new FileOutputStream(config, false)) {
             output.write(content.getBytes(StandardCharsets.UTF_8));

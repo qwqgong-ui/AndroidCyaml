@@ -55,9 +55,10 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
     private static final int MTU = 9000;
     private static final String IPV4_ADDRESS = "198.18.0.1";
     private static final int IPV4_PREFIX = 30;
-    private static final String MAPPED_DNS_ADDRESS = "198.18.0.2";
+    private static final String DNS_IPV4_ADDRESS = "8.8.8.8";
     private static final String IPV6_ADDRESS = "fdfe:dcba:9876::1";
     private static final int IPV6_PREFIX = 126;
+    private static final String DNS_IPV6_ADDRESS = "2001:4860:4860::8888";
 
     private static final String INTERNAL_SOCKS_HOST = "127.0.0.1";
     private static final String INTERNAL_SOCKS_USER = "androidcyaml";
@@ -178,9 +179,10 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
                     .setMtu(MTU)
                     .addAddress(IPV4_ADDRESS, IPV4_PREFIX)
                     .addRoute("0.0.0.0", 0)
-                    .addDnsServer(MAPPED_DNS_ADDRESS)
+                    .addDnsServer(DNS_IPV4_ADDRESS)
                     .addAddress(IPV6_ADDRESS, IPV6_PREFIX)
                     .addRoute("::", 0)
+                    .addDnsServer(DNS_IPV6_ADDRESS)
                     // HEV consumes a non-blocking TUN descriptor.
                     .setBlocking(false)
                     .setMetered(false)
@@ -204,7 +206,6 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
                     MTU,
                     IPV4_ADDRESS,
                     IPV6_ADDRESS,
-                    MAPPED_DNS_ADDRESS,
                     INTERNAL_SOCKS_HOST,
                     socksPort,
                     INTERNAL_SOCKS_USER,
@@ -387,7 +388,6 @@ public final class AndroidVpnService extends VpnService implements MihomoManager
                         MTU,
                         IPV4_ADDRESS,
                         IPV6_ADDRESS,
-                        MAPPED_DNS_ADDRESS,
                         INTERNAL_SOCKS_HOST,
                         socksPort,
                         INTERNAL_SOCKS_USER,
