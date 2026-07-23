@@ -51,10 +51,15 @@ public final class AppControlService extends Service implements RuntimeStateBus.
         }
 
         @Override
-        public void setTunStackOverride(String override, IOperationCallback callback) {
+        public void setRuntimeOverrides(
+                boolean processMatching,
+                boolean ipv6Enabled,
+                IOperationCallback callback
+        ) {
             enforceSameAppCaller();
-            coordinator.setTunStackOverride(
-                    override,
+            coordinator.setRuntimeOverrides(
+                    processMatching,
+                    ipv6Enabled,
                     (success, message) -> complete(callback, success, message)
             );
         }
@@ -100,6 +105,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
 
     private void sendSnapshot(IControlCallback callback) {
         RuntimeSnapshot current = snapshot;
+        RuntimeOverrideSettings overrides = coordinator.runtimeOverrideSettings();
         try {
             callback.onStateChanged(
                     current.state().ordinal(),
@@ -108,7 +114,9 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     AndroidVpnService.isLockdownMode(),
                     current.state() == RuntimeState.RUNNING ? current.dashboardUrl() : "",
                     current.state() == RuntimeState.RUNNING ? current.controllerPort() : 0,
-                    coordinator.tunStackOverride().wireValue()
+                    overrides.processMatching(),
+                    overrides.ipv6Enabled(),
+                    coordinator.effectiveIpv6Enabled()
             );
         } catch (RemoteException ignored) {
             // RemoteCallbackList removes dead UI callbacks automatically.
