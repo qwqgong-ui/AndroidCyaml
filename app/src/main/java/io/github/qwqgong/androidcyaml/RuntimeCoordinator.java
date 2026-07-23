@@ -25,6 +25,7 @@ final class RuntimeCoordinator {
     private final RuntimeStateBus stateBus = new RuntimeStateBus();
     private final MihomoFileStore fileStore;
     private final ConfigInstaller configInstaller;
+    private final RuntimeOverrideStore overrideStore;
 
     private AndroidVpnService service;
     private AndroidPlatformBridge platformBridge;
@@ -34,6 +35,7 @@ final class RuntimeCoordinator {
         this.context = context.getApplicationContext();
         fileStore = new MihomoFileStore(this.context);
         configInstaller = new ConfigInstaller(this.context, fileStore);
+        overrideStore = new RuntimeOverrideStore(this.context);
     }
 
     static RuntimeCoordinator getInstance(Context context) {
@@ -58,6 +60,10 @@ final class RuntimeCoordinator {
 
     static boolean persistStateForMemoryKill() {
         return true;
+    }
+
+    TunStackOverride tunStackOverride() {
+        return overrideStore.tunStackOverride();
     }
 
     void addListener(RuntimeStateBus.Listener listener) {
@@ -110,6 +116,10 @@ final class RuntimeCoordinator {
         executor.execute(() -> importConfigInternal(source, callback));
     }
 
+    void setTunStackOverride(String value, OperationCallback callback) {
+        executor.execute(() -> setTunStackOverrideInternal(value, callback));
+    }
+
     private void startInternal(AndroidVpnService requestedService) {
         if (requestedService == null) {
             return;
@@ -144,6 +154,7 @@ final class RuntimeCoordinator {
                 context,
                 platformBridge.coreSocketAddress(),
                 fileStore,
+                overrideStore.tunStackOverride(),
                 this::onUnexpectedExit
         );
         runtime = candidate;
@@ -180,6 +191,62 @@ final class RuntimeCoordinator {
                 failActiveService("配置应用失败：" + usefulMessage(exception));
             }
             postOperation(callback, false, usefulMessage(exception));
+        }
+    }
+
+    private void setTunStackOverrideInternal(String value, OperationCallback callback) {
+        final TunStackOverride requested;
+        try {
+            requested = TunStackOverride.fromWireValue(value);
+        } catch (IllegalArgumentException exception) {
+            postOperation(callback, false, usefulMessage(exception));
+            return;
+        }
+
+        TunStackOverride previous = overrideStore.tunStackOverride();
+        if (requested == previous) {
+            stateBus.publish(stateBus.snapshot());
+            postOperation(callback, true, "TUN 栈覆写未变更");
+            return;
+        }
+
+        try {
+            overrideStore.setTunStackOverride(requested);
+        } catch (RuntimeException exception) {
+            postOperation(callback, false, usefulMessage(exception));
+            return;
+        }
+
+        if (service == null || platformBridge == null) {
+            stateBus.publish(stateBus.snapshot());
+            postOperation(callback, true, "TUN 栈覆写已保存，下次启动生效");
+            return;
+        }
+
+        publish(RuntimeState.STARTING, "正在应用 TUN 栈覆写并重启 mihomo…");
+        try {
+            startRuntimeOnExistingBridge();
+            postOperation(callback, true, requested == TunStackOverride.GVISOR
+                    ? "已强制使用 gVisor TUN 栈"
+                    : "已恢复跟随 config.yaml");
+        } catch (Exception applyFailure) {
+            try {
+                overrideStore.setTunStackOverride(previous);
+                publish(RuntimeState.STARTING, "TUN 栈覆写失败，正在恢复上一状态…");
+                startRuntimeOnExistingBridge();
+                postOperation(
+                        callback,
+                        false,
+                        "无法应用 TUN 栈覆写，已恢复上一状态：" + usefulMessage(applyFailure)
+                );
+            } catch (Exception restoreFailure) {
+                String message = "TUN 栈覆写失败且无法恢复："
+                        + usefulMessage(applyFailure)
+                        + "；"
+                        + usefulMessage(restoreFailure);
+                failActiveService(message);
+                postOperation(callback, false, message);
+            }
         }
     }
 
