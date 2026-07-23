@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "268fd7981bc0f94f29cd29471b7df30a55596c77"
+val mihomoCommit = "710fcda522f88bac9c31f3f3974bd3f4712cd5f4"
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 
