@@ -28,6 +28,8 @@ final class HevSocks5Tunnel {
             File cacheDirectory,
             int fileDescriptor,
             int mtu,
+            String tunnelIpv4Address,
+            String tunnelIpv6Address,
             String mappedDnsAddress,
             String socksAddress,
             int socksPort,
@@ -41,7 +43,10 @@ final class HevSocks5Tunnel {
                 Locale.ROOT,
                 "tunnel:\n"
                         + "  mtu: %d\n"
-                        + "  icmp: 'off'\n"
+                        + "  multi-queue: true\n"
+                        + "  ipv4: '%s'\n"
+                        + "  ipv6: '%s'\n"
+                        + "  icmp: 'reply'\n"
                         + "socks5:\n"
                         + "  address: '%s'\n"
                         + "  port: %d\n"
@@ -64,6 +69,8 @@ final class HevSocks5Tunnel {
                         + "  log-file: stderr\n"
                         + "  log-level: warn\n",
                 mtu,
+                yamlSingleQuoted(tunnelIpv4Address),
+                yamlSingleQuoted(tunnelIpv6Address),
                 yamlSingleQuoted(socksAddress),
                 socksPort,
                 yamlSingleQuoted(socksAddress),
