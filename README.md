@@ -104,10 +104,11 @@ Android 传入现成的单个 `VpnService` TUN 文件描述符，因此接口地
 `tun.dns-hijack`、`tun.auto-route` 等字段不会成为 Android VPN 接口参数。
 
 HEV 的远程映射 DNS 已关闭。Android 把两个虚拟 IPv4/IPv6 DNS 地址加入
-`VpnService.Builder`，HEV 将查询原样送入私有 `ANDROID-SOCKS`，再由该入站把 53 端口流量
-直接交给 mihomo DNS 服务。因此用户配置中的 nameserver、策略、代理、缓存和增强模式继续
-生效，A、AAAA 等响应也不再受 HEV 只支持 A 记录的 `mapdns` 限制。配置未启用 DNS 模块时，
-由 mihomo 的系统解析器兜底。
+`VpnService.Builder`，HEV 将查询原样送入私有 `ANDROID-SOCKS`。该入站会劫持所有目标地址的
+TCP/UDP 53 端口并直接交给 mihomo DNS 服务，等价补回 mihomo TUN 的
+`dns-hijack: any:53`，因此应用自行指定的传统 DNS 也不能绕过域名映射。用户配置中的
+nameserver、策略、代理、缓存和增强模式继续生效，A、AAAA 等响应也不再受 HEV 只支持 A 记录的
+`mapdns` 限制。配置未启用 DNS 模块时，由 mihomo 的系统解析器兜底。
 
 Wi-Fi IPv6 检测只观察同时具备 `INTERNET`、`VALIDATED` 和 `NOT_VPN` 能力的底层 Wi-Fi，
 不会把 AndroidCyaml 自己创建的 VPN 网络误判为 Wi-Fi。链路必须同时具有 `2000::/3` 全局

@@ -98,40 +98,29 @@ index 29ddd2e6..99b2607b 100644
 +
 +
 diff --git a/listener/listener.go b/listener/listener.go
-index 3a0a8aad..f0bd3bac 100644
+index 3a0a8aad..f099c190 100644
 --- a/listener/listener.go
 +++ b/listener/listener.go
 @@ -3,0 +4 @@ import (
 +	"context"
-@@ -5,0 +7 @@ import (
-+	"net/netip"
-@@ -10,0 +13,2 @@ import (
+@@ -10,0 +12,2 @@ import (
 +	"github.com/metacubex/mihomo/component/auth"
 +	"github.com/metacubex/mihomo/component/resolver"
-@@ -11,0 +16 @@ import (
+@@ -11,0 +15 @@ import (
 +	authStore "github.com/metacubex/mihomo/listener/auth"
-@@ -28,0 +34,74 @@ import (
+@@ -28,0 +33,65 @@ import (
 +type androidSocksRuntimeConfig struct {
 +	port     int
 +	user     string
 +	password string
 +}
 +
-+var (
-+	androidDNSIPv4 = netip.MustParseAddr("198.18.0.2")
-+	androidDNSIPv6 = netip.MustParseAddr("fdfe:dcba:9876::2")
-+)
-+
 +type androidSocksTunnel struct {
 +	upstream C.Tunnel
 +}
 +
 +func isAndroidDNS(metadata *C.Metadata) bool {
-+	if metadata == nil || metadata.DstPort != 53 {
-+		return false
-+	}
-+	destination := metadata.DstIP.Unmap()
-+	return destination == androidDNSIPv4 || destination == androidDNSIPv6
++	return metadata != nil && metadata.DstPort == 53
 +}
 +
 +func (t *androidSocksTunnel) HandleTCPConn(conn net.Conn, metadata *C.Metadata) {
@@ -185,7 +174,7 @@ index 3a0a8aad..f0bd3bac 100644
 +	return t.upstream.NatTable()
 +}
 +
-@@ -33,16 +112,20 @@ var (
+@@ -33,16 +102,20 @@ var (
 -	socksListener       *socks.Listener
 -	socksUDPListener    *socks.UDPListener
 -	httpListener        *http.Listener
@@ -222,7 +211,7 @@ index 3a0a8aad..f0bd3bac 100644
 +	shadowSocksListener      C.MultiAddrListener
 +	vmessListener            *sing_vmess.Listener
 +	tuicListener             *tuic.Listener
-@@ -51,11 +134,12 @@ var (
+@@ -51,11 +124,12 @@ var (
 -	socksMux   sync.Mutex
 -	httpMux    sync.Mutex
 -	redirMux   sync.Mutex
@@ -246,7 +235,7 @@ index 3a0a8aad..f0bd3bac 100644
 +	ssMux           sync.Mutex
 +	vmessMux        sync.Mutex
 +	tuicMux         sync.Mutex
-@@ -106,0 +191,90 @@ func SetBindAddress(host string) {
+@@ -106,0 +181,90 @@ func SetBindAddress(host string) {
 +// SetAndroidSocksConfig stores the private listener parameters supplied by the
 +// Android runtime. They are deliberately kept outside parsed config state so a
 +// controller reload cannot expose, move or disable the HEV bridge.
