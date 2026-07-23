@@ -38,6 +38,12 @@
     <string name="auto_start_vpn_permission_denied">未授予 VPN 权限，已关闭自动开启</string>
     <string name="vpn_settings_failed">无法打开系统 VPN 设置</string>
     <string name="vpn_always_on_controlled">始终开启 VPN 由系统设置控制；请从“VPN 系统设置”中关闭</string>
+    <string name="runtime_overrides">覆写面板</string>
+    <string name="tun_stack_follow_config">TUN 栈：跟随 config.yaml</string>
+    <string name="tun_stack_gvisor">TUN 栈：强制 gVisor</string>
+    <string name="tun_stack_system_unavailable">TUN 栈：system（当前不可用）</string>
+    <string name="runtime_override_applied">运行时覆写：%1$s</string>
+    <string name="runtime_override_failed">运行时覆写失败：%1$s</string>
     <string name="cancel">取消</string>
     <string name="apply">应用</string>
 </resources>
