@@ -9,4 +9,5 @@ interface IAppControl {
     void unregisterCallback(IControlCallback callback);
     void restartRuntime(IOperationCallback callback);
     void importConfig(in Uri source, IOperationCallback callback);
+    void setTunStackOverride(String override, IOperationCallback callback);
 }
