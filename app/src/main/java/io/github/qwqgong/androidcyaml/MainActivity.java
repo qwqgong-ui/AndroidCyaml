@@ -34,6 +34,7 @@ public final class MainActivity extends Activity implements
 
     private RuntimeState runtimeState = RuntimeState.STOPPED;
     private String runtimeDetail = "VPN 未连接";
+    private TunStackMode tunStack = TunStackMode.SYSTEM;
     private boolean processMatching = true;
     private boolean ipv6Enabled = true;
     private boolean ipv6Effective = true;
@@ -126,6 +127,7 @@ public final class MainActivity extends Activity implements
             boolean newLockdown,
             String dashboardUrl,
             int controllerPort,
+            String newTunStack,
             boolean newProcessMatching,
             boolean newIpv6Enabled,
             boolean newIpv6Effective
@@ -134,6 +136,11 @@ public final class MainActivity extends Activity implements
         RuntimeState parsed = state >= 0 && state < values.length
                 ? values[state]
                 : RuntimeState.FAILED;
+        try {
+            tunStack = TunStackMode.fromWireValue(newTunStack);
+        } catch (IllegalArgumentException ignored) {
+            tunStack = TunStackMode.SYSTEM;
+        }
         processMatching = newProcessMatching;
         ipv6Enabled = newIpv6Enabled;
         ipv6Effective = newIpv6Effective;
@@ -167,16 +174,19 @@ public final class MainActivity extends Activity implements
     public void onOpenRuntimeOverrides() {
         RuntimeOverridesDialog.show(
                 this,
+                tunStack,
                 processMatching,
                 ipv6Enabled,
                 ipv6Effective,
-                (newProcessMatching, newIpv6Enabled) -> controlClient.setRuntimeOverrides(
-                        newProcessMatching,
-                        newIpv6Enabled,
-                        (success, detail) -> showToast(success
-                                ? getString(R.string.runtime_override_applied, detail)
-                                : getString(R.string.runtime_override_failed, detail))
-                )
+                (newTunStack, newProcessMatching, newIpv6Enabled) ->
+                        controlClient.setRuntimeOverrides(
+                                newTunStack,
+                                newProcessMatching,
+                                newIpv6Enabled,
+                                (success, detail) -> showToast(success
+                                        ? getString(R.string.runtime_override_applied, detail)
+                                        : getString(R.string.runtime_override_failed, detail))
+                        )
         );
     }
 
