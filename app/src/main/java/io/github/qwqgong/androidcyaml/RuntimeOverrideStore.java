@@ -5,7 +5,8 @@ import android.content.SharedPreferences;
 
 final class RuntimeOverrideStore {
     private static final String PREFERENCES = "androidcyaml_runtime_overrides";
-    private static final String TUN_STACK = "tun_stack";
+    private static final String PROCESS_MATCHING = "process_matching";
+    private static final String IPV6_ENABLED = "ipv6_enabled";
 
     private final SharedPreferences preferences;
 
@@ -16,19 +17,21 @@ final class RuntimeOverrideStore {
         );
     }
 
-    TunStackOverride tunStackOverride() {
-        String value = preferences.getString(TUN_STACK, TunStackOverride.CONFIG.wireValue());
-        try {
-            return TunStackOverride.fromWireValue(value);
-        } catch (IllegalArgumentException ignored) {
-            return TunStackOverride.CONFIG;
-        }
+    RuntimeOverrideSettings settings() {
+        return new RuntimeOverrideSettings(
+                preferences.getBoolean(PROCESS_MATCHING, true),
+                preferences.getBoolean(IPV6_ENABLED, true)
+        );
     }
 
-    void setTunStackOverride(TunStackOverride override) {
-        TunStackOverride value = override == null ? TunStackOverride.CONFIG : override;
+    void setSettings(RuntimeOverrideSettings settings) {
+        RuntimeOverrideSettings value = settings == null
+                ? RuntimeOverrideSettings.defaults()
+                : settings;
         boolean persisted = preferences.edit()
-                .putString(TUN_STACK, value.wireValue())
+                .putBoolean(PROCESS_MATCHING, value.processMatching())
+                .putBoolean(IPV6_ENABLED, value.ipv6Enabled())
+                .remove("tun_stack")
                 .commit();
         if (!persisted) {
             throw new IllegalStateException("无法保存运行时覆写");
