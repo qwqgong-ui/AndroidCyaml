@@ -2,26 +2,33 @@
 <resources>
     <string name="app_name">AndroidCyaml</string>
     <string name="upload_config">上传 config.yaml</string>
-    <string name="restart_core">重启</string>
+    <string name="restart_core">重启 mihomo</string>
     <string name="core_starting">mihomo 正在启动…</string>
     <string name="core_running">mihomo 已运行</string>
-    <string name="core_stopped">mihomo 已停止</string>
-    <string name="control_service_disconnected">核心控制进程已断开</string>
-    <string name="control_service_unavailable">核心控制进程暂不可用</string>
-    <string name="config_imported">配置已导入，mihomo 已成功重启</string>
+    <string name="core_stopped">mihomo 未运行</string>
+    <string name="core_restarted">mihomo 已重启</string>
+    <string name="core_restart_failed">mihomo 重启失败：%1$s</string>
+    <string name="control_service_disconnected">运行时控制服务已断开</string>
+    <string name="control_service_unavailable">运行时控制服务暂不可用</string>
+    <string name="config_imported">配置已校验并安装</string>
     <string name="config_import_failed">配置导入失败：%1$s</string>
     <string name="choose_yaml">选择 config.yaml</string>
     <string name="external_link_failed">无法打开外部链接</string>
-    <string name="config_validating">正在导入并启动 config.yaml…</string>
+    <string name="config_validating">正在用 mihomo 校验 config.yaml…</string>
     <string name="dashboard_load_failed">面板加载失败：%1$s</string>
     <string name="stop_vpn">停止 VPN</string>
     <string name="vpn_stopped">VPN 未连接</string>
+    <string name="vpn_starting">正在启动 mihomo TUN…</string>
+    <string name="vpn_stopping">正在停止 VPN…</string>
+    <string name="vpn_failed">VPN 不可用</string>
+    <string name="vpn_connected_native_tun">VPN 已连接 · mihomo 原生 TUN</string>
+    <string name="vpn_connected_lockdown">VPN 已连接 · mihomo 原生 TUN · 锁定模式</string>
     <string name="vpn_permission_denied">未授予 VPN 权限</string>
     <string name="vpn_permission_failed">无法打开系统 VPN 授权界面</string>
     <string name="vpn_start_failed">VPN 启动失败：%1$s</string>
     <string name="vpn_notification_title">AndroidCyaml VPN</string>
     <string name="vpn_notification_channel">VPN 连接</string>
-    <string name="vpn_notification_channel_description">显示 AndroidCyaml 的活动 VPN 连接</string>
+    <string name="vpn_notification_channel_description">显示 mihomo 原生 TUN 的活动状态</string>
     <string name="hide_from_recents">隐藏后台标签页</string>
     <string name="more_actions">更多操作</string>
     <string name="more_actions_symbol">⋮</string>
@@ -31,16 +38,6 @@
     <string name="auto_start_vpn_permission_denied">未授予 VPN 权限，已关闭自动开启</string>
     <string name="vpn_settings_failed">无法打开系统 VPN 设置</string>
     <string name="vpn_always_on_controlled">始终开启 VPN 由系统设置控制；请从“VPN 系统设置”中关闭</string>
-    <string name="runtime_overrides">覆写面板</string>
-    <string name="process_matching">进程匹配</string>
-    <string name="process_override_applied">进程匹配已切换为“%1$s”；仅运行时生效</string>
-    <string name="process_override_failed">进程匹配覆写失败：%1$s</string>
     <string name="cancel">取消</string>
     <string name="apply">应用</string>
-    <string-array name="process_match_labels">
-        <item>跟随 config.yaml（不覆写）</item>
-        <item>严格（strict）</item>
-        <item>总是（always）</item>
-        <item>关闭（off）</item>
-    </string-array>
 </resources>

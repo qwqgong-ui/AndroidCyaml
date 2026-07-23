@@ -10,29 +10,24 @@ import android.os.Looper;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 
-public final class AppControlService extends Service implements
-        MihomoManager.Listener,
-        AndroidVpnService.Listener {
+public final class AppControlService extends Service implements RuntimeCoordinator.Listener {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final RemoteCallbackList<IControlCallback> callbacks = new RemoteCallbackList<>();
 
-    private MihomoManager manager;
-    private MihomoManager.State coreState = MihomoManager.State.STOPPED;
-    private String coreDetail = "";
-    private AndroidVpnService.State vpnState = AndroidVpnService.State.STOPPED;
-    private String vpnDetail = "VPN 未连接";
-    private boolean alwaysOn;
-    private boolean lockdown;
+    private RuntimeCoordinator coordinator;
+    private RuntimeCoordinator.State state = RuntimeCoordinator.State.STOPPED;
+    private String detail = "VPN 未连接";
+    private String dashboardUrl = "";
+    private int controllerPort;
 
     private final IAppControl.Stub binder = new IAppControl.Stub() {
         @Override
         public void registerCallback(IControlCallback callback) {
             enforceSameAppCaller();
-            if (callback == null) {
-                return;
+            if (callback != null) {
+                callbacks.register(callback);
+                mainHandler.post(() -> sendSnapshot(callback));
             }
-            callbacks.register(callback);
-            mainHandler.post(() -> sendSnapshot(callback));
         }
 
         @Override
@@ -44,36 +39,17 @@ public final class AppControlService extends Service implements
         }
 
         @Override
-        public void ensureCoreStarted() {
+        public void restartRuntime(IOperationCallback callback) {
             enforceSameAppCaller();
-            manager.ensureStarted();
-        }
-
-        @Override
-        public void restartCore() {
-            enforceSameAppCaller();
-            manager.restart();
+            coordinator.restart((success, message) -> complete(callback, success, message));
         }
 
         @Override
         public void importConfig(Uri source, IOperationCallback callback) {
             enforceSameAppCaller();
-            if (source == null) {
-                complete(callback, false, "未选择配置文件");
-                return;
-            }
-            manager.importConfig(
+            coordinator.importConfig(
                     source,
-                    (success, detail) -> complete(callback, success, detail)
-            );
-        }
-
-        @Override
-        public void setProcessMatchOverride(String mode, IOperationCallback callback) {
-            enforceSameAppCaller();
-            manager.setProcessMatchOverride(
-                    mode,
-                    (success, detail) -> complete(callback, success, detail)
+                    (success, message) -> complete(callback, success, message)
             );
         }
     };
@@ -81,9 +57,8 @@ public final class AppControlService extends Service implements
     @Override
     public void onCreate() {
         super.onCreate();
-        manager = MihomoManager.getInstance(this);
-        manager.addListener(this);
-        AndroidVpnService.addListener(this);
+        coordinator = RuntimeCoordinator.getInstance(this);
+        coordinator.addListener(this);
     }
 
     @Override
@@ -93,27 +68,24 @@ public final class AppControlService extends Service implements
 
     @Override
     public void onDestroy() {
-        AndroidVpnService.removeListener(this);
-        if (manager != null) {
-            manager.removeListener(this);
+        if (coordinator != null) {
+            coordinator.removeListener(this);
         }
         callbacks.kill();
         super.onDestroy();
     }
 
     @Override
-    public void onCoreStateChanged(MihomoManager.State state, String detail) {
-        coreState = state;
-        coreDetail = detail;
-        broadcastSnapshot();
-    }
-
-    @Override
-    public void onVpnStateChanged(AndroidVpnService.State state, String detail) {
-        vpnState = state;
-        vpnDetail = detail;
-        alwaysOn = AndroidVpnService.isAlwaysOnMode();
-        lockdown = AndroidVpnService.isLockdownMode();
+    public void onRuntimeStateChanged(
+            RuntimeCoordinator.State newState,
+            String newDetail,
+            String newDashboardUrl,
+            int newControllerPort
+    ) {
+        state = newState;
+        detail = newDetail;
+        dashboardUrl = newDashboardUrl;
+        controllerPort = newControllerPort;
         broadcastSnapshot();
     }
 
@@ -129,20 +101,14 @@ public final class AppControlService extends Service implements
     }
 
     private void sendSnapshot(IControlCallback callback) {
-        String dashboardUrl = coreState == MihomoManager.State.RUNNING
-                ? manager.getDashboardUrl()
-                : "";
         try {
             callback.onStateChanged(
-                    coreState.ordinal(),
-                    coreDetail,
-                    vpnState.ordinal(),
-                    vpnDetail,
-                    alwaysOn,
-                    lockdown,
-                    dashboardUrl,
-                    manager.getControllerPort(),
-                    manager.getProcessMatchOverride()
+                    state.ordinal(),
+                    detail,
+                    AndroidVpnService.isAlwaysOnMode(),
+                    AndroidVpnService.isLockdownMode(),
+                    state == RuntimeCoordinator.State.RUNNING ? dashboardUrl : "",
+                    state == RuntimeCoordinator.State.RUNNING ? controllerPort : 0
             );
         } catch (RemoteException ignored) {
             // RemoteCallbackList removes dead UI callbacks automatically.
@@ -160,7 +126,7 @@ public final class AppControlService extends Service implements
         try {
             callback.onComplete(success, detail == null ? "" : detail);
         } catch (RemoteException ignored) {
-            // The UI may have been paused or reclaimed while work completed.
+            // The UI may have been reclaimed while the operation completed.
         }
     }
 

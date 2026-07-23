@@ -65,7 +65,7 @@ final class FairMemoryManager {
                     manager.worker,
                     Context.RECEIVER_EXPORTED
             );
-            Log.i(TAG, "Fair-memory callbacks enabled in the default process");
+            Log.i(TAG, "Fair-memory callbacks enabled in the service process");
             return manager;
         } catch (RuntimeException exception) {
             manager.workerThread.quitSafely();
@@ -75,7 +75,7 @@ final class FairMemoryManager {
     }
 
     static int releaseLocalCaches() {
-        return MihomoManager.trimMemoryCachesIfCreated();
+        return RuntimeCoordinator.trimMemoryCachesIfCreated();
     }
 
     private void handleRequest(Intent intent) {
@@ -104,7 +104,7 @@ final class FairMemoryManager {
 
             int clearedLogLines = handled ? releaseLocalCaches() : 0;
             boolean statePersisted = !ACTION_KILL.equals(receivedAction)
-                    || MihomoManager.persistStateForMemoryKill();
+                    || RuntimeCoordinator.persistStateForMemoryKill();
             handled = handled && statePersisted;
             MemorySnapshot snapshot = snapshotMemory();
             Log.i(
@@ -132,7 +132,7 @@ final class FairMemoryManager {
                 notifyId,
                 handled ? RESULT_HANDLED : RESULT_NOT_HANDLED,
                 handled
-                        ? "released reclaimable app caches; persistent state already on disk"
+                        ? "released reclaimable caches; persistent state is already on disk"
                         : "unsupported or malformed memory request"
         );
     }

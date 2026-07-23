@@ -2,7 +2,9 @@ name: Android
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - "agent/**"
   pull_request:
   workflow_dispatch:
 
@@ -29,12 +31,11 @@ jobs:
 
       - uses: android-actions/setup-android@v4
 
-      - name: Install Android 16 SDK and NDK
+      - name: Install Android 16 SDK
         run: >-
           sdkmanager
           "platforms;android-36"
           "build-tools;36.0.0"
-          "ndk;29.0.14206865"
 
       - uses: gradle/actions/setup-gradle@v6
 

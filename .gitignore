@@ -7,7 +7,6 @@
 local.properties
 **/build/
 app/src/main/jniLibs/arm64-v8a/libmihomo.so
-app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so
 *.apk
 *.aab
 *.jks
