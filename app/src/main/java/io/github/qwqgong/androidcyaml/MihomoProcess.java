@@ -42,7 +42,8 @@ final class MihomoProcess implements AutoCloseable {
             String platformSocket,
             MihomoController controller,
             String secret,
-            TunStackOverride tunStackOverride,
+            boolean processMatching,
+            boolean ipv6Enabled,
             ExitListener exitListener
     ) throws IOException {
         StaleCoreReaper.stopMatching(paths.binary());
@@ -51,7 +52,8 @@ final class MihomoProcess implements AutoCloseable {
                 platformSocket,
                 controller,
                 secret,
-                tunStackOverride
+                processMatching,
+                ipv6Enabled
         );
         ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(paths.home())
@@ -172,7 +174,8 @@ final class MihomoProcess implements AutoCloseable {
             String platformSocket,
             MihomoController controller,
             String secret,
-            TunStackOverride tunStackOverride
+            boolean processMatching,
+            boolean ipv6Enabled
     ) {
         ArrayList<String> command = new ArrayList<>();
         command.add(paths.binary().getAbsolutePath());
@@ -188,10 +191,10 @@ final class MihomoProcess implements AutoCloseable {
         command.add(secret);
         command.add("-android-platform-socket");
         command.add(platformSocket);
-        if (tunStackOverride != null && tunStackOverride.forcesCoreStack()) {
-            command.add("-android-tun-stack-override");
-            command.add(tunStackOverride.wireValue());
-        }
+        command.add("-android-tun-stack-override");
+        command.add("gvisor");
+        command.add("-android-process-matching=" + processMatching);
+        command.add("-android-ipv6=" + ipv6Enabled);
         return command;
     }
 
