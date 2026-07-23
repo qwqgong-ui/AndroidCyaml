@@ -7,16 +7,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated")
-set(MIHOMO_ARCHIVE "${GENERATED_DIR}/libmihomo.a")
+set(MIHOMO_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libmihomo.so")
 set(MIHOMO_HEADER "${GENERATED_DIR}/libmihomo.h")
 
-if(NOT EXISTS "${MIHOMO_ARCHIVE}" OR NOT EXISTS "${MIHOMO_HEADER}")
+if(NOT EXISTS "${MIHOMO_LIBRARY}" OR NOT EXISTS "${MIHOMO_HEADER}")
     message(FATAL_ERROR "Run scripts/build_mihomo.sh before configuring CMake")
 endif()
 
-add_library(mihomo_archive STATIC IMPORTED GLOBAL)
-set_target_properties(mihomo_archive PROPERTIES
-        IMPORTED_LOCATION "${MIHOMO_ARCHIVE}"
+add_library(mihomo SHARED IMPORTED GLOBAL)
+set_target_properties(mihomo PROPERTIES
+        IMPORTED_LOCATION "${MIHOMO_LIBRARY}"
         INTERFACE_INCLUDE_DIRECTORIES "${GENERATED_DIR}"
 )
 
@@ -29,9 +29,7 @@ target_link_options(androidcyaml PRIVATE
         "-Wl,-z,common-page-size=16384"
 )
 target_link_libraries(androidcyaml PRIVATE
-        "-Wl,--whole-archive"
-        mihomo_archive
-        "-Wl,--no-whole-archive"
+        mihomo
         android
         log
         dl
