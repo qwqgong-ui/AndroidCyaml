@@ -4,9 +4,10 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "710fcda522f88bac9c31f3f3974bd3f4712cd5f4"
+val mihomoCommit = "82fa6be864f76a70a0024e9035205a2fad6cda96"
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
+val androidNdkVersion = "29.0.14206865"
 
 val releaseStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE")
 val releaseStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
@@ -22,16 +23,23 @@ val releaseSigningConfigured = listOf(
 android {
     namespace = "io.github.qwqgong.androidcyaml"
     compileSdk = 36
+    ndkVersion = androidNdkVersion
 
     defaultConfig {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 36
-        versionCode = 132
-        versionName = "0.6.132"
+        versionCode = 133
+        versionName = "0.6.133"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++20")
+            }
         }
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
@@ -42,6 +50,13 @@ android {
     buildFeatures {
         aidl = true
         buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     compileOptions {
@@ -76,10 +91,8 @@ android {
 
     packaging {
         jniLibs {
-            // The Go executable is deliberately named libmihomo.so so Android
-            // extracts it into the executable native-library directory.
             useLegacyPackaging = true
-            keepDebugSymbols += "**/libmihomo.so"
+            keepDebugSymbols += "**/libandroidcyaml.so"
         }
         resources {
             excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*")
@@ -102,24 +115,29 @@ val verifyReleaseSigning by tasks.registering {
     }
 }
 
-tasks.configureEach {
-    if (name == "packageRelease" || name == "bundleRelease") {
-        dependsOn(verifyReleaseSigning)
-    }
-}
-
-val mihomoBinary = layout.projectDirectory.file(
-    "src/main/jniLibs/arm64-v8a/libmihomo.so",
-)
+val mihomoArchive = layout.projectDirectory.file("src/main/cpp/generated/libmihomo.a")
+val mihomoHeader = layout.projectDirectory.file("src/main/cpp/generated/libmihomo.h")
 
 val buildMihomo by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Build the pinned mihomo Android runtime for arm64"
+    description = "Build the pinned mihomo Android C archive for JNI"
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
     inputs.property("mihomoCommit", mihomoCommit)
-    outputs.file(mihomoBinary)
+    inputs.property("androidNdkVersion", androidNdkVersion)
+    outputs.files(mihomoArchive, mihomoHeader)
+}
+
+tasks.configureEach {
+    if (name == "packageRelease" || name == "bundleRelease") {
+        dependsOn(verifyReleaseSigning)
+    }
+    if (name.startsWith("configureCMake")
+            || name.startsWith("buildCMake")
+            || name.contains("ExternalNativeBuild")) {
+        dependsOn(buildMihomo)
+    }
 }
 
 tasks.named("preBuild") {
