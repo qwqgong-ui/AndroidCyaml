@@ -49,6 +49,15 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     (success, message) -> complete(callback, success, message)
             );
         }
+
+        @Override
+        public void setTunStackOverride(String override, IOperationCallback callback) {
+            enforceSameAppCaller();
+            coordinator.setTunStackOverride(
+                    override,
+                    (success, message) -> complete(callback, success, message)
+            );
+        }
     };
 
     @Override
@@ -98,7 +107,8 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     AndroidVpnService.isAlwaysOnMode(),
                     AndroidVpnService.isLockdownMode(),
                     current.state() == RuntimeState.RUNNING ? current.dashboardUrl() : "",
-                    current.state() == RuntimeState.RUNNING ? current.controllerPort() : 0
+                    current.state() == RuntimeState.RUNNING ? current.controllerPort() : 0,
+                    coordinator.tunStackOverride().wireValue()
             );
         } catch (RemoteException ignored) {
             // RemoteCallbackList removes dead UI callbacks automatically.
