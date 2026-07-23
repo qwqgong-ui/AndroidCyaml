@@ -38,6 +38,7 @@ android {
 
         externalNativeBuild {
             cmake {
+                arguments += "-DANDROID_PLATFORM=android-35"
                 cppFlags += listOf("-std=c++20")
             }
         }
@@ -92,7 +93,10 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            keepDebugSymbols += "**/libandroidcyaml.so"
+            keepDebugSymbols += setOf(
+                "**/libandroidcyaml.so",
+                "**/libmihomo.so",
+            )
         }
         resources {
             excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*")
@@ -115,18 +119,20 @@ val verifyReleaseSigning by tasks.registering {
     }
 }
 
-val mihomoArchive = layout.projectDirectory.file("src/main/cpp/generated/libmihomo.a")
+val mihomoLibrary = layout.projectDirectory.file(
+    "src/main/jniLibs/arm64-v8a/libmihomo.so",
+)
 val mihomoHeader = layout.projectDirectory.file("src/main/cpp/generated/libmihomo.h")
 
 val buildMihomo by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Build the pinned mihomo Android C archive for JNI"
+    description = "Build the pinned mihomo Android c-shared library for JNI"
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
     inputs.property("mihomoCommit", mihomoCommit)
     inputs.property("androidNdkVersion", androidNdkVersion)
-    outputs.files(mihomoArchive, mihomoHeader)
+    outputs.files(mihomoLibrary, mihomoHeader)
 }
 
 tasks.configureEach {
