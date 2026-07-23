@@ -7,9 +7,12 @@ on:
         description: Version name from app/build.gradle.kts, without the v prefix
         required: true
         type: string
+  push:
+    tags:
+      - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -19,15 +22,24 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Validate release source
+      - name: Resolve and validate release version
+        id: release
         shell: bash
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
-          [[ "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          grep -Fq "versionName = \"${RELEASE_VERSION}\"" app/build.gradle.kts
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+            version="${INPUT_VERSION}"
+          else
+            [[ "${GITHUB_REF}" == refs/tags/v* ]]
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          grep -Fq "versionName = \"${version}\"" app/build.gradle.kts
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
 
       - uses: actions/setup-java@v5
         with:
@@ -74,12 +86,21 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew :app:assembleRelease :app:lintRelease --stacktrace 2>&1 | tee build-release.log
+          status=0
+          ./gradlew :app:assembleRelease :app:lintRelease --stacktrace 2>&1 | tee build-release.log || status=$?
+          if (( status != 0 )); then
+            while IFS= read -r report; do
+              {
+                echo
+                echo "===== ${report} ====="
+                cat "${report}"
+              } | tee -a build-release.log
+            done < <(find app/build -type f -name 'lint-results-*.txt' -print | sort)
+          fi
+          exit "${status}"
 
       - name: Verify and name release APK
         shell: bash
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           source_apk="app/build/outputs/apk/release/app-release.apk"
@@ -92,10 +113,24 @@ jobs:
       - name: Upload signed release artifact
         uses: actions/upload-artifact@v7
         with:
-          name: AndroidCyaml-v${{ inputs.version }}-signed
+          name: AndroidCyaml-v${{ steps.release.outputs.version }}-signed
           path: |
-            AndroidCyaml-v${{ inputs.version }}-arm64-v8a.apk
+            AndroidCyaml-v${{ steps.release.outputs.version }}-arm64-v8a.apk
             SHA256SUMS
             build-release.log
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" \
+            "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk" \
+            "SHA256SUMS" \
+            --title "AndroidCyaml v${RELEASE_VERSION}" \
+            --generate-notes \
+            --verify-tag

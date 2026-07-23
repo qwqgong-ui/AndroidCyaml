@@ -32,10 +32,14 @@ final class ConfigPicker {
         if (source == null) {
             return null;
         }
+        int grantedFlags = data.getFlags();
+        if ((grantedFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) == 0) {
+            return source;
+        }
         try {
             activity.getContentResolver().takePersistableUriPermission(
                     source,
-                    data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
             );
         } catch (SecurityException ignored) {
             // Some providers grant only a one-shot read permission.
