@@ -5,7 +5,7 @@ AndroidCyaml packages and launches the following upstream works.
 ## mihomo
 
 - Project: <https://github.com/qwqgong-ui/mihomo>
-- Pinned commit: `06ff2639381577c36dc0bc3af2226b2c1d84ddb4`
+- Pinned commit: `9e9d172ae728c070e8dbee91504dda51d9a5e500`
 - License: GNU General Public License v3.0
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
