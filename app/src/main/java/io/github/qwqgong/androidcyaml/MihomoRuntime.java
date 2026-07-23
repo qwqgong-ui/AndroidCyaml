@@ -3,7 +3,6 @@ package io.github.qwqgong.androidcyaml;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.AssetManager;
-import android.os.ParcelFileDescriptor;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
@@ -635,7 +634,7 @@ final class MihomoRuntime implements AutoCloseable {
     }
 
     private static String readFile(File file) throws IOException {
-        return Files.readString(file.toPath(), StandardCharsets.UTF_8);
+        return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
     }
 
     private static void writeText(File file, String value) throws IOException {
@@ -663,13 +662,6 @@ final class MihomoRuntime implements AutoCloseable {
     private static String shortCommit() {
         String commit = BuildConfig.MIHOMO_COMMIT;
         return commit.length() <= 8 ? commit : commit.substring(0, 8);
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 
     record RuntimeFiles(File home, File config, File ui) {}
