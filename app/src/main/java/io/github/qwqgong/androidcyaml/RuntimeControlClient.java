@@ -18,7 +18,8 @@ final class RuntimeControlClient {
                 boolean alwaysOn,
                 boolean lockdown,
                 String dashboardUrl,
-                int controllerPort
+                int controllerPort,
+                String tunStackOverride
         );
 
         void onControlDisconnected();
@@ -43,7 +44,8 @@ final class RuntimeControlClient {
                 boolean alwaysOn,
                 boolean lockdown,
                 String dashboardUrl,
-                int controllerPort
+                int controllerPort,
+                String tunStackOverride
         ) {
             mainHandler.post(() -> listener.onRuntimeSnapshot(
                     state,
@@ -51,7 +53,8 @@ final class RuntimeControlClient {
                     alwaysOn,
                     lockdown,
                     dashboardUrl,
-                    controllerPort
+                    controllerPort,
+                    tunStackOverride
             ));
         }
     };
@@ -150,6 +153,21 @@ final class RuntimeControlClient {
         }
         try {
             current.importConfig(source, operationCallback(result));
+        } catch (RemoteException exception) {
+            disconnect();
+            result.onComplete(false, usefulMessage(exception));
+        }
+    }
+
+    void setTunStackOverride(TunStackOverride override, ResultCallback result) {
+        IAppControl current = service;
+        if (current == null) {
+            result.onComplete(false, "运行时控制服务暂不可用");
+            return;
+        }
+        TunStackOverride value = override == null ? TunStackOverride.CONFIG : override;
+        try {
+            current.setTunStackOverride(value.wireValue(), operationCallback(result));
         } catch (RemoteException exception) {
             disconnect();
             result.onComplete(false, usefulMessage(exception));
