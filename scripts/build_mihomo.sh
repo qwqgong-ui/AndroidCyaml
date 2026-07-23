@@ -4,8 +4,9 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="82fa6be864f76a70a0024e9035205a2fad6cda96"
-readonly BUILD_RECIPE_VERSION="7"
+readonly BUILD_RECIPE_VERSION="8"
 readonly NDK_VERSION="29.0.14206865"
+readonly NATIVE_API="35"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/cpp/generated"
 readonly OUTPUT_ARCHIVE="${OUTPUT_DIR}/libmihomo.a"
@@ -47,11 +48,11 @@ if [[ -z "${host_tag}" ]]; then
 fi
 
 readonly TOOLCHAIN="${NDK_ROOT}/toolchains/llvm/prebuilt/${host_tag}"
-readonly CC="${TOOLCHAIN}/bin/aarch64-linux-android36-clang"
-readonly CXX="${TOOLCHAIN}/bin/aarch64-linux-android36-clang++"
+readonly CC="${TOOLCHAIN}/bin/aarch64-linux-android${NATIVE_API}-clang"
+readonly CXX="${TOOLCHAIN}/bin/aarch64-linux-android${NATIVE_API}-clang++"
 readonly AR="${TOOLCHAIN}/bin/llvm-ar"
 [[ -x "${CC}" && -x "${CXX}" && -x "${AR}" ]] || {
-    echo "NDK arm64 API 36 toolchain is incomplete" >&2
+    echo "NDK arm64 API ${NATIVE_API} toolchain is incomplete" >&2
     exit 1
 }
 
