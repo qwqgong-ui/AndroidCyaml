@@ -74,7 +74,7 @@ final class AndroidTunManager implements Closeable {
         for (String address : options.dnsServerAddress()) {
             builder.addDnsServer(parseNumericAddress(address));
         }
-        applyPackageRouting(builder, options);
+        applyPackageRouting(builder, options, context.getPackageName());
 
         ParcelFileDescriptor established = builder.establish();
         if (established == null) {
@@ -86,32 +86,46 @@ final class AndroidTunManager implements Closeable {
 
     private static void applyPackageRouting(
             VpnService.Builder builder,
-            TunOptions options
+            TunOptions options,
+            String ownPackage
     ) throws IOException {
         try {
             if (!options.includePackage().isEmpty()) {
-                int accepted = 0;
+                // The embedded core must remain inside VpnService routing. Its
+                // real outbound sockets are excluded individually with protect().
+                builder.addAllowedApplication(ownPackage);
+                int acceptedTargets = 0;
                 for (String packageName : options.includePackage()) {
+                    if (ownPackage.equals(packageName)) {
+                        continue;
+                    }
                     try {
                         builder.addAllowedApplication(packageName);
-                        accepted++;
+                        acceptedTargets++;
                     } catch (PackageManager.NameNotFoundException exception) {
                         Log.w(TAG, "Ignoring unavailable included package " + packageName);
                     }
                 }
-                if (accepted == 0) {
+                if (acceptedTargets == 0
+                        && options.includePackage().stream().noneMatch(ownPackage::equals)) {
                     throw new IOException("tun.include-package 未匹配任何已安装应用");
                 }
                 return;
             }
 
             for (String packageName : options.excludePackage()) {
+                if (ownPackage.equals(packageName)) {
+                    Log.w(TAG, "Ignoring exclusion of the embedded core package");
+                    continue;
+                }
                 try {
                     builder.addDisallowedApplication(packageName);
                 } catch (PackageManager.NameNotFoundException exception) {
                     Log.w(TAG, "Ignoring unavailable excluded package " + packageName);
                 }
             }
+        } catch (PackageManager.NameNotFoundException exception) {
+            throw new IOException("AndroidCyaml 自身包无法加入 VPN 白名单", exception);
         } catch (RuntimeException exception) {
             throw new IOException("Android 应用路由配置失败", exception);
         }
