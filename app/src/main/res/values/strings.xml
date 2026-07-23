@@ -42,7 +42,7 @@
     <string name="override_force_gvisor">强制 gVisor</string>
     <string name="override_force_gvisor_summary">Android 运行时固定使用 gVisor，不提供 system、mixed 或跟随配置选项。</string>
     <string name="override_process_matching">进程匹配</string>
-    <string name="override_process_matching_summary">开启后强制使用 strict 模式，并通过 Android UID/包名接口匹配连接。</string>
+    <string name="override_process_matching_summary">开启后强制使用 always 模式，对所有连接执行 Android UID/包名匹配。</string>
     <string name="override_ipv6">IPv6</string>
     <string name="override_ipv6_available">当前底层网络具有已验证的全局 IPv6 地址和默认路由。</string>
     <string name="override_ipv6_auto_disabled">IPv6 开关保持开启，但当前环境不可用；运行时已自动重载为 IPv4-only。</string>
