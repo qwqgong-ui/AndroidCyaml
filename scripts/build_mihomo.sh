@@ -4,7 +4,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="a563ca2194edbf560b3857801cb3cceab13d7ff9"
-readonly BUILD_RECIPE_VERSION="3"
+readonly BUILD_RECIPE_VERSION="4"
 readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo-android-vpn.patch"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"

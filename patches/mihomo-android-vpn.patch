@@ -1,5 +1,5 @@
 diff --git a/component/process/process.go b/component/process/process.go
-index ace3bc63..c45a4f0e 100644
+index ace3bc63..fe872f8c 100644
 --- a/component/process/process.go
 +++ b/component/process/process.go
 @@ -28,0 +29,5 @@ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, str
@@ -8,8 +8,7 @@ index ace3bc63..c45a4f0e 100644
 +			return uid, path, nil
 +		}
 +	}
-@@ -30,0 +36,8 @@ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, str
-+
+@@ -31,0 +37,8 @@ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, str
 +// ProcessNameResolver resolves a connection owner outside the mihomo process.
 +// Android VpnService uses this hook because modern Android releases block
 +// unprivileged access to /proc/net and restrict INET_DIAG results.
@@ -17,19 +16,38 @@ index ace3bc63..c45a4f0e 100644
 +
 +var DefaultProcessNameResolver ProcessNameResolver
 +
++
+diff --git a/component/resolver/service.go b/component/resolver/service.go
+index 8b8f1158..71ba710b 100644
+--- a/component/resolver/service.go
++++ b/component/resolver/service.go
+@@ -20,0 +21,8 @@ func ServeMsg(ctx context.Context, msg *D.Msg) (*D.Msg, error) {
++	if DisableIPv6 && len(msg.Question) > 0 && msg.Question[0].Qtype == D.TypeAAAA {
++		response := new(D.Msg)
++		response.SetReply(msg)
++		return response, nil
++	}
++	if SystemResolver != nil {
++		return SystemResolver.ExchangeContext(ctx, msg)
++	}
+diff --git a/hub/executor/executor.go b/hub/executor/executor.go
+index d3b5eb81..0344fda4 100644
+--- a/hub/executor/executor.go
++++ b/hub/executor/executor.go
+@@ -187,0 +188 @@ func updateListeners(general *config.General, listeners map[string]C.InboundList
++	listener.ReCreateAndroidSocks(tunnel.Tunnel)
 diff --git a/hub/hub.go b/hub/hub.go
-index 29ddd2e6..7a947854 100644
+index 29ddd2e6..99b2607b 100644
 --- a/hub/hub.go
 +++ b/hub/hub.go
 @@ -3,0 +4,2 @@ import (
 +	"hash/fnv"
 +
-@@ -4,0 +7,1 @@ import (
+@@ -4,0 +7 @@ import (
 +	C "github.com/metacubex/mihomo/constant"
-@@ -6,0 +10,1 @@ import (
+@@ -6,0 +10 @@ import (
 +	"github.com/metacubex/mihomo/listener"
-@@ -53,0 +57,49 @@ func WithSecret(secret string) Option {
-+
+@@ -53,0 +58,49 @@ func WithSecret(secret string) Option {
 +const (
 +	androidSocksUser     = "androidcyaml"
 +	androidSocksPortBase = 20000
@@ -78,37 +96,157 @@ index 29ddd2e6..7a947854 100644
 +	}
 +}
 +
-diff --git a/hub/executor/executor.go b/hub/executor/executor.go
-index d3b5eb81..15e58795 100644
---- a/hub/executor/executor.go
-+++ b/hub/executor/executor.go
-@@ -187,0 +188,1 @@ func updateListeners(general *config.General, listeners map[string]C.InboundLis
-+	listener.ReCreateAndroidSocks(tunnel.Tunnel)
++
 diff --git a/listener/listener.go b/listener/listener.go
-index 3a0a8aad..fb0470ce 100644
+index 3a0a8aad..f0bd3bac 100644
 --- a/listener/listener.go
 +++ b/listener/listener.go
-@@ -10,0 +11,1 @@ import (
+@@ -3,0 +4 @@ import (
++	"context"
+@@ -5,0 +7 @@ import (
++	"net/netip"
+@@ -10,0 +13,2 @@ import (
 +	"github.com/metacubex/mihomo/component/auth"
-@@ -11,0 +13,1 @@ import (
++	"github.com/metacubex/mihomo/component/resolver"
+@@ -11,0 +16 @@ import (
 +	authStore "github.com/metacubex/mihomo/listener/auth"
-@@ -28,0 +31,7 @@ import (
-+
+@@ -28,0 +34,74 @@ import (
 +type androidSocksRuntimeConfig struct {
 +	port     int
 +	user     string
 +	password string
 +}
 +
-@@ -34,0 +44,4 @@ var (
-+	androidSocksListener       *socks.Listener
-+	androidSocksUDPListener    *socks.UDPListener
-+	androidSocksConfig         androidSocksRuntimeConfig
-+	androidSocksActiveConfig   androidSocksRuntimeConfig
-@@ -51,0 +65,1 @@ var (
-+	androidSocksMux sync.Mutex
-@@ -106,0 +121,90 @@ func SetBindAddress(host string) {
++var (
++	androidDNSIPv4 = netip.MustParseAddr("198.18.0.2")
++	androidDNSIPv6 = netip.MustParseAddr("fdfe:dcba:9876::2")
++)
 +
++type androidSocksTunnel struct {
++	upstream C.Tunnel
++}
++
++func isAndroidDNS(metadata *C.Metadata) bool {
++	if metadata == nil || metadata.DstPort != 53 {
++		return false
++	}
++	destination := metadata.DstIP.Unmap()
++	return destination == androidDNSIPv4 || destination == androidDNSIPv6
++}
++
++func (t *androidSocksTunnel) HandleTCPConn(conn net.Conn, metadata *C.Metadata) {
++	if !isAndroidDNS(metadata) {
++		t.upstream.HandleTCPConn(conn, metadata)
++		return
++	}
++	log.Debugln("[DNS] hijack Android TCP:%s", metadata.RemoteAddress())
++	_ = resolver.RelayDnsConn(
++		context.Background(),
++		conn,
++		resolver.DefaultDnsReadTimeout,
++	)
++}
++
++func (t *androidSocksTunnel) HandleUDPPacket(
++	packet C.UDPPacket,
++	metadata *C.Metadata,
++) {
++	if !isAndroidDNS(metadata) {
++		t.upstream.HandleUDPPacket(packet, metadata)
++		return
++	}
++	go func() {
++		defer packet.Drop()
++		ctx, cancel := context.WithTimeout(
++			context.Background(),
++			resolver.DefaultDnsRelayTimeout,
++		)
++		defer cancel()
++
++		output := make([]byte, resolver.SafeDnsPacketSize)
++		response, err := resolver.RelayDnsPacket(
++			ctx,
++			packet.Data(),
++			output,
++		)
++		if err != nil {
++			log.Debugln(
++				"[DNS] hijack Android UDP:%s failed: %s",
++				metadata.RemoteAddress(),
++				err.Error(),
++			)
++			return
++		}
++		_, _ = packet.WriteBack(response, metadata.UDPAddr())
++	}()
++}
++
++func (t *androidSocksTunnel) NatTable() C.NatTable {
++	return t.upstream.NatTable()
++}
++
+@@ -33,16 +112,20 @@ var (
+-	socksListener       *socks.Listener
+-	socksUDPListener    *socks.UDPListener
+-	httpListener        *http.Listener
+-	redirListener       *redir.Listener
+-	redirUDPListener    *tproxy.UDPListener
+-	tproxyListener      *tproxy.Listener
+-	tproxyUDPListener   *tproxy.UDPListener
+-	mixedListener       *mixed.Listener
+-	mixedUDPLister      *socks.UDPListener
+-	tunnelTCPListeners  = map[string]*LT.Listener{}
+-	tunnelUDPListeners  = map[string]*LT.PacketConn{}
+-	inboundListeners    = map[string]C.InboundListener{}
+-	tunLister           *sing_tun.Listener
+-	shadowSocksListener C.MultiAddrListener
+-	vmessListener       *sing_vmess.Listener
+-	tuicListener        *tuic.Listener
++	socksListener            *socks.Listener
++	socksUDPListener         *socks.UDPListener
++	androidSocksListener     *socks.Listener
++	androidSocksUDPListener  *socks.UDPListener
++	androidSocksConfig       androidSocksRuntimeConfig
++	androidSocksActiveConfig androidSocksRuntimeConfig
++	httpListener             *http.Listener
++	redirListener            *redir.Listener
++	redirUDPListener         *tproxy.UDPListener
++	tproxyListener           *tproxy.Listener
++	tproxyUDPListener        *tproxy.UDPListener
++	mixedListener            *mixed.Listener
++	mixedUDPLister           *socks.UDPListener
++	tunnelTCPListeners       = map[string]*LT.Listener{}
++	tunnelUDPListeners       = map[string]*LT.PacketConn{}
++	inboundListeners         = map[string]C.InboundListener{}
++	tunLister                *sing_tun.Listener
++	shadowSocksListener      C.MultiAddrListener
++	vmessListener            *sing_vmess.Listener
++	tuicListener             *tuic.Listener
+@@ -51,11 +134,12 @@ var (
+-	socksMux   sync.Mutex
+-	httpMux    sync.Mutex
+-	redirMux   sync.Mutex
+-	tproxyMux  sync.Mutex
+-	mixedMux   sync.Mutex
+-	tunnelMux  sync.Mutex
+-	inboundMux sync.Mutex
+-	tunMux     sync.Mutex
+-	ssMux      sync.Mutex
+-	vmessMux   sync.Mutex
+-	tuicMux    sync.Mutex
++	socksMux        sync.Mutex
++	androidSocksMux sync.Mutex
++	httpMux         sync.Mutex
++	redirMux        sync.Mutex
++	tproxyMux       sync.Mutex
++	mixedMux        sync.Mutex
++	tunnelMux       sync.Mutex
++	inboundMux      sync.Mutex
++	tunMux          sync.Mutex
++	ssMux           sync.Mutex
++	vmessMux        sync.Mutex
++	tuicMux         sync.Mutex
+@@ -106,0 +191,90 @@ func SetBindAddress(host string) {
 +// SetAndroidSocksConfig stores the private listener parameters supplied by the
 +// Android runtime. They are deliberately kept outside parsed config state so a
 +// controller reload cannot expose, move or disable the HEV bridge.
@@ -169,11 +307,12 @@ index 3a0a8aad..fb0470ce 100644
 +		inbound.WithInName("ANDROID-SOCKS"),
 +		inbound.WithSpecialRules(""),
 +	}
++	androidTunnel := &androidSocksTunnel{upstream: tunnel}
 +
 +	tcpListener, err := socks.NewWithConfig(
 +		serverConfig,
 +		inbound.NewListenConfig(),
-+		tunnel,
++		androidTunnel,
 +		additions...,
 +	)
 +	if err != nil {
@@ -183,7 +322,7 @@ index 3a0a8aad..fb0470ce 100644
 +	udpListener, err := socks.NewUDPWithConfig(
 +		serverConfig,
 +		inbound.NewListenConfig(),
-+		tunnel,
++		androidTunnel,
 +		additions...,
 +	)
 +	if err != nil {
@@ -214,13 +353,13 @@ diff --git a/main.go b/main.go
 index b68e9d96..8ec6e152 100644
 --- a/main.go
 +++ b/main.go
-@@ -3,0 +4,1 @@ import (
+@@ -3,0 +4 @@ import (
 +	"bufio"
-@@ -9,0 +11,1 @@ import (
+@@ -9,0 +11 @@ import (
 +	"net/netip"
-@@ -16,0 +19,1 @@ import (
+@@ -16,0 +19 @@ import (
 +	"time"
-@@ -21,0 +25,1 @@ import (
+@@ -21,0 +25 @@ import (
 +	"github.com/metacubex/mihomo/component/process"
 @@ -49,0 +54,3 @@ var (
 +	androidVpnFdSocket            string
