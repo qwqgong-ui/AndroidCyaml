@@ -43,10 +43,9 @@ final class MihomoController {
                 + "&disableUpgradeCore=1&disableTunMode=1&type=clash";
     }
 
-    void awaitReady(Process process, long timeout, TimeUnit unit)
-            throws IOException, InterruptedException {
+    void awaitReady(long timeout, TimeUnit unit) throws IOException, InterruptedException {
         long deadline = System.nanoTime() + unit.toNanos(timeout);
-        while (System.nanoTime() < deadline && process.isAlive()) {
+        while (System.nanoTime() < deadline && MihomoNative.isRunning()) {
             HttpURLConnection connection = null;
             try {
                 connection = open("/version");
@@ -62,14 +61,16 @@ final class MihomoController {
             }
             Thread.sleep(120);
         }
+        if (!MihomoNative.isRunning()) {
+            throw new IOException("mihomo JNI 核心已停止");
+        }
         throw new IOException("mihomo 控制器未在 90 秒内就绪");
     }
 
-    void awaitTun(Process process, long timeout, TimeUnit unit)
-            throws IOException, InterruptedException {
+    void awaitTun(long timeout, TimeUnit unit) throws IOException, InterruptedException {
         long deadline = System.nanoTime() + unit.toNanos(timeout);
         IOException lastFailure = null;
-        while (System.nanoTime() < deadline && process.isAlive()) {
+        while (System.nanoTime() < deadline && MihomoNative.isRunning()) {
             HttpURLConnection connection = null;
             try {
                 connection = open("/configs");
@@ -82,7 +83,7 @@ final class MihomoController {
                         && tun.optInt("file-descriptor", 0) > 0) {
                     return;
                 }
-                lastFailure = new IOException("mihomo TUN 监听未使用 Android 文件描述符");
+                lastFailure = new IOException("mihomo TUN 未使用 Android 文件描述符");
             } catch (IOException | JSONException exception) {
                 lastFailure = exception instanceof IOException
                         ? (IOException) exception
@@ -94,8 +95,8 @@ final class MihomoController {
             }
             Thread.sleep(120);
         }
-        if (!process.isAlive()) {
-            throw new IOException("mihomo 在建立 TUN 时退出");
+        if (!MihomoNative.isRunning()) {
+            throw new IOException("mihomo JNI 核心在建立 TUN 时停止");
         }
         throw lastFailure == null
                 ? new IOException("mihomo TUN 未在 10 秒内就绪")
