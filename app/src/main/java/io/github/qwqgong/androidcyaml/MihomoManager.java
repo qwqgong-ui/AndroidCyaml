@@ -110,6 +110,10 @@ public final class MihomoManager {
     private volatile String detail = "";
     private volatile int controllerPort;
     private volatile String runtimeOverrideError = "";
+    private boolean wifiIpv6Unavailable;
+    private boolean wifiIpv6OverrideApplied;
+    private boolean configuredIpv6Known;
+    private boolean configuredIpv6Enabled;
     private ParcelFileDescriptor vpnTunnel;
     private Process process;
     private ProcessLookupBridge processLookupBridge;
@@ -247,6 +251,26 @@ public final class MihomoManager {
         controlExecutor.execute(() -> setProcessMatchOverrideInternal(mode, callback));
     }
 
+    public void setWifiIpv6Unavailable(boolean unavailable) {
+        controlExecutor.execute(() -> {
+            if (wifiIpv6Unavailable == unavailable) {
+                return;
+            }
+            wifiIpv6Unavailable = unavailable;
+            if (!isProcessAlive()) {
+                return;
+            }
+            try {
+                boolean restarted = reconcileWifiIpv6Override();
+                if (!restarted && state == State.RUNNING) {
+                    publish(State.RUNNING, runningCoreDetail(vpnTunnel != null));
+                }
+            } catch (IOException exception) {
+                Log.w(TAG, "Unable to update Wi-Fi IPv6 runtime override", exception);
+            }
+        });
+    }
+
     public void importConfig(Uri source, ImportCallback callback) {
         controlExecutor.execute(() -> importConfigInternal(source, callback));
     }
@@ -331,14 +355,15 @@ public final class MihomoManager {
                 waitForAndroidTunActive(candidate, activeControllerPort, 5, TimeUnit.SECONDS);
             }
 
+            captureConfiguredIpv6(activeControllerPort);
+            try {
+                reconcileWifiIpv6Override();
+            } catch (IOException exception) {
+                Log.w(TAG, "Unable to apply Wi-Fi IPv6 runtime override", exception);
+            }
             applyPersistedProcessMatchOverride();
 
-            publish(
-                    State.RUNNING,
-                    "mihomo " + BuildConfig.MIHOMO_COMMIT.substring(0, 8)
-                            + " · zashboard " + BuildConfig.ZASHBOARD_VERSION
-                            + (activeTunnel == null ? " · 本地代理" : " · Android VPN")
-            );
+            publish(State.RUNNING, runningCoreDetail(activeTunnel != null));
             return true;
         } catch (Exception exception) {
             if (exception instanceof InterruptedException) {
@@ -431,8 +456,75 @@ public final class MihomoManager {
     }
 
     private void patchProcessMatchOverride(String mode) throws IOException {
-        byte[] body = ("{\"find-process-mode\":\"" + mode + "\"}")
-                .getBytes(StandardCharsets.UTF_8);
+        patchRuntimeConfig("{\"find-process-mode\":\"" + mode + "\"}");
+    }
+
+    private void captureConfiguredIpv6(int port) {
+        configuredIpv6Known = false;
+        configuredIpv6Enabled = false;
+        wifiIpv6OverrideApplied = false;
+
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL("http://" + HOST + ":" + port + "/configs");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(1_000);
+            connection.setReadTimeout(2_000);
+            connection.setRequestProperty("Authorization", "Bearer " + controllerSecret);
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                throw new IOException("mihomo 控制器无法读取 IPv6 配置");
+            }
+            JSONObject configs = new JSONObject(readResponseBody(connection));
+            if (!configs.has("ipv6")) {
+                throw new IOException("mihomo 控制器未返回 IPv6 配置");
+            }
+            configuredIpv6Enabled = configs.getBoolean("ipv6");
+            configuredIpv6Known = true;
+        } catch (IOException | JSONException exception) {
+            Log.w(TAG, "Unable to capture config.yaml IPv6 value", exception);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Applies the Wi-Fi-specific runtime value. Returns true when restoring an
+     * unknown base value required a full config reload.
+     */
+    private boolean reconcileWifiIpv6Override() throws IOException {
+        if (wifiIpv6Unavailable) {
+            if (wifiIpv6OverrideApplied
+                    || (configuredIpv6Known && !configuredIpv6Enabled)) {
+                return false;
+            }
+            patchRuntimeConfig("{\"ipv6\":false}");
+            wifiIpv6OverrideApplied = true;
+            Log.i(TAG, "Disabled mihomo IPv6 for IPv4-only Wi-Fi");
+            return false;
+        }
+
+        if (!wifiIpv6OverrideApplied) {
+            return false;
+        }
+        if (!configuredIpv6Known) {
+            Log.i(TAG, "Reloading config.yaml to restore its IPv6 value");
+            stopInternal(false);
+            if (!startInternal()) {
+                throw new IOException(detail);
+            }
+            return true;
+        }
+
+        patchRuntimeConfig("{\"ipv6\":" + configuredIpv6Enabled + "}");
+        wifiIpv6OverrideApplied = false;
+        Log.i(TAG, "Restored config.yaml IPv6 value after leaving IPv4-only Wi-Fi");
+        return false;
+    }
+
+    private void patchRuntimeConfig(String json) throws IOException {
+        byte[] body = json.getBytes(StandardCharsets.UTF_8);
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(HOST, controllerPort), 1_000);
             socket.setSoTimeout(2_000);
@@ -457,6 +549,18 @@ public final class MihomoManager {
                 }
             }
         }
+    }
+
+    private String runningCoreDetail(boolean androidVpn) {
+        String runningDetail = "mihomo " + BuildConfig.MIHOMO_COMMIT.substring(0, 8)
+                + " · zashboard " + BuildConfig.ZASHBOARD_VERSION
+                + (androidVpn ? " · Android VPN" : " · 本地代理");
+        if (wifiIpv6Unavailable
+                && (wifiIpv6OverrideApplied
+                || (configuredIpv6Known && !configuredIpv6Enabled))) {
+            runningDetail += " · Wi-Fi 无可用 IPv6";
+        }
+        return runningDetail;
     }
 
     private static boolean isValidProcessMatchMode(String mode) {
@@ -970,6 +1074,9 @@ public final class MihomoManager {
     }
 
     private void stopInternal(boolean publishStopped) {
+        configuredIpv6Known = false;
+        configuredIpv6Enabled = false;
+        wifiIpv6OverrideApplied = false;
         Process current;
         ProcessLookupBridge bridge;
         synchronized (processLock) {

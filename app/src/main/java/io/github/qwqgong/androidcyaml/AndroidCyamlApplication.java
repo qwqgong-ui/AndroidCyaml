@@ -6,6 +6,7 @@ import android.webkit.WebView;
 public final class AndroidCyamlApplication extends Application {
     @SuppressWarnings("FieldCanBeLocal")
     private FairMemoryManager fairMemoryManager;
+    private WifiIpv6Monitor wifiIpv6Monitor;
 
     @Override
     public void onCreate() {
@@ -14,8 +15,21 @@ public final class AndroidCyamlApplication extends Application {
             // The VPN/core process never renders UI. Prevent accidental WebView initialization there.
             WebView.disableWebView();
             fairMemoryManager = FairMemoryManager.start(this);
+            MihomoManager manager = MihomoManager.getInstance(this);
+            wifiIpv6Monitor = WifiIpv6Monitor.start(
+                    this,
+                    manager::setWifiIpv6Unavailable
+            );
         }
         TombstoneStore.captureAsync(this);
+    }
+
+    @Override
+    public void onTerminate() {
+        if (wifiIpv6Monitor != null) {
+            wifiIpv6Monitor.stop();
+        }
+        super.onTerminate();
     }
 
     @Override
