@@ -201,9 +201,20 @@ public final class AndroidVpnService extends VpnService implements
     }
 
     private void updateNotification(String text) {
-        NotificationManager manager = getSystemService(NotificationManager.class);
-        if (manager != null && foregroundActive) {
-            manager.notify(NOTIFICATION_ID, buildNotification(text));
+        if (!foregroundActive) {
+            return;
+        }
+        try {
+            // Updating the existing foreground-service notification through
+            // startForeground does not turn VPN startup into a notification
+            // permission gate on Android 13+.
+            startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(text),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+            );
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to update foreground notification", exception);
         }
     }
 }

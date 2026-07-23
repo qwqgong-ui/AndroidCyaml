@@ -43,7 +43,18 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew :app:assembleDebug :app:lintDebug --stacktrace 2>&1 | tee build.log
+          status=0
+          ./gradlew :app:assembleDebug :app:lintDebug --stacktrace 2>&1 | tee build.log || status=$?
+          if (( status != 0 )); then
+            while IFS= read -r report; do
+              {
+                echo
+                echo "===== ${report} ====="
+                cat "${report}"
+              } | tee -a build.log
+            done < <(find app/build -type f -name 'lint-results-*.txt' -print | sort)
+          fi
+          exit "${status}"
 
       - name: Upload build log
         if: always()
