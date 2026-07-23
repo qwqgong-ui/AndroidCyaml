@@ -5,14 +5,15 @@ AndroidCyaml packages and launches the following upstream works.
 ## mihomo
 
 - Project: <https://github.com/qwqgong-ui/mihomo>
-- Pinned commit: `bbc95a1ab212ede6cbb03d2693fb671fd165d2f9`
+- Pinned commit: `06ff2639381577c36dc0bc3af2226b2c1d84ddb4`
 - License: GNU General Public License v3.0
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
 The Android arm64 executable is built directly from the pinned commit by
 [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh), using the `with_gvisor` build tag. AndroidCyaml
 applies no source patch. The pinned fork contains the Android platform contract used to obtain a
-`VpnService` TUN descriptor and resolve Android connection owners.
+`VpnService` TUN descriptor, resolve Android connection owners, and apply the optional gVisor runtime
+stack override before the TUN listener starts.
 
 ## zashboard
 
