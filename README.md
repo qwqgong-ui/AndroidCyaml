@@ -24,8 +24,9 @@ DNS fake-ip 映射和嗅探结果；Android 连接所有者查询也可以把 UI
   - `open_tun`：核心先解析完整配置，再把 MTU、接口地址、路由、DNS 和应用范围交给
     `VpnService.Builder`；Android 返回 TUN 文件描述符。
   - `find_process`：核心按协议和四元组请求 Android 查询连接 UID，再映射为包名。
-- `RuntimeCoordinator` 串行化启动、停止、重启和配置导入，防止 UI、系统始终开启 VPN 和通知操作
-  并发创建多套核心或 TUN。
+- `RuntimeCoordinator` 串行化启动、停止、重启、配置导入和运行时覆写，防止 UI、系统始终开启 VPN
+  和通知操作并发创建多套核心或 TUN。
+- `RuntimeOverrideStore` 只持久化外壳覆写，不修改或重新生成用户 YAML。
 - `MainActivity` 运行在独立 `:ui` 进程，只通过非导出的 Binder 控制服务观察和操作运行时。
 
 mihomo 上游连接与控制器均属于 AndroidCyaml 自身 UID。该 UID 始终从 VPN 接管范围中排除，避免
@@ -58,6 +59,17 @@ Android 平台会消费以下操作系统级字段：
 - DNS 模块启用时的虚拟 DNS 地址
 
 TUN 栈、DNS 劫持、fake-ip、NAT、嗅探、规则和代理选择仍由 mihomo 处理。
+
+### 运行时覆写
+
+右上角菜单中的“覆写面板”当前只管理 TUN 栈：
+
+- **跟随 config.yaml**：不传入栈覆写，使用配置解析出的 `tun.stack`。
+- **强制 gVisor**：在 mihomo 完成配置解析后、创建 TUN 监听前，把本次运行的栈改为 gVisor。
+- **system（当前不可用）**：在面板中显示但禁用，Binder 和 mihomo 命令行也会拒绝该值。
+
+覆写保存在应用独立的运行时设置中，不写回 `config.yaml`。VPN 已连接时，切换会通过
+`RuntimeCoordinator` 串行重启 mihomo；如果新覆写无法建立 TUN，会恢复上一项覆写并重新启动。
 
 ### 连接面板中的域名与进程
 
