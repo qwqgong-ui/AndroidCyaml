@@ -41,12 +41,16 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Build and lint
+      - name: Build, lint and verify native runtime
         shell: bash
         run: |
           set -o pipefail
           status=0
           ./gradlew :app:assembleDebug :app:lintDebug --stacktrace 2>&1 | tee build.log || status=$?
+          if (( status == 0 )); then
+            bash scripts/verify_native_runtime.sh \
+              app/build/outputs/apk/debug/app-debug.apk 2>&1 | tee -a build.log || status=$?
+          fi
           if (( status != 0 )); then
             while IFS= read -r report; do
               {
