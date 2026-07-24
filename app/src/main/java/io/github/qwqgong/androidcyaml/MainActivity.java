@@ -260,7 +260,8 @@ public final class MainActivity extends Activity implements
                 || runtimeState == RuntimeState.STOPPING;
         setVpnToggle(connected);
         vpnToggle.setEnabled(!transitional && !(alwaysOn && connected));
-        if (runtimeState == RuntimeState.RUNNING
+        if (activityVisible
+                && runtimeState == RuntimeState.RUNNING
                 && snapshot.dashboardUrl() != null
                 && !snapshot.dashboardUrl().isBlank()
                 && snapshot.controllerPort() > 0) {
