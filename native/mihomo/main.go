@@ -50,7 +50,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -60,6 +59,7 @@ import (
 	"unsafe"
 
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/geodata"
 	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/component/resolver"
@@ -133,6 +133,8 @@ func AndroidCyamlFree(value *C.char) {
 
 //export AndroidCyamlValidate
 func AndroidCyamlValidate(homeValue, configValue *C.char) *C.char {
+	defer releaseRebuildableMemory(false)
+
 	home := C.GoString(homeValue)
 	configPath := C.GoString(configValue)
 	if err := initializeRuntimePaths(home, configPath); err != nil {
@@ -224,6 +226,7 @@ func AndroidCyamlStart(
 	route.SetEmbedMode(true)
 	hub.ApplyConfig(cfg)
 	active = true
+	releaseRebuildableMemory(false)
 	return respond(nil, nil)
 }
 
@@ -264,9 +267,7 @@ func AndroidCyamlIsRunning() C.int {
 
 //export AndroidCyamlTrimMemory
 func AndroidCyamlTrimMemory() C.int {
-	runtime.GC()
-	debug.FreeOSMemory()
-	return 1
+	return C.int(releaseRebuildableMemory(true))
 }
 
 func initializeRuntimePaths(home, configPath string) error {
@@ -559,7 +560,23 @@ func stopLocked() {
 	}
 	clearPlatformHooks()
 	active = false
-	runtime.GC()
+	releaseRebuildableMemory(false)
+}
+
+func releaseRebuildableMemory(clearRuntimeCaches bool) int {
+	geodata.ClearGeoIPCache()
+	geodata.ClearGeoSiteCache()
+	clearedCacheGroups := 2
+	if clearRuntimeCaches {
+		iface.FlushCache()
+		resolver.ClearCache()
+		clearedCacheGroups += 2
+	}
+	// FreeOSMemory already performs a full GC before returning unused pages to
+	// Android, so a preceding runtime.GC would only duplicate the stop-the-world
+	// work.
+	debug.FreeOSMemory()
+	return clearedCacheGroups
 }
 
 func respond(payload []byte, err error) *C.char {

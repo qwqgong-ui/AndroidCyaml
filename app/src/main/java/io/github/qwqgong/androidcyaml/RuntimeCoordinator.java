@@ -64,7 +64,9 @@ final class RuntimeCoordinator {
     static int trimMemoryCachesIfCreated() {
         RuntimeCoordinator local = instance;
         MihomoRuntime current = local == null ? null : local.runtime;
-        return current == null ? MihomoNative.trimMemory() : current.trimLogCache();
+        // Do not initialize the large native core merely because Android asks
+        // an otherwise idle service process to trim memory.
+        return current == null ? 0 : current.trimRebuildableCaches();
     }
 
     static boolean persistStateForMemoryKill() {

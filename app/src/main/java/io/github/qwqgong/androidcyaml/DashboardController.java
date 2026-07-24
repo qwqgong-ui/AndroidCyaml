@@ -6,7 +6,6 @@ import android.content.ComponentCallbacks2;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.net.Uri;
-import android.os.Bundle;
 import android.webkit.SafeBrowsingResponse;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -25,8 +24,8 @@ final class DashboardController {
     private final FrameLayout container;
     private final MessageSink messages;
     private WebView webView;
-    private Bundle retainedState;
-    private String retainedUrl;
+    private String retainedPageUrl;
+    private String retainedRootUrl;
     private String loadedUrl;
     private int controllerPort;
 
@@ -54,16 +53,11 @@ final class DashboardController {
                 )
         );
         loadedUrl = url;
-        if (retainedState != null
-                && url.equals(retainedUrl)
-                && dashboard.restoreState(retainedState) != null) {
-            retainedState = null;
-            retainedUrl = null;
-        } else {
-            retainedState = null;
-            retainedUrl = null;
-            dashboard.loadUrl(url);
-        }
+        String pageUrl = retainedPageUrl != null && url.equals(retainedRootUrl)
+                ? retainedPageUrl
+                : url;
+        clearRetainedNavigation();
+        dashboard.loadUrl(pageUrl);
     }
 
     boolean handleBack() {
@@ -77,24 +71,25 @@ final class DashboardController {
     void onTrimMemory(int level, boolean activityVisible) {
         if (!activityVisible && level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
             release(true);
-        } else if (webView != null && level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL) {
-            webView.clearCache(false);
         }
     }
 
     void release(boolean retainNavigation) {
         WebView dashboard = webView;
         if (dashboard == null) {
+            if (!retainNavigation) {
+                clearRetainedNavigation();
+            }
             return;
         }
         if (retainNavigation) {
-            Bundle state = new Bundle();
-            dashboard.saveState(state);
-            retainedState = state;
-            retainedUrl = loadedUrl;
+            String pageUrl = dashboard.getUrl();
+            retainedPageUrl = pageUrl != null && isControllerUri(Uri.parse(pageUrl))
+                    ? pageUrl
+                    : loadedUrl;
+            retainedRootUrl = loadedUrl;
         } else {
-            retainedState = null;
-            retainedUrl = null;
+            clearRetainedNavigation();
         }
         webView = null;
         loadedUrl = null;
@@ -105,6 +100,11 @@ final class DashboardController {
         dashboard.setWebViewClient(null);
         dashboard.removeAllViews();
         dashboard.destroy();
+    }
+
+    private void clearRetainedNavigation() {
+        retainedPageUrl = null;
+        retainedRootUrl = null;
     }
 
     @SuppressLint("SetJavaScriptEnabled")

@@ -22,8 +22,6 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 final class TombstoneStore {
     private static final String TAG = "AndroidCyaml/Tombstone";
@@ -34,18 +32,16 @@ final class TombstoneStore {
     private static final int MAX_MEMORY_LIMIT_RECORDS = 16;
     private static final long MAX_TOMBSTONE_BYTES = 4L * 1024L * 1024L;
     private static final long MAX_CACHE_BYTES = 16L * 1024L * 1024L;
-    private static final ExecutorService CAPTURE_EXECUTOR =
-            Executors.newSingleThreadExecutor(runnable -> {
-                Thread thread = new Thread(runnable, "AndroidCyaml-tombstones");
-                thread.setDaemon(true);
-                return thread;
-            });
-
     private TombstoneStore() {}
 
     static void captureAsync(Context context) {
         Context applicationContext = context.getApplicationContext();
-        CAPTURE_EXECUTOR.execute(() -> capture(applicationContext));
+        Thread worker = new Thread(
+                () -> capture(applicationContext),
+                "AndroidCyaml-tombstones"
+        );
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private static void capture(Context context) {

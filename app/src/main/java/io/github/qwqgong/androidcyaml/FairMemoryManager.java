@@ -102,7 +102,7 @@ final class FairMemoryManager {
                 throw new IllegalArgumentException("missing callback binder");
             }
 
-            int clearedLogLines = handled ? releaseLocalCaches() : 0;
+            int clearedCacheGroups = handled ? releaseLocalCaches() : 0;
             boolean statePersisted = !ACTION_KILL.equals(receivedAction)
                     || RuntimeCoordinator.persistStateForMemoryKill();
             handled = handled && statePersisted;
@@ -118,7 +118,7 @@ final class FairMemoryManager {
                             + snapshot.heapCapacityKb + " KiB"
                             + " pss=" + snapshot.pssKb + " KiB"
                             + suppliedLimits(detail)
-                            + " clearedLogLines=" + clearedLogLines
+                            + " clearedCacheGroups=" + clearedCacheGroups
                             + " statePersisted=" + statePersisted
             );
         } catch (RuntimeException exception) {

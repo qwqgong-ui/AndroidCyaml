@@ -143,6 +143,40 @@ IP 时，连接面板显示 IP 属于正常结果。
 - 系统托管时，应用内停止入口会提示前往系统 VPN 设置。
 - UI 或 WebView 被回收不会停止默认进程中的 VPN 与 mihomo。
 
+## Android 17 内存限制
+
+AndroidCyaml 按 [Android 17 应用内存限制](https://developer.android.com/about/versions/17/behavior-changes-all?hl=zh-cn)
+和 [OPPO 公平运行内存适配](https://open.oppomobile.com/documentation/page/info?id=13825)
+处理内存压力：
+
+- VPN、TUN 和 mihomo 留在默认前台服务进程，WebView 仅存在于可回收的 `:ui` 进程。
+- UI 进入后台后销毁 WebView，只保留当前控制器页面 URL，不保留可能较大的 WebView 历史
+  `Bundle`；UI 回收不影响 VPN。
+- 默认进程接收 OPPO `itgsa.intent.action.TRIM`/`KILL` 广播，在后台线程释放可重建缓存、保存已
+  落盘状态，并通过 Binder 返回处理结果。PSS 只在后台低频采样。
+- 空闲服务进程收到内存回调时不会因此加载 `libmihomo.so`。核心运行时会清理 DNS、接口和
+  geodata 解析缓存，并由 Go 运行时把空闲页归还 Android。
+- 启动时读取 `ApplicationExitInfo`；`REASON_OTHER` 且描述包含
+  `MemoryLimiter:AnonSwap` 的退出记录会写入应用私有 `noBackupFilesDir/tombstones`，最多保留
+  16 条。
+
+Android 17 设备可用以下命令建立 UI 可见、UI 退后台和 VPN-only 三种状态的 PSS/RSS 基线，并测试
+指定进程的限制。手动限制会影响当前进程，测试后务必恢复：
+
+```bash
+adb shell am memory-limiter status
+adb shell dumpsys meminfo io.github.qwqgong.androidcyaml
+adb shell pidof io.github.qwqgong.androidcyaml
+adb shell pidof io.github.qwqgong.androidcyaml:ui
+
+adb shell am memory-limiter manual <pid> 256MB
+# 执行启动、配置导入、前后台切换和 VPN 连通性测试
+adb shell am memory-limiter manual <pid> none
+```
+
+Android 17 不提供应用侧查询实际限制的运行时 API；以设备的 `am memory-limiter status`、进程
+PSS/RSS、退出记录和 VPN 连通性为验收事实，不能仅以 Java 堆大小代替整进程内存。
+
 ## 构建
 
 需要：

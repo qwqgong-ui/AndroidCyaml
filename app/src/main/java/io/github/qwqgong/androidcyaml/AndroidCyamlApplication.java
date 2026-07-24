@@ -15,6 +15,8 @@ public final class AndroidCyamlApplication extends Application {
             WebView.disableWebView();
             fairMemoryManager = FairMemoryManager.start(this);
         }
+        // Run in both processes so a reclaimed :ui process can record its own
+        // exit even while the foreground-service process stayed alive.
         TombstoneStore.captureAsync(this);
     }
 

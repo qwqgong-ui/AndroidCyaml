@@ -91,7 +91,7 @@ final class MihomoRuntime implements AutoCloseable {
         return controller == null ? "" : controller.dashboardUrl();
     }
 
-    int trimLogCache() {
+    int trimRebuildableCaches() {
         return MihomoNative.trimMemory();
     }
 
