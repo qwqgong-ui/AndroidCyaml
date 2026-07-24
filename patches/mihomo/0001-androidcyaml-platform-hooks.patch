@@ -1,0 +1,43 @@
+diff --git a/component/process/process.go b/component/process/process.go
+index ace3bc635..8f194bd35 100644
+--- a/component/process/process.go
++++ b/component/process/process.go
+@@ -24,11 +24,23 @@ func FindProcessName(network string, srcIP netip.Addr, srcPort int) (uint32, str
+ 	return findProcessName(network, srcIP, srcPort)
+ }
+ 
++// ProcessNameResolver resolves a socket owner through a platform service.
++// AndroidCyaml supplies this callback from VpnService because application
++// processes cannot rely on procfs or inet_diag access on Android.
++type ProcessNameResolver func(network string, src, dst netip.AddrPort) (uint32, string, error)
++
++var DefaultProcessNameResolver ProcessNameResolver
++
+ // FindProcessNameByAddr finds the process owning a socket identified by its
+ // local and remote endpoints. Platforms without an endpoint-aware lookup fall
+ // back to the source-only implementation.
+ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, string, error) {
++	if resolver := DefaultProcessNameResolver; resolver != nil {
++		if uid, path, err := resolver(network, src, dst); err == nil {
++			return uid, path, nil
++		}
++	}
+ 	return findProcessNameByAddr(network, src, dst)
+ }
+ 
+diff --git a/listener/sing_tun/server_android.go b/listener/sing_tun/server_android.go
+index f180bd305..a29198cde 100644
+--- a/listener/sing_tun/server_android.go
++++ b/listener/sing_tun/server_android.go
+@@ -49,6 +49,11 @@ func getPackageManager() (tun.PackageManager, error) {
+ }
+ 
+ func (l *Listener) buildAndroidRules(tunOptions *tun.Options) error {
++	if len(tunOptions.IncludePackage) == 0 && len(tunOptions.ExcludePackage) == 0 {
++		// AndroidCyaml has already applied package policy through VpnService.Builder.
++		// Do not start sing-tun's package database in the unprivileged VPN process.
++		return nil
++	}
+ 	packageManager, err := getPackageManager()
+ 	if err != nil {
+ 		return err
