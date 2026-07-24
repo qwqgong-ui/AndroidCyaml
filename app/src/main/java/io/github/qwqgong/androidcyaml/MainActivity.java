@@ -42,7 +42,7 @@ public final class MainActivity extends Activity implements
     private boolean lockdown;
     private boolean updatingVpnToggle;
     private boolean autoStartAttempted;
-    private boolean activityVisible;
+    private boolean activityResumed;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -78,18 +78,18 @@ public final class MainActivity extends Activity implements
     }
 
     @Override
-    protected void onStart() {
-        super.onStart();
-        activityVisible = true;
+    protected void onResume() {
+        super.onResume();
+        activityResumed = true;
         controlClient.bind();
     }
 
     @Override
-    protected void onStop() {
-        activityVisible = false;
+    protected void onPause() {
+        activityResumed = false;
         controlClient.unbind();
         dashboard.release(true);
-        super.onStop();
+        super.onPause();
     }
 
     @Override
@@ -101,7 +101,7 @@ public final class MainActivity extends Activity implements
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        dashboard.onTrimMemory(level, activityVisible);
+        dashboard.onTrimMemory(level, activityResumed);
     }
 
     @Override
@@ -260,7 +260,7 @@ public final class MainActivity extends Activity implements
                 || runtimeState == RuntimeState.STOPPING;
         setVpnToggle(connected);
         vpnToggle.setEnabled(!transitional && !(alwaysOn && connected));
-        if (activityVisible
+        if (activityResumed
                 && runtimeState == RuntimeState.RUNNING
                 && snapshot.dashboardUrl() != null
                 && !snapshot.dashboardUrl().isBlank()
