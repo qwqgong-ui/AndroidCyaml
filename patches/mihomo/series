@@ -1,1 +1,3 @@
 0001-androidcyaml-jni-runtime.patch
+0002-androidcyaml-tun-contract.patch
+0003-androidcyaml-platform-hooks.patch
