@@ -4,7 +4,10 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "2fd20f6b64bed02bfdf5f4d312c9ba4e77bdf889"
+val mihomoCommit = "0d91f2a2f5334109c1d9cd17f14e525fc38c60bb"
+val mihomoPatchFile = rootProject.file("patches/mihomo/0001-androidcyaml-platform-hooks.patch")
+val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
+val mihomoWrapperMain = rootProject.file("native/mihomo/main.go")
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 val androidNdkVersion = "29.0.14206865"
@@ -44,6 +47,7 @@ android {
         }
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
+        buildConfigField("String", "MIHOMO_PATCH_SET", "\"${mihomoPatchFile.name}\"")
         buildConfigField("String", "ZASHBOARD_VERSION", "\"$zashboardVersion\"")
         buildConfigField("String", "GEODATA_COMMIT", "\"$geodataCommit\"")
     }
@@ -126,10 +130,13 @@ val mihomoHeader = layout.projectDirectory.file("src/main/cpp/generated/libmihom
 
 val buildMihomo by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Build the pinned mihomo Android c-shared library for JNI"
+    description = "Build clean mihomo plus the AndroidCyaml-owned JNI patch"
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
+    inputs.file(mihomoPatchFile)
+    inputs.file(mihomoWrapperGoMod)
+    inputs.file(mihomoWrapperMain)
     inputs.property("mihomoCommit", mihomoCommit)
     inputs.property("androidNdkVersion", androidNdkVersion)
     outputs.files(mihomoLibrary, mihomoHeader)
