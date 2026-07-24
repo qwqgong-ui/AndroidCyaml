@@ -5,22 +5,30 @@ AndroidCyaml packages and launches the following upstream works.
 ## mihomo
 
 - Project: <https://github.com/qwqgong-ui/mihomo>
-- Pinned commit: `2fd20f6b64bed02bfdf5f4d312c9ba4e77bdf889`
+- Clean pinned commit: `c3a7b207ffd2bd974b53103df2d67a276e561418`
+- AndroidCyaml patch series: [`patches/mihomo/series`](patches/mihomo/series)
 - License: GNU General Public License v3.0
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
-The Android arm64 core is built directly from the pinned commit by
-[`scripts/build_mihomo.sh`](scripts/build_mihomo.sh), using Android NDK 29, CGO, Go
-`-buildmode=c-shared`, and the `with_gvisor` build tag. The generated `libmihomo.so` is packaged next
-to the C++ JNI wrapper `libandroidcyaml.so` and runs in the Android VPN service process.
+[`scripts/build_mihomo.sh`](scripts/build_mihomo.sh) checks out the clean pinned commit into a temporary
+build directory, resets and cleans that checkout, and then applies the AndroidCyaml-owned patch series.
+The script rejects a patch set that changes anything outside these three Android-only entry files:
 
-AndroidCyaml applies no post-checkout source patch. The pinned fork contains the exported embedded
-runtime API used to validate and apply configuration, start sing-tun on an Android-provided file
-descriptor, register non-circular JNI function-pointer callbacks, protect each real outbound socket
-through `VpnService.protect(fd)`, resolve Android connection owners, and select the system, gVisor, or
-mixed TUN stack. The Android interface contract uses `172.19.0.1/30`, optional
-`fdfe:dcba:9876::1/126`, MTU 9000, and disabled GSO so the system stack has the adjacent addresses
-required by its TCP NAT listener.
+- `android/jni/main.go`
+- `android/jni/config.go`
+- `android/jni/platform.go`
+
+The shared `qwqgong-ui/mihomo/Alpha` branch therefore remains suitable for desktop builds and does not
+contain AndroidCyaml's JNI lifecycle, VpnService contract, or runtime overrides.
+
+The patched Android arm64 core is compiled with Android NDK 29, CGO, Go `-buildmode=c-shared`, and the
+`with_gvisor,cmfa` build tags. The generated `libmihomo.so` is packaged next to the C++ JNI wrapper
+`libandroidcyaml.so` and runs in the Android VPN service process. The local patch set supplies the
+embedded lifecycle API, calls `VpnService.protect(fd)` for every real outbound socket, resolves Android
+connection owners through a JNI callback, and permits the system, gVisor, and mixed TUN stacks.
+
+The Android TUN contract uses `172.19.0.1/30`, optional `fdfe:dcba:9876::1/126`, MTU 9000, and disabled
+GSO so the system stack has adjacent addresses available for its TCP NAT listener.
 
 ## zashboard
 
