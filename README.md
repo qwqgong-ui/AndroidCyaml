@@ -1,119 +1,124 @@
 # AndroidCyaml
 
 AndroidCyaml 是一个面向 Android 16（API 36）、仅提供 `arm64-v8a` 构建的 mihomo VPN 外壳。
-自 0.6.130 起，项目废弃 HEV/tun2socks/SOCKS 中转路径，系统流量由 mihomo 自身的 TUN 栈直接处理：
+从 0.6.133 起，mihomo 不再以子进程运行，也不再通过抽象 Unix Socket 请求 TUN；Go 核心以
+`c-shared` 形式随 APK 打包，通过 JNI 直接运行在 `AndroidVpnService` 所在进程中。
 
 ```text
-Android 应用
+Android 应用流量
   → Android VpnService TUN
-  → mihomo sing-tun（固定 gVisor）
-  → 规则、DNS、嗅探、代理组和节点
+  → JNI 包装库 libandroidcyaml.so
+  → Go c-shared 核心 libmihomo.so
+  → mihomo sing-tun（system / gVisor / mixed）
+  → DNS、嗅探、规则、代理组和节点
+  → 每个真实出站 socket 调用 VpnService.protect(fd)
   → 底层网络
 ```
 
-应用不再把 IP 包转换成内部 SOCKS5 连接。因此，mihomo 可以继续维护 TUN 入口的原始流量元数据、
-DNS fake-ip 映射和嗅探结果；Android 连接所有者查询也可以把 UID 映射回包名。
+整个应用 UID 不再被排除出 VPN。只有 mihomo 真正建立的上游 socket 会被逐个保护，因此 system 栈
+内部的 TCP listener、TCP NAT 回注和 TUN 数据路径仍留在 VPN 内，同时代理出站不会重新进入 TUN。
 
-## 设计边界
+## 运行时结构
 
-架构采用“核心拥有配置语义，Android 只实现平台能力”的分层：
+- `AndroidVpnService`：拥有 VPN 授权、前台服务、通知、`VpnService.Builder` 和 TUN 文件描述符。
+- `MihomoNative`：JNI 的 Java 入口，负责校验、准备 TUN、启动、停止和内存回收。
+- `libandroidcyaml.so`：C++ JNI 包装层，连接 Java 回调和 Go 导出函数。
+- `libmihomo.so`：使用 Go `c-shared` 构建的完整 mihomo 核心。
+- `NativePlatformCallbacks`：把每个出站 FD 交给 `VpnService.protect()`，并提供连接 UID/包名查询。
+- `AndroidTunManager`：应用固定接口地址、路由、DNS 和应用范围；不会把 AndroidCyaml 自身排除。
+- `RuntimeCoordinator`：串行化启动、停止、配置事务、栈切换和 IPv6 环境切换。
+- `MainActivity`：运行在独立 `:ui` 进程，只通过同 UID、非导出的 Binder 服务控制 VPN 进程。
 
-- `AndroidVpnService` 是唯一的运行时生命周期所有者，并持有系统 VPN 授权。
-- `MihomoRuntime` 只管理一个固定版本的 mihomo 子进程、控制器和只读配置文件。
-- `AndroidPlatformBridge` 通过仅应用进程可访问的抽象 Unix Socket 接收核心请求：
-  - `open_tun`：核心先解析完整配置，再把 MTU、接口地址、路由、DNS 和应用范围交给
-    `VpnService.Builder`；Android 返回 TUN 文件描述符。
-  - `find_process`：核心按协议和四元组请求 Android 查询连接 UID，再映射为包名。
-- `RuntimeCoordinator` 串行化启动、停止、重启、配置导入、覆写和网络环境切换，防止并发创建多套
-  核心或 TUN。
-- `RuntimeOverrideStore` 只持久化外壳覆写，不修改或重新生成用户 YAML。
-- `Ipv6EnvironmentMonitor` 观察应用自身可用的底层默认网络，不把 VPN 虚拟网络当成 IPv6 上游。
-- `MainActivity` 运行在独立 `:ui` 进程，只通过非导出的 Binder 控制服务观察和操作运行时。
+使用 `tun.include-package` 白名单时，外壳会自动把 AndroidCyaml 自身加入允许列表；使用
+`tun.exclude-package` 时会忽略对自身包的排除。这样核心始终位于 VPN 数据路径内，真实出站再通过
+逐 socket `protect()` 离开 VPN。
 
-mihomo 上游连接与控制器均属于 AndroidCyaml 自身 UID。该 UID 始终从 VPN 接管范围中排除，避免
-上游再次进入 TUN 形成路由循环。
+## TUN 栈
 
-## 配置
+覆写面板可直接选择：
 
-上传的文件按原字节复制到应用私有目录。外壳不会重写节点、代理组、规则、DNS、sniffer 或 TUN
-字段，也不会把 Android 运行时参数写回 YAML。
+- **system 全栈（默认）**：TCP、UDP 和 ICMP 均使用 sing-tun system 实现。
+- **gVisor 全栈**：TCP、UDP 和 ICMP 均由用户态 gVisor 网络栈处理。
+- **mixed**：mihomo 官方语义，TCP 使用 system，UDP 使用 gVisor。
 
-用于 VPN 的配置必须正常启用 mihomo TUN，例如：
+system 栈需要接口前缀中存在可用的“下一个地址”。AndroidCyaml 不采用用户 YAML 中的接口地址，
+而是固定使用：
 
-```yaml
-tun:
-  enable: true
-  stack: gvisor
-  dns-hijack:
-    - any:53
-    - tcp://any:53
-  auto-route: true
-  auto-detect-interface: true
+- IPv4：`172.19.0.1/30`
+- IPv6：`fdfe:dcba:9876::1/126`
+- MTU：`9000`
+- GSO：关闭
+
+因此 system TCP listener 可以使用 `.2` / `::2` 完成 NAT 回注，不会再遇到 `/32`、`/128` 无下一
+地址的问题。
+
+## 逐 socket protect
+
+Go 核心为 mihomo 的真实拨号安装 `dialer.DefaultSocketHook`。每个 TCP、UDP 等出站 socket 在连接
+前通过 JNI 回调：
+
+```text
+Go RawConn FD → NativePlatformCallbacks.protectSocket(fd)
+              → AndroidVpnService.protect(fd)
 ```
 
-Android 平台会消费以下操作系统级字段：
+失败会中止该次拨号，而不是静默形成 VPN 路由循环。system 栈内部 listener 不属于真实代理出站，
+不会被该 hook 排除。
 
-- `tun.mtu`
-- 解析后的 IPv4/IPv6 TUN 地址
-- `tun.auto-route`、路由与排除路由
-- `tun.include-package` / `tun.exclude-package`
-- DNS 模块启用时的虚拟 DNS 地址
+## 进程匹配
 
-AndroidCyaml 的运行时固定使用 gVisor，因此上传配置中的 `tun.stack` 不会决定 Android 实际栈。
-DNS 劫持、fake-ip、NAT、嗅探、规则和代理选择仍由 mihomo 处理。
+覆写面板中的“进程匹配”与 TUN 栈独立：
 
-### 运行时覆写
+- 开启：强制 `find-process-mode: always`；mihomo 按协议和原始四元组调用 Android
+  `ConnectivityManager.getConnectionOwnerUid()`，再把 UID 映射为包名。
+- 关闭：强制 `find-process-mode: off`。
 
-右上角菜单中的“覆写面板”提供三个互不阻塞的状态：
+核心、JNI 和 VPN 服务在同一进程中，进程查询不再经过 JSON/Unix Socket 往返。
 
-- **强制 gVisor**：固定开启且不可修改。面板不再提供 system、mixed 或跟随配置选项。
-- **进程匹配**：开启时强制 `find-process-mode: always`，对每条连接调用 Android 的四元组 UID 查询并
-  映射包名；关闭时强制 `off`。
-- **IPv6**：控制本次运行是否允许全局 IPv6、DNS AAAA、IPv6 TUN 地址与 IPv6 路由。
+## IPv6
 
-覆写值保存在应用独立设置中，不写回 `config.yaml`。VPN 已连接时，修改开关会通过
-`RuntimeCoordinator` 串行重启 mihomo；如果新状态无法建立 TUN，会恢复上一状态并重新启动。
+IPv6 开关表示用户意愿，实际启用还要求底层默认网络同时具备：
 
-### 自适应 IPv6
+- Android 已验证的互联网能力；
+- 全局 IPv6 地址；
+- IPv6 默认路由。
 
-IPv6 开关表示用户意愿，实际状态还取决于当前底层网络。AndroidCyaml 只有在下列条件同时满足时才
-启用 IPv6：
+环境不满足时，应用保留 IPv6 开关状态，但自动重建为 IPv4-only；环境恢复后重新启用 IPv6。即使
+环境检测通过，只要 IPv6 模式启动失败，也会关闭失败实例并用 IPv4-only 重试一次。
 
-- 当前默认网络已通过 Android 的互联网验证；
-- 存在可用的全局 IPv6 地址；
-- 存在 IPv6 默认路由。
+## 配置边界
 
-当 IPv6 开关已开启但环境不满足条件时，应用保留开关状态，自动重载 mihomo 和 Android TUN 为
-IPv4-only。环境恢复后自动再次重载并启用 IPv6。即使环境检测认为可用，只要 IPv6 模式启动失败，
-协调器也会立即关闭失败的核心并用 IPv4-only 重试一次。
+上传的 `config.yaml` 按原字节保存，不会被重写。Android JNI 运行时在内存中接管以下平台字段：
 
-### 连接面板中的域名与进程
+- 强制启用 TUN，并设置设备名 `AndroidCyaml`；
+- 使用覆写面板选择的 `system`、`gvisor` 或 `mixed`；
+- 使用固定 `/30`、`/126` 地址、MTU 9000，并关闭 GSO；
+- 根据 IPv6 有效状态移除 IPv6 地址和路由；
+- 将路由、排除路由、DNS 和包范围交给 `VpnService.Builder`；
+- 把 Android TUN FD 交给 sing-tun，并关闭核心侧重复的系统路由操作。
 
-域名展示依赖 mihomo 能获得域名语义：
+节点、代理组、规则、DNS 行为、fake-ip、sniffer、DNS 劫持、NAT 和代理选择仍由 mihomo 处理。
+动态 `route-address-set` 不能直接转换为 Android `VpnService.Builder` 路由，因此会明确报错。
 
-- `dns.enhanced-mode: fake-ip` 配合 TUN DNS 劫持；或
-- 启用 `sniffer`，允许对 HTTP/TLS/QUIC 流量提取域名。
-
-应用自行使用加密 DNS、配置关闭 DNS 映射与嗅探，或目标本来就是纯 IP 时，面板显示 IP 属于正常
-结果。覆写面板中的“进程匹配”开启后，外壳会覆盖 YAML 中的 `find-process-mode`，确保所有连接执行
-Android UID/包名查询。
+域名展示仍依赖 fake-ip DNS 映射或 sniffer；应用自行使用加密 DNS、关闭映射与嗅探，或目标本身只有
+IP 时，连接面板显示 IP 属于正常结果。
 
 ## 配置导入事务
 
 1. 从 Android Storage Access Framework 读取候选文件，最大 32 MiB。
-2. 使用同一份内置 mihomo 执行 `-t` 完整解析校验。
+2. 使用同一份嵌入式 mihomo 解析候选配置。
 3. 校验成功后原子替换应用私有的 `config.yaml`，并设为只读。
-4. VPN 正在运行时，停止旧核心并在同一个平台桥上启动新核心。
-5. 新配置无法建立 TUN 时，自动恢复上一份配置并重新启动。
+4. VPN 运行时，在同一个服务进程内停止旧核心并重建 TUN。
+5. 新配置无法启动时恢复上一份配置和运行状态。
 
-首次安装使用内置的 DIRECT 默认配置。GeoIP、GeoSite 与 Zashboard 均随 APK 离线分发。
+首次安装使用内置 DIRECT 默认配置；GeoIP、GeoSite 与 Zashboard 均随 APK 离线分发。
 
 ## 系统 VPN
 
 - 支持系统“始终开启 VPN”和锁定模式。
 - 普通模式可从通知停止 VPN。
 - 系统托管时，应用内停止入口会提示前往系统 VPN 设置。
-- UI 退出或 WebView 被回收不会停止默认进程中的 VPN 与 mihomo。
+- UI 或 WebView 被回收不会停止默认进程中的 VPN 与 mihomo。
 
 ## 构建
 
@@ -121,8 +126,9 @@ Android UID/包名查询。
 
 - JDK 17
 - Android SDK Platform 36 与 Build Tools 36.0.0
+- Android NDK `29.0.14206865` 与 CMake 3.22.1
 - Go 1.26 或更高版本
-- Git、bash、sha256sum
+- Git、bash、unzip、readelf、sha256sum
 
 ```properties
 # local.properties
@@ -133,13 +139,18 @@ sdk.dir=/absolute/path/to/Android/Sdk
 ./scripts/fetch_zashboard.sh
 ./scripts/fetch_geodata.sh
 ./gradlew :app:assembleDebug :app:lintDebug
+bash scripts/verify_native_runtime.sh app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`scripts/build_mihomo.sh` 直接检出 `qwqgong-ui/mihomo` 的固定提交，以
-`GOOS=android GOARCH=arm64 CGO_ENABLED=0` 和 `with_gvisor` 标签构建。AndroidCyaml 仓库不再应用
-mihomo 补丁，也不再构建或打包 HEV/NDK 组件。
+`scripts/build_mihomo.sh` 检出固定的 mihomo 提交，用 Android arm64 CGO 和 `with_gvisor` 标签生成
+`libmihomo.so`；CMake 再生成 JNI 包装库 `libandroidcyaml.so`。验证脚本检查：
 
-正式发行包需要通过以下环境变量提供长期签名密钥：
+- 两个库均为 AArch64；
+- JNI 与 Go 导出符号完整；
+- `libandroidcyaml.so` 仅以 `libmihomo.so` 为依赖名，不含构建机绝对路径；
+- 两个 ELF 的所有 LOAD 段均至少 16 KiB 对齐。
+
+正式发行需要设置：
 
 - `ANDROID_SIGNING_STORE_FILE`
 - `ANDROID_SIGNING_STORE_PASSWORD`
@@ -150,6 +161,7 @@ mihomo 补丁，也不再构建或打包 HEV/NDK 组件。
 
 ```bash
 ./gradlew :app:assembleRelease :app:lintRelease
+bash scripts/verify_native_runtime.sh app/build/outputs/apk/release/app-release.apk
 ```
 
 ## 固定依赖

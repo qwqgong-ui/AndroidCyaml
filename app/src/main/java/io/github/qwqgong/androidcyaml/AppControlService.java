@@ -52,12 +52,14 @@ public final class AppControlService extends Service implements RuntimeStateBus.
 
         @Override
         public void setRuntimeOverrides(
+                String tunStack,
                 boolean processMatching,
                 boolean ipv6Enabled,
                 IOperationCallback callback
         ) {
             enforceSameAppCaller();
             coordinator.setRuntimeOverrides(
+                    tunStack,
                     processMatching,
                     ipv6Enabled,
                     (success, message) -> complete(callback, success, message)
@@ -114,6 +116,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     AndroidVpnService.isLockdownMode(),
                     current.state() == RuntimeState.RUNNING ? current.dashboardUrl() : "",
                     current.state() == RuntimeState.RUNNING ? current.controllerPort() : 0,
+                    overrides.tunStack().wireValue(),
                     overrides.processMatching(),
                     overrides.ipv6Enabled(),
                     coordinator.effectiveIpv6Enabled()

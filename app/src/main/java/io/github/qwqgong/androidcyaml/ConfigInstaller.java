@@ -20,7 +20,7 @@ final class ConfigInstaller {
         this.fileStore = fileStore;
     }
 
-    Transaction install(Uri source) throws IOException, InterruptedException {
+    Transaction install(Uri source) throws IOException {
         if (source == null) {
             throw new IOException("未选择配置文件");
         }
@@ -38,7 +38,7 @@ final class ConfigInstaller {
             fileStore.moveReplacing(candidate, paths.config());
             fileStore.makeConfigReadOnly(paths.config());
             return new Transaction(fileStore, paths.config(), backup, candidate);
-        } catch (IOException | InterruptedException exception) {
+        } catch (IOException exception) {
             Files.deleteIfExists(candidate.toPath());
             if (backup.isFile()) {
                 Files.deleteIfExists(paths.config().toPath());

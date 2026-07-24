@@ -4,58 +4,127 @@
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
-| `AndroidVpnService` | VPN permission, foreground lifetime, notification | mihomo configuration semantics |
-| `RuntimeCoordinator` | serialized state machine, config, override and network-change transactions | packet processing |
-| `RuntimeOverrideStore` | desired process-matching and IPv6 switches | YAML mutation or effective network state |
-| `Ipv6EnvironmentMonitor` | validated underlying IPv6 availability | user preference or mihomo lifecycle |
-| `AndroidPlatformBridge` | Android `VpnService.Builder`, TUN FD, UID lookup | DNS, rules, proxy selection |
-| `MihomoRuntime` | subprocess, controller, immutable runtime files and launch arguments | Android routing APIs |
-| mihomo | config parsing, gVisor TUN, DNS, sniffer, rules, outbounds | Android service lifecycle |
+| `AndroidVpnService` | VPN permission, foreground lifetime, notification, Builder and TUN FD | mihomo rules and proxy semantics |
+| `RuntimeCoordinator` | serialized startup, stop, config, stack and network-change transactions | packet processing |
+| `RuntimeOverrideStore` | desired TUN stack, process matching and IPv6 settings | YAML mutation or effective network state |
+| `Ipv6EnvironmentMonitor` | validated underlying IPv6 availability | user preference or core lifecycle |
+| `AndroidTunManager` | fixed interface addresses, routes, DNS and application scope | socket protection or proxy routing |
+| `NativePlatformCallbacks` | per-socket `protect(fd)` and Android UID/package lookup | TUN packet processing |
+| `MihomoNative` | Java JNI contract and native response decoding | VPN lifecycle |
+| `libandroidcyaml.so` | JNI exports, JavaVM attachment and callback dispatch | mihomo configuration semantics |
+| `libmihomo.so` | config parsing, sing-tun stacks, DNS, sniffer, rules and outbounds | Android UI and foreground-service policy |
 | UI/Binder | user intent and observation | runtime ownership |
+
+`MainActivity` runs in `:ui`; `AppControlService`, `AndroidVpnService`, both native libraries and the Go runtime
+remain in the default VPN service process.
+
+## Native library relationship
+
+```text
+Java MihomoNative
+  → libandroidcyaml.so
+      → libmihomo.so
+          → androidcyaml_protect_socket(fd)
+          → androidcyaml_resolve_process(...)
+              → NativePlatformCallbacks
+```
+
+`libmihomo.so` is built with Go `-buildmode=c-shared`. `libandroidcyaml.so` links against the stable SONAME
+`libmihomo.so`; CI rejects absolute `DT_NEEDED` paths. Both libraries are arm64 and use at least 16 KiB LOAD
+alignment.
 
 ## Startup transaction
 
 1. Android enters foreground-service mode.
-2. The coordinator opens one abstract Unix platform socket.
-3. The core parses `config.yaml`.
-4. Android runtime overrides force gVisor, set process matching to `always` or `off`, and remove IPv6
-   configuration when the effective IPv6 state is disabled.
-5. The core sends the resulting TUN platform options through `open_tun`.
-6. Android establishes `VpnService.Builder` and returns the FD with `SCM_RIGHTS`.
-7. mihomo starts sing-tun on that FD, then exposes its loopback controller.
-8. The coordinator publishes `RUNNING` only after `/configs` reports an enabled TUN with a valid FD.
+2. The coordinator reads the persisted stack/process/IPv6 settings.
+3. `MihomoNative.prepareTun` parses `config.yaml` inside the embedded core.
+4. The core applies the selected stack and fixed Android interface contract:
+   - IPv4 `172.19.0.1/30`;
+   - IPv6 `fdfe:dcba:9876::1/126` when effective;
+   - MTU 9000;
+   - GSO disabled.
+5. The core returns JSON containing the exact `VpnService.Builder` addresses, routes, DNS and package scope.
+6. Android establishes or reuses the VPN TUN.
+7. Java duplicates the TUN descriptor and transfers that duplicate to `MihomoNative.start`.
+8. The Go runtime installs per-socket protect and process-owner hooks, applies the parsed configuration and starts
+   sing-tun on the supplied FD.
+9. The coordinator publishes `RUNNING` only after the loopback controller is ready and `/configs` confirms an
+   enabled TUN with a valid file descriptor.
 
-Any failure closes the core and its TUN attempt as one transaction. When IPv6 was requested, the coordinator
-retries once with IPv6 disabled before declaring startup failure.
+A failed native start closes the duplicate FD through sing-tun or Java ownership cleanup. The service retains its
+original `ParcelFileDescriptor` so a core-only restart can reuse the established VPN interface when Builder options
+have not changed.
 
-## Override transaction
+## Socket protection
 
-1. The UI opens `RuntimeOverridesDialog`.
-2. gVisor is displayed as fixed and cannot be changed; process matching and IPv6 remain independent switches.
-3. `AppControlService` forwards both desired values over the same-UID Binder interface.
-4. `RuntimeCoordinator` persists them atomically through `RuntimeOverrideStore`.
-5. If VPN is active, the coordinator restarts mihomo on the existing platform bridge.
-6. If the new state cannot establish TUN, the previous settings are restored and the previous runtime is started
-   again.
+The whole application UID is intentionally kept inside VPN routing. For every real mihomo outbound socket:
 
-The selection is never written into `config.yaml`.
+1. `dialer.DefaultSocketHook` receives the raw FD before connect.
+2. Go calls the C callback `androidcyaml_protect_socket`.
+3. C++ attaches the current Go thread to the JVM when necessary.
+4. `NativePlatformCallbacks.protectSocket` calls `AndroidVpnService.protect(fd)`.
+5. A rejected protect operation fails the dial instead of allowing a routing loop.
+
+System-stack internal TCP listeners do not use mihomo's outbound dialer hook, so they remain in the TUN path.
+
+## Application routing
+
+- Without package filters, every eligible application, including AndroidCyaml, remains in the VPN.
+- With `include-package`, AndroidCyaml is automatically added to the allowlist.
+- With `exclude-package`, attempts to exclude AndroidCyaml are ignored.
+- User-requested packages that are not installed are logged and skipped; an include list with no usable target
+  package fails rather than silently capturing only the core.
+
+This invariant is required for system TCP NAT to loop packets back to its local listener. The core's true upstream
+sockets are the only sockets excluded, individually, through `protect()`.
+
+## TUN stacks
+
+The selection is independent of YAML and never written back:
+
+- `system`: TCP, UDP and ICMP use the sing-tun system implementation.
+- `gvisor`: all supported protocols use gVisor.
+- `mixed`: official mihomo behavior—TCP system, UDP gVisor.
+
+The fixed `/30` and `/126` prefixes guarantee the system stack has a second interface address for local listener
+NAT. Stack changes restart the embedded core transactionally; the Android TUN is reused when its Builder contract
+is unchanged.
+
+## Process matching
+
+When enabled, the core forces `find-process-mode: always`. The process resolver sends protocol and original source
+and destination endpoints through JNI to `ConnectivityManager.getConnectionOwnerUid()`, then maps the UID to a
+stable package name. When disabled, the mode is forced to `off`.
 
 ## Adaptive IPv6 transaction
 
-`Ipv6EnvironmentMonitor` considers IPv6 usable only when the app's underlying default network is validated and
-has both a global IPv6 address and an IPv6 default route. ULA, link-local, loopback and VPN virtual addresses do
-not qualify.
+`Ipv6EnvironmentMonitor` considers IPv6 usable only when the underlying default network is validated and has a
+global IPv6 address plus an IPv6 default route. ULA, link-local, loopback and VPN virtual addresses do not qualify.
 
-- Desired IPv6 off: runtime remains IPv4-only regardless of the network.
-- Desired IPv6 on, environment unavailable: the preference remains on, but the effective runtime is IPv4-only.
-- Environment becomes unavailable while running: the coordinator serially restarts mihomo and rebuilds TUN
-  without IPv6.
-- Environment recovers: the coordinator restarts again with IPv6.
-- IPv6 startup itself fails: the failed core is closed and one IPv4-only retry is attempted.
+- Desired IPv6 off: runtime is IPv4-only.
+- Desired IPv6 on, environment unavailable: preference remains on, effective runtime is IPv4-only.
+- Environment becomes unavailable while running: coordinator rebuilds core/TUN without IPv6.
+- Environment recovers: coordinator rebuilds with the fixed `/126` prefix.
+- IPv6 startup itself fails: the runtime is stopped and one IPv4-only retry is attempted.
 
-## Why the HEV path was removed
+## Config and override transactions
 
-A TUN-to-SOCKS adapter terminates the original IP flow and creates a new loopback SOCKS flow. The
-proxy core then observes the adapter connection rather than the Android application's original flow,
-which degrades process attribution and can reduce domain metadata to destination IPs. Direct mihomo
-TUN processing keeps DNS mapping, sniffing and connection metadata in one core.
+Config validation uses the same embedded core. A candidate file is parsed before atomic installation. If an active
+runtime cannot start with the new config, the old file and old runtime settings are restored.
+
+Runtime stack/process/IPv6 changes are persisted atomically. If the requested combination cannot establish a
+usable TUN, the previous settings are restored and restarted. No transaction rewrites user YAML.
+
+## Removed architecture
+
+The following components are intentionally gone:
+
+- mihomo child process;
+- abstract Unix platform socket;
+- JSON request framing and `SCM_RIGHTS` transfer;
+- whole-package VPN exclusion;
+- stale subprocess reaper;
+- HEV/tun2socks/SOCKS packet conversion.
+
+Keeping TUN processing, DNS mapping, sniffing, process attribution and outbound protection in one VPN service
+process avoids the metadata loss of a TUN-to-SOCKS bridge and restores the system stack's TCP feedback path.

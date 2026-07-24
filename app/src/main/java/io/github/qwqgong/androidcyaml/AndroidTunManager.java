@@ -19,13 +19,13 @@ final class AndroidTunManager implements Closeable {
     private final VpnPlatformHost host;
     private final Object lock = new Object();
     private ParcelFileDescriptor tunnel;
-    private AndroidPlatformProtocol.TunOptions activeOptions;
+    private TunOptions activeOptions;
 
     AndroidTunManager(VpnPlatformHost host) {
         this.host = Objects.requireNonNull(host);
     }
 
-    ParcelFileDescriptor open(AndroidPlatformProtocol.TunOptions options) throws IOException {
+    ParcelFileDescriptor open(TunOptions options) throws IOException {
         synchronized (lock) {
             if (options.equals(activeOptions)
                     && tunnel != null
@@ -47,13 +47,12 @@ final class AndroidTunManager implements Closeable {
         }
     }
 
-    private ParcelFileDescriptor establish(AndroidPlatformProtocol.TunOptions options)
-            throws IOException {
+    private ParcelFileDescriptor establish(TunOptions options) throws IOException {
         if (options.inet4Address().isEmpty() && options.inet6Address().isEmpty()) {
-            throw new IOException("mihomo did not provide a TUN interface address");
+            throw new IOException("mihomo 未提供 TUN 接口地址");
         }
         if (!options.includePackage().isEmpty() && !options.excludePackage().isEmpty()) {
-            throw new IOException("Android cannot combine tun.include-package and tun.exclude-package");
+            throw new IOException("Android 不能同时应用 include-package 与 exclude-package");
         }
 
         Context context = host.platformContext();
@@ -79,40 +78,44 @@ final class AndroidTunManager implements Closeable {
 
         ParcelFileDescriptor established = builder.establish();
         if (established == null) {
-            throw new IOException("Android did not establish the VpnService TUN interface");
+            throw new IOException("Android 未建立 VpnService TUN 接口");
         }
-        Log.i(TAG, "Established mihomo TUN: " + options.summary());
+        Log.i(TAG, "Established embedded mihomo TUN: " + options.summary());
         return established;
     }
 
     private static void applyPackageRouting(
             VpnService.Builder builder,
-            AndroidPlatformProtocol.TunOptions options,
+            TunOptions options,
             String ownPackage
     ) throws IOException {
         try {
             if (!options.includePackage().isEmpty()) {
-                int accepted = 0;
+                // The embedded core must remain inside VpnService routing. Its
+                // real outbound sockets are excluded individually with protect().
+                builder.addAllowedApplication(ownPackage);
+                int acceptedTargets = 0;
                 for (String packageName : options.includePackage()) {
                     if (ownPackage.equals(packageName)) {
                         continue;
                     }
                     try {
                         builder.addAllowedApplication(packageName);
-                        accepted++;
+                        acceptedTargets++;
                     } catch (PackageManager.NameNotFoundException exception) {
                         Log.w(TAG, "Ignoring unavailable included package " + packageName);
                     }
                 }
-                if (accepted == 0) {
-                    throw new IOException("tun.include-package did not match an installed application");
+                if (acceptedTargets == 0
+                        && options.includePackage().stream().noneMatch(ownPackage::equals)) {
+                    throw new IOException("tun.include-package 未匹配任何已安装应用");
                 }
                 return;
             }
 
-            builder.addDisallowedApplication(ownPackage);
             for (String packageName : options.excludePackage()) {
                 if (ownPackage.equals(packageName)) {
+                    Log.w(TAG, "Ignoring exclusion of the embedded core package");
                     continue;
                 }
                 try {
@@ -122,7 +125,9 @@ final class AndroidTunManager implements Closeable {
                 }
             }
         } catch (PackageManager.NameNotFoundException exception) {
-            throw new IOException("Android package routing failed", exception);
+            throw new IOException("AndroidCyaml 自身包无法加入 VPN 白名单", exception);
+        } catch (RuntimeException exception) {
+            throw new IOException("Android 应用路由配置失败", exception);
         }
     }
 

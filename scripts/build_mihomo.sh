@@ -3,24 +3,61 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
-readonly MIHOMO_COMMIT="710fcda522f88bac9c31f3f3974bd3f4712cd5f4"
-readonly BUILD_RECIPE_VERSION="6"
+readonly MIHOMO_COMMIT="2fd20f6b64bed02bfdf5f4d312c9ba4e77bdf889"
+readonly BUILD_RECIPE_VERSION="14"
+readonly NDK_VERSION="29.0.14206865"
+readonly NATIVE_API="35"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
-readonly OUTPUT_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
-readonly OUTPUT_FILE="${OUTPUT_DIR}/libmihomo.so"
+readonly HEADER_DIR="${ROOT_DIR}/app/src/main/cpp/generated"
+readonly LIBRARY_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
+readonly OUTPUT_LIBRARY="${LIBRARY_DIR}/libmihomo.so"
+readonly OUTPUT_HEADER="${HEADER_DIR}/libmihomo.h"
 readonly MARKER_FILE="${ROOT_DIR}/.third_party/mihomo.commit"
-readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:android-arm64-native-tun-v${BUILD_RECIPE_VERSION}"
+readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:android-arm64-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
-if [[ -f "${OUTPUT_FILE}" && -f "${MARKER_FILE}" ]] \
+if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
-    echo "mihomo ${MIHOMO_COMMIT:0:8} is already built."
+    echo "mihomo JNI library ${MIHOMO_COMMIT:0:8} is already built."
     exit 0
 fi
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v go >/dev/null || { echo "Go 1.26+ is required" >&2; exit 1; }
 
-mkdir -p "${ROOT_DIR}/.third_party" "${OUTPUT_DIR}"
+readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+readonly NDK_ROOT="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${SDK_ROOT}/ndk/${NDK_VERSION}}}"
+if [[ ! -d "${NDK_ROOT}" ]]; then
+    echo "Android NDK ${NDK_VERSION} is required; expected ${NDK_ROOT}" >&2
+    exit 1
+fi
+
+host_tag=""
+case "$(uname -s)" in
+    Linux) host_tag="linux-x86_64" ;;
+    Darwin)
+        for candidate in darwin-arm64 darwin-x86_64; do
+            if [[ -d "${NDK_ROOT}/toolchains/llvm/prebuilt/${candidate}" ]]; then
+                host_tag="${candidate}"
+                break
+            fi
+        done
+        ;;
+esac
+if [[ -z "${host_tag}" ]]; then
+    echo "Unsupported NDK host: $(uname -s)" >&2
+    exit 1
+fi
+
+readonly TOOLCHAIN="${NDK_ROOT}/toolchains/llvm/prebuilt/${host_tag}"
+readonly ANDROID_CC="${TOOLCHAIN}/bin/aarch64-linux-android${NATIVE_API}-clang"
+readonly ANDROID_CXX="${TOOLCHAIN}/bin/aarch64-linux-android${NATIVE_API}-clang++"
+readonly ANDROID_AR="${TOOLCHAIN}/bin/llvm-ar"
+[[ -x "${ANDROID_CC}" && -x "${ANDROID_CXX}" && -x "${ANDROID_AR}" ]] || {
+    echo "NDK arm64 API ${NATIVE_API} toolchain is incomplete" >&2
+    exit 1
+}
+
+mkdir -p "${ROOT_DIR}/.third_party" "${HEADER_DIR}" "${LIBRARY_DIR}"
 
 if [[ ! -d "${SOURCE_DIR}/.git" ]]; then
     if [[ -e "${SOURCE_DIR}" ]]; then
@@ -53,31 +90,38 @@ esac
 
 readonly BUILD_TIME="$(git -C "${SOURCE_DIR}" show -s --format=%cI "${MIHOMO_COMMIT}")"
 readonly VERSION="androidcyaml-${MIHOMO_COMMIT:0:8}"
-readonly TEMP_OUTPUT="${OUTPUT_FILE}.building"
 readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME} -w -s -buildid="
+readonly TEMP_DIR="${ROOT_DIR}/.third_party/mihomo-jni-building"
+rm -rf "${TEMP_DIR}"
+mkdir -p "${TEMP_DIR}"
 
 (
     cd "${SOURCE_DIR}"
-    GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
-    CGO_ENABLED=0 \
-    GOOS=android \
-    GOARCH=arm64 \
+    env \
+        GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        CGO_ENABLED=1 \
+        GOOS=android \
+        GOARCH=arm64 \
+        CC="${ANDROID_CC}" \
+        CXX="${ANDROID_CXX}" \
+        AR="${ANDROID_AR}" \
+        CGO_LDFLAGS="-Wl,-soname,libmihomo.so -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384" \
         go build \
+        -buildmode=c-shared \
         -tags with_gvisor \
         -trimpath \
         -ldflags "${LDFLAGS}" \
-        -o "${TEMP_OUTPUT}" \
-        .
+        -o "${TEMP_DIR}/libmihomo.so" \
+        ./android/jni
 )
 
-if command -v readelf >/dev/null; then
-    readelf -h "${TEMP_OUTPUT}" | grep -q 'Machine:.*AArch64' || {
-        echo "Built core is not AArch64" >&2
-        exit 1
-    }
-fi
+[[ -s "${TEMP_DIR}/libmihomo.so" && -s "${TEMP_DIR}/libmihomo.h" ]] || {
+    echo "Go did not produce the JNI shared library and header" >&2
+    exit 1
+}
 
-chmod 0755 "${TEMP_OUTPUT}"
-mv -f "${TEMP_OUTPUT}" "${OUTPUT_FILE}"
+mv -f "${TEMP_DIR}/libmihomo.so" "${OUTPUT_LIBRARY}"
+mv -f "${TEMP_DIR}/libmihomo.h" "${OUTPUT_HEADER}"
+rmdir "${TEMP_DIR}"
 printf '%s' "${EXPECTED_MARKER}" > "${MARKER_FILE}"
-echo "Built ${OUTPUT_FILE}"
+echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER}"

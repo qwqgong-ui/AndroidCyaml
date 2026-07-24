@@ -1,75 +1,84 @@
 package io.github.qwqgong.androidcyaml;
 
 import android.content.Context;
+import android.os.ParcelFileDescriptor;
+import android.util.Log;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
 final class MihomoRuntime implements AutoCloseable {
-    interface ExitListener {
-        void onUnexpectedExit(MihomoRuntime runtime, int exitCode, String diagnostics);
-    }
+    private static final String TAG = "AndroidCyaml/Runtime";
 
     private final Context context;
-    private final String platformSocket;
-    private final ExitListener exitListener;
     private final MihomoFileStore fileStore;
-    private final boolean processMatching;
+    private final AndroidTunManager tunManager;
+    private final NativePlatformCallbacks platformCallbacks;
+    private final RuntimeOverrideSettings settings;
     private final boolean ipv6Enabled;
     private final String controllerSecret;
 
-    private MihomoProcess process;
     private MihomoController controller;
+    private boolean started;
 
     MihomoRuntime(
             Context context,
-            String platformSocket,
             MihomoFileStore fileStore,
-            boolean processMatching,
-            boolean ipv6Enabled,
-            ExitListener exitListener
+            AndroidTunManager tunManager,
+            NativePlatformCallbacks platformCallbacks,
+            RuntimeOverrideSettings settings,
+            boolean ipv6Enabled
     ) {
         this.context = context.getApplicationContext();
-        this.platformSocket = platformSocket;
         this.fileStore = fileStore;
-        this.processMatching = processMatching;
+        this.tunManager = tunManager;
+        this.platformCallbacks = platformCallbacks;
+        this.settings = settings == null ? RuntimeOverrideSettings.defaults() : settings;
         this.ipv6Enabled = ipv6Enabled;
-        this.exitListener = exitListener;
         controllerSecret = ControllerSecretStore.getOrCreate(this.context);
     }
 
     String start() throws IOException, InterruptedException {
         MihomoPaths paths = fileStore.ensureReady();
         controller = MihomoController.reserve(controllerSecret);
-        process = MihomoProcess.start(
-                context,
-                paths,
-                platformSocket,
-                controller,
-                controllerSecret,
-                processMatching,
-                ipv6Enabled,
-                this::handleUnexpectedExit
-        );
+        TunOptions tunOptions = MihomoNative.prepareTun(paths, settings, ipv6Enabled);
+        ParcelFileDescriptor tunnel = tunManager.open(tunOptions);
+        ParcelFileDescriptor duplicate = ParcelFileDescriptor.dup(tunnel.getFileDescriptor());
+        int nativeFd = duplicate.detachFd();
+        boolean nativeAcceptedDescriptor = false;
         try {
-            Process rawProcess = process.rawProcess();
-            controller.awaitReady(rawProcess, 90, TimeUnit.SECONDS);
-            controller.awaitTun(rawProcess, 10, TimeUnit.SECONDS);
-            process.markReady();
+            MihomoNative.start(
+                    paths,
+                    controller,
+                    controllerSecret,
+                    settings,
+                    ipv6Enabled,
+                    nativeFd,
+                    platformCallbacks
+            );
+            nativeAcceptedDescriptor = true;
+            controller.awaitReady(90, TimeUnit.SECONDS);
+            controller.awaitTun(10, TimeUnit.SECONDS);
+            started = true;
             return "mihomo " + shortCommit()
-                    + " · gVisor"
-                    + (processMatching ? " · 进程匹配" : " · 不匹配进程")
+                    + " · JNI/CGO"
+                    + " · " + stackDetail(settings.tunStack())
+                    + (settings.processMatching() ? " · 进程匹配" : " · 不匹配进程")
                     + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
                     + " · zashboard " + BuildConfig.ZASHBOARD_VERSION;
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            String diagnostics = process.diagnostics();
-            close();
-            if (!diagnostics.isBlank()) {
-                throw new IOException(usefulMessage(exception) + "：" + diagnostics, exception);
+            try {
+                MihomoNative.stop();
+            } catch (IOException stopFailure) {
+                exception.addSuppressed(stopFailure);
             }
+            if (!nativeAcceptedDescriptor) {
+                closeDetachedDescriptor(nativeFd);
+            }
+            controller = null;
             throw exception;
         }
     }
@@ -83,29 +92,38 @@ final class MihomoRuntime implements AutoCloseable {
     }
 
     int trimLogCache() {
-        return process == null ? 0 : process.trimLogCache();
+        return MihomoNative.trimMemory();
     }
 
     @Override
     public void close() {
-        if (process != null) {
-            process.close();
-            process = null;
+        if (!started && !MihomoNative.isRunning()) {
+            controller = null;
+            return;
+        }
+        started = false;
+        try {
+            MihomoNative.stop();
+        } catch (IOException exception) {
+            Log.w(TAG, "Unable to stop embedded mihomo cleanly", exception);
         }
         controller = null;
     }
 
-    private void handleUnexpectedExit(MihomoProcess source, int exitCode, String diagnostics) {
-        if (process == source && exitListener != null) {
-            exitListener.onUnexpectedExit(this, exitCode, diagnostics);
+    private static void closeDetachedDescriptor(int fileDescriptor) {
+        try (ParcelFileDescriptor adopted = ParcelFileDescriptor.adoptFd(fileDescriptor)) {
+            // Closing the adopted wrapper releases the duplicated descriptor.
+        } catch (IOException | RuntimeException ignored) {
+            // Startup is already failing; descriptor cleanup is best effort.
         }
     }
 
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
+    private static String stackDetail(TunStackMode stack) {
+        return switch (stack) {
+            case SYSTEM -> "system 全栈";
+            case GVISOR -> "gVisor 全栈";
+            case MIXED -> "mixed（TCP system / UDP gVisor）";
+        };
     }
 
     private static String shortCommit() {
