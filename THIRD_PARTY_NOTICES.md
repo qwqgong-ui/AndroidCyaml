@@ -5,22 +5,25 @@ AndroidCyaml packages and launches the following upstream works.
 ## mihomo
 
 - Project: <https://github.com/qwqgong-ui/mihomo>
-- Pinned commit: `2fd20f6b64bed02bfdf5f4d312c9ba4e77bdf889`
+- Pinned clean commit: `0d91f2a2f5334109c1d9cd17f14e525fc38c60bb`
+- AndroidCyaml patch: [`patches/mihomo/0001-androidcyaml-platform-hooks.patch`](patches/mihomo/0001-androidcyaml-platform-hooks.patch)
 - License: GNU General Public License v3.0
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
-The Android arm64 core is built directly from the pinned commit by
-[`scripts/build_mihomo.sh`](scripts/build_mihomo.sh), using Android NDK 29, CGO, Go
-`-buildmode=c-shared`, and the `with_gvisor` build tag. The generated `libmihomo.so` is packaged next
-to the C++ JNI wrapper `libandroidcyaml.so` and runs in the Android VPN service process.
+[`scripts/build_mihomo.sh`](scripts/build_mihomo.sh) checks out the pinned desktop-safe mihomo commit,
+verifies and applies the AndroidCyaml-owned patch only inside the ignored build directory, then compiles
+[`native/mihomo`](native/mihomo) with Android NDK 29, CGO, Go `-buildmode=c-shared`, and the
+`with_gvisor` build tag. The generated `libmihomo.so` is packaged next to the C++ JNI wrapper
+`libandroidcyaml.so` and runs in the Android VPN service process.
 
-AndroidCyaml applies no post-checkout source patch. The pinned fork contains the exported embedded
-runtime API used to validate and apply configuration, start sing-tun on an Android-provided file
-descriptor, register non-circular JNI function-pointer callbacks, protect each real outbound socket
-through `VpnService.protect(fd)`, resolve Android connection owners, and select the system, gVisor, or
-mixed TUN stack. The Android interface contract uses `172.19.0.1/30`, optional
-`fdfe:dcba:9876::1/126`, MTU 9000, and disabled GSO so the system stack has the adjacent addresses
-required by its TCP NAT listener.
+The patch is deliberately limited to two existing mihomo files: it exposes an endpoint-aware platform process
+resolver and skips sing-tun's Android package database when package routing was already applied by
+`VpnService.Builder`. The JNI API, runtime configuration mutation, fixed TUN addresses, stack selection,
+function-pointer callbacks, and per-socket `VpnService.protect(fd)` implementation live entirely in
+AndroidCyaml's own Go and C++ sources. No AndroidCyaml code is committed to `mihomo/Alpha`.
+
+The Android interface contract uses `172.19.0.1/30`, optional `fdfe:dcba:9876::1/126`, MTU 9000, and
+disabled GSO so the system stack has the adjacent addresses required by its TCP NAT listener.
 
 ## zashboard
 
