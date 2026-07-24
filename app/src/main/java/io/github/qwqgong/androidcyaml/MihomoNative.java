@@ -65,6 +65,10 @@ final class MihomoNative {
         requireSuccess(nativeStop());
     }
 
+    static void notifyNetworkChanged() throws IOException {
+        requireSuccess(nativeNotifyNetworkChanged());
+    }
+
     static boolean isRunning() {
         return nativeIsRunning();
     }
@@ -113,6 +117,8 @@ final class MihomoNative {
     );
 
     private static native String nativeStop();
+
+    private static native String nativeNotifyNetworkChanged();
 
     private static native boolean nativeIsRunning();
 

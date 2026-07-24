@@ -21,10 +21,15 @@ unzip -q "${APK}" \
 
 readonly WRAPPER="${WORK_DIR}/lib/arm64-v8a/libandroidcyaml.so"
 readonly CORE="${WORK_DIR}/lib/arm64-v8a/libmihomo.so"
+readonly WRAPPER_SYMBOLS="${WORK_DIR}/wrapper-symbols.txt"
+readonly CORE_SYMBOLS="${WORK_DIR}/core-symbols.txt"
+readonly CORE_UNDEFINED="${WORK_DIR}/core-undefined.txt"
 [[ -s "${WRAPPER}" && -s "${CORE}" ]] || {
     echo "APK does not contain both embedded runtime libraries" >&2
     exit 1
 }
+readelf -Ws "${WRAPPER}" > "${WRAPPER_SYMBOLS}"
+readelf -Ws "${CORE}" > "${CORE_SYMBOLS}"
 
 verify_aarch64() {
     local library="$1"
@@ -62,8 +67,9 @@ for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeValidate \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart \
-    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop; do
-    readelf -Ws "${WRAPPER}" | grep -q "GLOBAL.*${symbol}$" || {
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop \
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged; do
+    grep -q "GLOBAL.*${symbol}$" "${WRAPPER_SYMBOLS}" || {
         echo "JNI wrapper is missing exported symbol ${symbol}" >&2
         exit 1
     }
@@ -75,16 +81,17 @@ for symbol in \
     AndroidCyamlPrepareTun \
     AndroidCyamlStart \
     AndroidCyamlStop \
+    AndroidCyamlNotifyNetworkChanged \
     AndroidCyamlIsRunning \
     AndroidCyamlTrimMemory; do
-    readelf -Ws "${CORE}" | grep -q "GLOBAL.*${symbol}$" || {
+    grep -q "GLOBAL.*${symbol}$" "${CORE_SYMBOLS}" || {
         echo "Go core is missing exported symbol ${symbol}" >&2
         exit 1
     }
 done
 
-if readelf -Ws "${CORE}" | awk '$7 == "UND" { print $8 }' \
-        | grep -Eq '^androidcyaml_(protect_socket|resolve_process)$'; then
+awk '$7 == "UND" { print $8 }' "${CORE_SYMBOLS}" > "${CORE_UNDEFINED}"
+if grep -Eq '^androidcyaml_(protect_socket|resolve_process)$' "${CORE_UNDEFINED}"; then
     echo "Go core contains circular undefined JNI callback symbols" >&2
     exit 1
 fi

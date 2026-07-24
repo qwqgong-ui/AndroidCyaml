@@ -113,6 +113,10 @@ android {
     }
 }
 
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}
+
 val verifyReleaseSigning by tasks.registering {
     doLast {
         check(releaseSigningConfigured) {

@@ -5,9 +5,9 @@
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | `AndroidVpnService` | VPN permission, foreground lifetime, notification, Builder and TUN FD | mihomo rules and proxy semantics |
-| `RuntimeCoordinator` | serialized startup, stop, config, stack and network-change transactions | packet processing |
+| `RuntimeCoordinator` | serialized startup, stop, config, stack, IPv6 and handover transactions | packet processing |
 | `RuntimeOverrideStore` | desired TUN stack, process matching and IPv6 settings | YAML mutation or effective network state |
-| `Ipv6EnvironmentMonitor` | validated underlying IPv6 availability | user preference or core lifecycle |
+| `Ipv6EnvironmentMonitor` | best validated non-VPN network identity, link state and IPv6 availability | user preference or core lifecycle |
 | `AndroidTunManager` | fixed interface addresses, routes, DNS and application scope | socket protection or proxy routing |
 | `NativePlatformCallbacks` | per-socket `protect(fd)` and Android UID/package lookup | TUN packet processing |
 | `MihomoNative` | Java JNI contract and native response decoding | VPN lifecycle |
@@ -44,6 +44,7 @@ native/mihomo/main.go
 ├── system / gVisor / mixed selection
 ├── fixed /30 and /126 TUN contract
 ├── adaptive IPv6 mutation
+├── network-handover cache and connection reset
 ├── find-process-mode mutation
 ├── TUN FD injection
 └── dialer.DefaultSocketHook → protect(fd)
@@ -121,7 +122,8 @@ The selection is independent of YAML and never written back:
 
 The fixed `/30` and `/126` prefixes guarantee the system stack has a second interface address for local-listener
 NAT. Stack changes restart the embedded core transactionally; the Android TUN is reused when its Builder contract
-is unchanged.
+is unchanged. Android interface setup preserves the host address from each prefix (`.1` / `::1`); network
+normalization through `IpPrefix` is used only for routes.
 
 ## Process matching
 
@@ -131,14 +133,25 @@ the UID to a stable package name. When disabled, the mode is forced to `off`.
 
 ## Adaptive IPv6 transaction
 
-`Ipv6EnvironmentMonitor` considers IPv6 usable only when the underlying default network is validated and has a
+`Ipv6EnvironmentMonitor` follows Android's best matching non-VPN Internet network. This avoids observing the
+application's own VPN after `establish()`. IPv6 is usable only when that underlying network is validated and has a
 global IPv6 address plus an IPv6 default route. ULA, link-local, loopback and VPN virtual addresses do not qualify.
 
 - Desired IPv6 off: runtime is IPv4-only.
 - Desired IPv6 on, environment unavailable: preference remains on, effective runtime is IPv4-only.
-- Environment becomes unavailable while running: coordinator rebuilds core/TUN without IPv6.
-- Environment recovers: coordinator rebuilds with the fixed `/126` prefix.
+- A running network becomes temporarily unavailable: the current IP-family contract is preserved while stale
+  connections are closed.
+- A new available network changes IPv6 usability: coordinator rebuilds with or without the fixed `/126` prefix.
 - IPv6 startup itself fails: the runtime is stopped and one IPv4-only retry is attempted.
+
+## Underlying-network handover
+
+The monitor compares both the Android network handle and a stable signature of interface addresses, routes and DNS.
+When Wi-Fi/mobile handover keeps the same effective IP-family contract, `RuntimeCoordinator` does not replace the
+TUN. Instead, the native runtime flushes the interface and DNS caches, resets persistent resolver transports and
+closes tracked mihomo connections. Protected replacement sockets then follow Android's new physical default
+network. This preserves the VPN network and avoids a transient no-network callback causing IPv6/IPv4 rebuild
+oscillation.
 
 ## Config and override transactions
 
