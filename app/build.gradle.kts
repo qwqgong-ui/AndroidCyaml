@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "2fd20f6b64bed02bfdf5f4d312c9ba4e77bdf889"
+val mihomoCommit = "c3a7b207ffd2bd974b53103df2d67a276e561418"
 val zashboardVersion = "v3.15.0"
 val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 val androidNdkVersion = "29.0.14206865"
@@ -126,10 +126,11 @@ val mihomoHeader = layout.projectDirectory.file("src/main/cpp/generated/libmihom
 
 val buildMihomo by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Build the pinned mihomo Android c-shared library for JNI"
+    description = "Build the pinned clean mihomo core with AndroidCyaml-owned JNI patches"
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
+    inputs.dir(rootProject.file("patches/mihomo"))
     inputs.property("mihomoCommit", mihomoCommit)
     inputs.property("androidNdkVersion", androidNdkVersion)
     outputs.files(mihomoLibrary, mihomoHeader)
