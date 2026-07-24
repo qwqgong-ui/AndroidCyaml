@@ -6,7 +6,7 @@ readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="0d91f2a2f5334109c1d9cd17f14e525fc38c60bb"
 readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo/0001-androidcyaml-platform-hooks.patch"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="16"
+readonly BUILD_RECIPE_VERSION="17"
 readonly NDK_VERSION="29.0.14206865"
 readonly NATIVE_API="35"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
@@ -37,7 +37,11 @@ if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] 
     exit 0
 fi
 
-readonly SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+if [[ -z "${sdk_root}" && -f "${ROOT_DIR}/local.properties" ]]; then
+    sdk_root="$(sed -n 's/^sdk.dir=//p' "${ROOT_DIR}/local.properties" | tail -n 1)"
+fi
+readonly SDK_ROOT="${sdk_root}"
 readonly NDK_ROOT="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${SDK_ROOT}/ndk/${NDK_VERSION}}}"
 if [[ ! -d "${NDK_ROOT}" ]]; then
     echo "Android NDK ${NDK_VERSION} is required; expected ${NDK_ROOT}" >&2
@@ -122,7 +126,7 @@ printf '\nreplace github.com/metacubex/mihomo => ../mihomo-src\n' >> "${MODULE_D
 
 readonly BUILD_TIME="$(git -C "${SOURCE_DIR}" show -s --format=%cI "${MIHOMO_COMMIT}")"
 readonly VERSION="androidcyaml-${MIHOMO_COMMIT:0:8}-p${PATCH_DIGEST:0:8}"
-readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME} -w -s -buildid="
+readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME} -w -buildid="
 
 (
     cd "${MODULE_DIR}"

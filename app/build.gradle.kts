@@ -25,15 +25,15 @@ val releaseSigningConfigured = listOf(
 
 android {
     namespace = "io.github.qwqgong.androidcyaml"
-    compileSdk = 36
+    compileSdk = 37
     ndkVersion = androidNdkVersion
 
     defaultConfig {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
-        targetSdk = 36
-        versionCode = 134
-        versionName = "0.6.134"
+        targetSdk = 37
+        versionCode = 135
+        versionName = "0.6.135"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -85,22 +85,31 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            ndk {
+                debugSymbolLevel = "SYMBOL_TABLE"
+            }
             signingConfigs.findByName("release")?.let { signingConfig = it }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
         }
+        create("optimized") {
+            initWith(getByName("release"))
+            isDebuggable = false
+            isJniDebuggable = false
+            applicationIdSuffix = ".baselineprofile"
+            versionNameSuffix = "-optimized"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
     }
 
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            keepDebugSymbols += setOf(
-                "**/libandroidcyaml.so",
-                "**/libmihomo.so",
-            )
         }
         resources {
             excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*")
@@ -114,6 +123,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     testImplementation("junit:junit:4.13.2")
 }
 

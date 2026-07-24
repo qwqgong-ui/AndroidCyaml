@@ -50,10 +50,20 @@ verify_page_alignment() {
     (( found == 1 )) || { echo "${library} has no LOAD segments" >&2; exit 1; }
 }
 
+verify_packaged_symbols_are_stripped() {
+    local library="$1"
+    if readelf -SW "${library}" | grep -Eq '\.(debug_|symtab)'; then
+        echo "${library} still contains debug or static symbol sections" >&2
+        exit 1
+    fi
+}
+
 verify_aarch64 "${WRAPPER}"
 verify_aarch64 "${CORE}"
 verify_page_alignment "${WRAPPER}"
 verify_page_alignment "${CORE}"
+verify_packaged_symbols_are_stripped "${WRAPPER}"
+verify_packaged_symbols_are_stripped "${CORE}"
 
 readelf -d "${CORE}" | grep -Fq 'Library soname: [libmihomo.so]'
 readelf -d "${WRAPPER}" | grep -Fq 'Shared library: [libmihomo.so]'
@@ -68,7 +78,9 @@ for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop \
-    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged; do
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged \
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning \
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeTrimMemory; do
     grep -q "GLOBAL.*${symbol}$" "${WRAPPER_SYMBOLS}" || {
         echo "JNI wrapper is missing exported symbol ${symbol}" >&2
         exit 1

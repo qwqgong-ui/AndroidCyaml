@@ -1,6 +1,7 @@
 # AndroidCyaml
 
-AndroidCyaml 是一个面向 Android 16（API 36）、仅提供 `arm64-v8a` 构建的 mihomo VPN 外壳。
+AndroidCyaml 是一个最低支持 Android 16（API 36）、面向 Android 17（API 37）构建、仅提供
+`arm64-v8a` 架构的 mihomo VPN 外壳。
 从 0.6.133 起，mihomo 不再以子进程运行，也不再通过抽象 Unix Socket 请求 TUN；Go 核心以
 `c-shared` 形式随 APK 打包，通过 JNI 直接运行在 `AndroidVpnService` 所在进程中。
 
@@ -147,7 +148,7 @@ IP 时，连接面板显示 IP 属于正常结果。
 需要：
 
 - JDK 17
-- Android SDK Platform 36 与 Build Tools 36.0.0
+- Android SDK Platform 37 与 Build Tools 37.0.0
 - Android NDK `29.0.14206865` 与 CMake 3.22.1
 - Go 1.26 或更高版本
 - Git、bash、unzip、readelf、sha256sum
@@ -163,6 +164,30 @@ sdk.dir=/absolute/path/to/Android/Sdk
 ./gradlew :app:assembleDebug :app:lintDebug
 bash scripts/verify_native_runtime.sh app/build/outputs/apk/debug/app-debug.apk
 ```
+
+### ART、启动与 Release 优化
+
+Release 已启用 R8 代码压缩、优化和混淆以及资源压缩。Java/DEX 启动路径由两份静态规则覆盖，不需要
+连接手机采集：
+
+- `app/src/main/baseline-prof.txt` 会编译为 APK 中的
+  `assets/dexopt/baseline.prof`/`baseline.profm`，供 ART 对启动代码做 Profile-guided AOT；
+- `app/src/main/baselineProfiles/startup-prof.txt` 供 R8 调整 DEX 布局，把启动类放入启动 DEX；
+- `androidx.profileinstaller` 负责侧载安装后的 Profile 安装兼容。
+
+可用调试签名编译与 Release 相同优化配置的独立测试包：
+
+```bash
+./gradlew :app:assembleOptimized :app:bundleOptimized :app:lintOptimized
+bash scripts/verify_art_optimization.sh \
+  app/build/outputs/apk/optimized/app-optimized.apk \
+  app/build/outputs/bundle/optimized/app-optimized.aab
+```
+
+`libmihomo.so` 和 `libandroidcyaml.so` 已经是原生机器码，不经过 ART。发行包会剥离原生调试/静态
+符号；用于崩溃符号化的符号表单独生成在
+`app/build/outputs/native-debug-symbols/<variant>/native-debug-symbols.zip`，R8 映射位于
+`app/build/outputs/mapping/<variant>/mapping.txt`。
 
 `scripts/build_mihomo.sh` 会从干净 mihomo 提交开始，在临时目录应用 AndroidCyaml 自有补丁，然后以
 Android arm64、CGO、`with_gvisor` 和 `-buildmode=c-shared` 构建 `native/mihomo`。CMake 再生成 JNI
@@ -184,8 +209,11 @@ Android arm64、CGO、`with_gvisor` 和 `-buildmode=c-shared` 构建 `native/mih
 然后执行：
 
 ```bash
-./gradlew :app:assembleRelease :app:lintRelease
+./gradlew :app:assembleRelease :app:bundleRelease :app:lintRelease
 bash scripts/verify_native_runtime.sh app/build/outputs/apk/release/app-release.apk
+bash scripts/verify_art_optimization.sh \
+  app/build/outputs/apk/release/app-release.apk \
+  app/build/outputs/bundle/release/app-release.aab
 ```
 
 ## 固定依赖

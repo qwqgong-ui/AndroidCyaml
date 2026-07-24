@@ -31,25 +31,49 @@ jobs:
 
       - uses: android-actions/setup-android@v4
 
-      - name: Install Android 16 SDK and NDK
-        run: >-
-          sdkmanager
-          "platforms;android-36"
-          "build-tools;36.0.0"
-          "cmake;3.22.1"
-          "ndk;29.0.14206865"
+      - name: Install Android 17 SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > build.log
+          sdkmanager --channel=1 "cmdline-tools;latest"
+          android_cli="$(
+            find "${ANDROID_SDK_ROOT}/cmdline-tools" \
+              -path '*/bin/android' -type f -print \
+              | sort -V | tail -n 1
+          )"
+          [[ -x "${android_cli}" ]]
+          "${android_cli}" --sdk="${ANDROID_SDK_ROOT}" sdk install \
+            platforms/android-37.0 \
+            build-tools/37.0.0 \
+            --beta
+          sdkmanager \
+            "cmake;3.22.1" \
+            "ndk;29.0.14206865"
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Build, lint and verify native runtime
+      - name: Build and verify optimized artifacts
         shell: bash
         run: |
           set -o pipefail
           status=0
-          ./gradlew :app:assembleDebug :app:lintDebug --stacktrace 2>&1 | tee build.log || status=$?
+          ./gradlew \
+            :app:testDebugUnitTest \
+            :app:assembleOptimized \
+            :app:bundleOptimized \
+            :app:lintOptimized \
+            --stacktrace 2>&1 | tee build.log || status=$?
           if (( status == 0 )); then
             bash scripts/verify_native_runtime.sh \
-              app/build/outputs/apk/debug/app-debug.apk 2>&1 | tee -a build.log || status=$?
+              app/build/outputs/apk/optimized/app-optimized.apk \
+              2>&1 | tee -a build.log || status=$?
+          fi
+          if (( status == 0 )); then
+            bash scripts/verify_art_optimization.sh \
+              app/build/outputs/apk/optimized/app-optimized.apk \
+              app/build/outputs/bundle/optimized/app-optimized.aab \
+              2>&1 | tee -a build.log || status=$?
           fi
           if (( status != 0 )); then
             while IFS= read -r report; do
@@ -72,6 +96,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: AndroidCyaml-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: AndroidCyaml-optimized-test
+          path: |
+            app/build/outputs/apk/optimized/app-optimized.apk
+            app/build/outputs/bundle/optimized/app-optimized.aab
           if-no-files-found: error

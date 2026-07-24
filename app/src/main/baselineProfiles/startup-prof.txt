@@ -1,0 +1,26 @@
+# Startup Profiles use exact, unflagged ART descriptors for R8 DEX layout.
+Lio/github/qwqgong/androidcyaml/AndroidCyamlApplication;
+Lio/github/qwqgong/androidcyaml/MainActivity;
+Lio/github/qwqgong/androidcyaml/MainActivity$1;
+Lio/github/qwqgong/androidcyaml/EdgeToEdgeController;
+Lio/github/qwqgong/androidcyaml/UiPreferences;
+Lio/github/qwqgong/androidcyaml/TaskVisibilityController;
+Lio/github/qwqgong/androidcyaml/DashboardController;
+Lio/github/qwqgong/androidcyaml/DashboardController$DashboardWebClient;
+Lio/github/qwqgong/androidcyaml/DashboardController$MessageSink;
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient;
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient$1;
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient$2;
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient$3;
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient$Listener;
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient$ResultCallback;
+Lio/github/qwqgong/androidcyaml/VpnUiController;
+Lio/github/qwqgong/androidcyaml/VpnUiController$Listener;
+Lio/github/qwqgong/androidcyaml/MainActionsMenu;
+Lio/github/qwqgong/androidcyaml/MainActionsMenu$Listener;
+Lio/github/qwqgong/androidcyaml/RuntimeSnapshot;
+Lio/github/qwqgong/androidcyaml/RuntimeState;
+Lio/github/qwqgong/androidcyaml/RuntimeStateBus;
+Lio/github/qwqgong/androidcyaml/RuntimeStateBus$Listener;
+Lio/github/qwqgong/androidcyaml/TunStackMode;
+Lio/github/qwqgong/androidcyaml/TombstoneStore;

@@ -1,0 +1,32 @@
+# Static startup profile for the Java/DEX portion of AndroidCyaml.
+# ART uses the compiled form of these rules for profile-guided AOT.
+Lio/github/qwqgong/androidcyaml/AndroidCyamlApplication;
+HSPLio/github/qwqgong/androidcyaml/AndroidCyamlApplication;->**(**)**
+Lio/github/qwqgong/androidcyaml/MainActivity;
+HSPLio/github/qwqgong/androidcyaml/MainActivity;->**(**)**
+Lio/github/qwqgong/androidcyaml/EdgeToEdgeController;
+HSPLio/github/qwqgong/androidcyaml/EdgeToEdgeController;->**(**)**
+Lio/github/qwqgong/androidcyaml/UiPreferences;
+HSPLio/github/qwqgong/androidcyaml/UiPreferences;->**(**)**
+Lio/github/qwqgong/androidcyaml/TaskVisibilityController;
+HSPLio/github/qwqgong/androidcyaml/TaskVisibilityController;->**(**)**
+Lio/github/qwqgong/androidcyaml/DashboardController**;
+HSPLio/github/qwqgong/androidcyaml/DashboardController**;->**(**)**
+Lio/github/qwqgong/androidcyaml/RuntimeControlClient**;
+HSPLio/github/qwqgong/androidcyaml/RuntimeControlClient**;->**(**)**
+Lio/github/qwqgong/androidcyaml/VpnUiController**;
+HSPLio/github/qwqgong/androidcyaml/VpnUiController**;->**(**)**
+Lio/github/qwqgong/androidcyaml/MainActionsMenu**;
+HSPLio/github/qwqgong/androidcyaml/MainActionsMenu**;->**(**)**
+Lio/github/qwqgong/androidcyaml/RuntimeSnapshot;
+HSPLio/github/qwqgong/androidcyaml/RuntimeSnapshot;->**(**)**
+Lio/github/qwqgong/androidcyaml/RuntimeState;
+HSPLio/github/qwqgong/androidcyaml/RuntimeState;->**(**)**
+Lio/github/qwqgong/androidcyaml/TunStackMode;
+HSPLio/github/qwqgong/androidcyaml/TunStackMode;->**(**)**
+Lio/github/qwqgong/androidcyaml/TombstoneStore**;
+HSPLio/github/qwqgong/androidcyaml/TombstoneStore**;->**(**)**
+Landroidx/profileinstaller/**;
+HSPLandroidx/profileinstaller/**->**(**)**
+Landroidx/startup/**;
+HSPLandroidx/startup/**->**(**)**
