@@ -133,7 +133,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub release
+      - name: Publish or refresh GitHub release
         if: steps.release.outputs.publish == 'true'
         shell: bash
         env:
@@ -141,9 +141,21 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          gh release create "${RELEASE_TAG}" \
-            "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk" \
-            "SHA256SUMS" \
-            --target "${GITHUB_SHA}" \
-            --title "AndroidCyaml v${RELEASE_VERSION}" \
-            --generate-notes
+          release_apk="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk"
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" \
+              "${release_apk}" \
+              "SHA256SUMS" \
+              --clobber
+          else
+            gh release create "${RELEASE_TAG}" \
+              "${release_apk}" \
+              "SHA256SUMS" \
+              --target "${GITHUB_SHA}" \
+              --title "AndroidCyaml v${RELEASE_VERSION}" \
+              --generate-notes
+          fi
+
+          assets="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
+          grep -Fxq "${release_apk}" <<< "${assets}"
+          grep -Fxq "SHA256SUMS" <<< "${assets}"
