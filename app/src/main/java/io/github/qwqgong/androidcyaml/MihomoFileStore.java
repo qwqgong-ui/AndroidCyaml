@@ -34,7 +34,7 @@ final class MihomoFileStore {
         if (!config.isFile()) {
             copyAssetFile("default-config.yaml", config);
         }
-        makeConfigReadOnly(config);
+        makeConfigOwnerReadWrite(config);
         copyAssetFileIfMissing("geodata/GeoIP.dat", new File(home, "GeoIP.dat"));
         copyAssetFileIfMissing("geodata/GeoSite.dat", new File(home, "GeoSite.dat"));
 
@@ -43,11 +43,14 @@ final class MihomoFileStore {
         return new MihomoPaths(home, config, ui);
     }
 
-    void makeConfigReadOnly(File config) throws IOException {
+    void makeConfigOwnerReadWrite(File config) throws IOException {
         try {
-            Os.chmod(config.getAbsolutePath(), OsConstants.S_IRUSR);
+            Os.chmod(
+                    config.getAbsolutePath(),
+                    OsConstants.S_IRUSR | OsConstants.S_IWUSR
+            );
         } catch (ErrnoException exception) {
-            throw new IOException("无法将 config.yaml 设为只读", exception);
+            throw new IOException("无法将 config.yaml 权限设为 0600", exception);
         }
     }
 
