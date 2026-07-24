@@ -135,8 +135,9 @@ final class AndroidTunManager implements Closeable {
             throws IOException {
         boolean added = false;
         for (String value : prefixes) {
-            IpPrefix prefix = NetworkAddressParser.parsePrefix(value);
-            builder.addAddress(prefix.getAddress(), prefix.getPrefixLength());
+            NetworkAddressParser.AddressPrefix prefix =
+                    NetworkAddressParser.parseAddressPrefix(value);
+            builder.addAddress(prefix.address(), prefix.prefixLength());
             added = true;
         }
         return added;

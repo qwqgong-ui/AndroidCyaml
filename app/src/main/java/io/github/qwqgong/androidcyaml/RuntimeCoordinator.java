@@ -26,13 +26,13 @@ final class RuntimeCoordinator {
     private final MihomoFileStore fileStore;
     private final ConfigInstaller configInstaller;
     private final RuntimeOverrideStore overrideStore;
-    private final Ipv6EnvironmentMonitor ipv6Monitor;
+    private final Ipv6EnvironmentMonitor networkMonitor;
 
     private AndroidVpnService service;
     private AndroidTunManager tunManager;
     private NativePlatformCallbacks platformCallbacks;
     private volatile MihomoRuntime runtime;
-    private volatile boolean ipv6EnvironmentUsable;
+    private volatile Ipv6EnvironmentMonitor.State underlyingNetworkState;
     private volatile boolean effectiveIpv6Enabled;
 
     private RuntimeCoordinator(Context context) {
@@ -40,10 +40,11 @@ final class RuntimeCoordinator {
         fileStore = new MihomoFileStore(this.context);
         configInstaller = new ConfigInstaller(this.context, fileStore);
         overrideStore = new RuntimeOverrideStore(this.context);
-        ipv6Monitor = new Ipv6EnvironmentMonitor(this.context);
+        networkMonitor = new Ipv6EnvironmentMonitor(this.context);
         RuntimeOverrideSettings settings = overrideStore.settings();
-        ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
-        effectiveIpv6Enabled = settings.ipv6Enabled() && ipv6EnvironmentUsable;
+        underlyingNetworkState = networkMonitor.currentState();
+        effectiveIpv6Enabled =
+                settings.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
     }
 
     static RuntimeCoordinator getInstance(Context context) {
@@ -163,11 +164,11 @@ final class RuntimeCoordinator {
         service = requestedService;
         tunManager = new AndroidTunManager(requestedService);
         platformCallbacks = new NativePlatformCallbacks(requestedService);
-        ipv6EnvironmentUsable = ipv6Monitor.start(
-                usable -> executor.execute(() -> onIpv6EnvironmentChanged(usable))
-        );
-        publish(RuntimeState.STARTING, "正在启动同进程 mihomo JNI TUN…");
         try {
+            underlyingNetworkState = networkMonitor.start(
+                    state -> executor.execute(() -> onUnderlyingNetworkChanged(state))
+            );
+            publish(RuntimeState.STARTING, "正在启动同进程 mihomo JNI TUN…");
             String detail = startRuntimeOnExistingService();
             publish(RuntimeState.RUNNING, detail);
         } catch (Exception exception) {
@@ -180,7 +181,8 @@ final class RuntimeCoordinator {
 
     private String startRuntimeOnExistingService() throws IOException, InterruptedException {
         RuntimeOverrideSettings settings = overrideStore.settings();
-        boolean requestedIpv6 = settings.ipv6Enabled() && ipv6EnvironmentUsable;
+        boolean requestedIpv6 =
+                settings.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
         try {
             return startRuntime(settings, requestedIpv6);
         } catch (IOException | InterruptedException firstFailure) {
@@ -287,9 +289,10 @@ final class RuntimeCoordinator {
             return;
         }
 
-        ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
+        underlyingNetworkState = networkMonitor.currentState();
         if (!hasActiveService()) {
-            effectiveIpv6Enabled = requested.ipv6Enabled() && ipv6EnvironmentUsable;
+            effectiveIpv6Enabled =
+                    requested.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
             stateBus.publish(stateBus.snapshot());
             postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
             return;
@@ -303,7 +306,7 @@ final class RuntimeCoordinator {
         } catch (Exception applyFailure) {
             try {
                 overrideStore.setSettings(previous);
-                ipv6EnvironmentUsable = ipv6Monitor.currentUsable();
+                underlyingNetworkState = networkMonitor.currentState();
                 publish(RuntimeState.STARTING, "覆写应用失败，正在恢复上一状态…");
                 String detail = startRuntimeOnExistingService();
                 publish(RuntimeState.RUNNING, detail);
@@ -323,26 +326,36 @@ final class RuntimeCoordinator {
         }
     }
 
-    private void onIpv6EnvironmentChanged(boolean usable) {
-        if (ipv6EnvironmentUsable == usable) {
+    private void onUnderlyingNetworkChanged(Ipv6EnvironmentMonitor.State state) {
+        Ipv6EnvironmentMonitor.State previous = underlyingNetworkState;
+        if (state.equals(previous)) {
             return;
         }
-        ipv6EnvironmentUsable = usable;
+        underlyingNetworkState = state;
         RuntimeOverrideSettings settings = overrideStore.settings();
-        boolean targetIpv6 = settings.ipv6Enabled() && usable;
         if (!hasActiveService()) {
-            effectiveIpv6Enabled = targetIpv6;
+            effectiveIpv6Enabled = settings.ipv6Enabled() && state.ipv6Usable();
             stateBus.publish(stateBus.snapshot());
             return;
         }
-        if (!settings.ipv6Enabled() || targetIpv6 == effectiveIpv6Enabled) {
+
+        boolean pathChanged = state.pathChangedFrom(previous);
+        if (!state.available()) {
+            refreshRuntimeForNetworkChange(previous, state, pathChanged);
+            stateBus.publish(stateBus.snapshot());
+            return;
+        }
+
+        boolean targetIpv6 = settings.ipv6Enabled() && state.ipv6Usable();
+        if (targetIpv6 == effectiveIpv6Enabled) {
+            refreshRuntimeForNetworkChange(previous, state, pathChanged);
             stateBus.publish(stateBus.snapshot());
             return;
         }
 
         publish(
                 RuntimeState.STARTING,
-                usable
+                targetIpv6
                         ? "IPv6 环境已恢复，正在重建 JNI TUN…"
                         : "当前 IPv6 环境不可用，正在重建为 IPv4-only…"
         );
@@ -352,6 +365,35 @@ final class RuntimeCoordinator {
         } catch (Exception exception) {
             failActiveService("IPv6 环境切换失败：" + usefulMessage(exception));
         }
+    }
+
+    private void refreshRuntimeForNetworkChange(
+            Ipv6EnvironmentMonitor.State previous,
+            Ipv6EnvironmentMonitor.State currentState,
+            boolean pathChanged
+    ) {
+        MihomoRuntime currentRuntime = runtime;
+        if (currentRuntime == null || !pathChanged) {
+            return;
+        }
+        try {
+            currentRuntime.onUnderlyingNetworkChanged();
+            Log.i(
+                    TAG,
+                    "Refreshed mihomo after underlying network change: "
+                            + networkDescription(previous) + " -> "
+                            + networkDescription(currentState)
+            );
+        } catch (IOException exception) {
+            // A transient handover failure must not tear down the VPN.
+            Log.w(TAG, "Unable to refresh mihomo after network handover", exception);
+        }
+    }
+
+    private static String networkDescription(Ipv6EnvironmentMonitor.State state) {
+        return state == null || !state.available()
+                ? "unavailable"
+                : state.networkHandle() + (state.ipv6Usable() ? "/dual-stack" : "/IPv4");
     }
 
     private boolean hasActiveService() {
@@ -369,7 +411,7 @@ final class RuntimeCoordinator {
     }
 
     private void cleanupAll() {
-        ipv6Monitor.stop();
+        networkMonitor.stop();
         closeRuntime();
         if (tunManager != null) {
             tunManager.close();

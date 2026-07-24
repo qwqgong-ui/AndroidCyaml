@@ -95,6 +95,12 @@ final class MihomoRuntime implements AutoCloseable {
         return MihomoNative.trimMemory();
     }
 
+    void onUnderlyingNetworkChanged() throws IOException {
+        if (started && MihomoNative.isRunning()) {
+            MihomoNative.notifyNetworkChanged();
+        }
+    }
+
     @Override
     public void close() {
         if (!started && !MihomoNative.isRunning()) {

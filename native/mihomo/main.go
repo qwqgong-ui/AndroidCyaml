@@ -60,13 +60,16 @@ import (
 	"unsafe"
 
 	"github.com/metacubex/mihomo/component/dialer"
+	"github.com/metacubex/mihomo/component/iface"
 	"github.com/metacubex/mihomo/component/process"
+	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/config"
 	MC "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/hub/route"
 	LC "github.com/metacubex/mihomo/listener/config"
+	"github.com/metacubex/mihomo/tunnel/statistic"
 )
 
 const (
@@ -229,6 +232,23 @@ func AndroidCyamlStop() *C.char {
 	runtimeMu.Lock()
 	defer runtimeMu.Unlock()
 	stopLocked()
+	return respond(nil, nil)
+}
+
+//export AndroidCyamlNotifyNetworkChanged
+func AndroidCyamlNotifyNetworkChanged() *C.char {
+	runtimeMu.Lock()
+	defer runtimeMu.Unlock()
+
+	if active {
+		iface.FlushCache()
+		resolver.ClearCache()
+		resolver.ResetConnection()
+		statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
+			_ = connection.Close()
+			return true
+		})
+	}
 	return respond(nil, nil)
 }
 
