@@ -1,0 +1,175 @@
+From: AndroidCyaml build patch
+Subject: [PATCH] android: add socket protect and process callbacks
+
+Applied only inside AndroidCyaml's temporary mihomo checkout.
+
+diff --git a/android/jni/platform.go b/android/jni/platform.go
+new file mode 100644
+--- /dev/null
++++ b/android/jni/platform.go
+@@ -0,0 +1,165 @@
++//go:build android && cgo
++
++package main
++
++/*
++#include <stdlib.h>
++
++typedef int (*androidcyaml_protect_callback_t)(int fd);
++typedef char* (*androidcyaml_resolve_callback_t)(
++    int protocol,
++    const char* source_address,
++    int source_port,
++    const char* destination_address,
++    int destination_port
++);
++
++static __attribute__((unused)) int androidcyaml_call_protect(void* callback, int fd) {
++    if (callback == NULL) {
++        return 0;
++    }
++    return ((androidcyaml_protect_callback_t) callback)(fd);
++}
++
++static __attribute__((unused)) char* androidcyaml_call_resolve(
++    void* callback,
++    int protocol,
++    const char* source_address,
++    int source_port,
++    const char* destination_address,
++    int destination_port
++) {
++    if (callback == NULL) {
++        return NULL;
++    }
++    return ((androidcyaml_resolve_callback_t) callback)(
++        protocol,
++        source_address,
++        source_port,
++        destination_address,
++        destination_port
++    );
++}
++*/
++import "C"
++
++import (
++	"errors"
++	"fmt"
++	"net"
++	"net/netip"
++	"strconv"
++	"strings"
++	"syscall"
++	"unsafe"
++
++	"github.com/metacubex/mihomo/component/dialer"
++	"github.com/metacubex/mihomo/component/process"
++	MC "github.com/metacubex/mihomo/constant"
++)
++
++func installPlatformHooks() {
++	dialer.DefaultSocketHook = func(network, address string, connection syscall.RawConn) error {
++		callback := currentProtectCallback()
++		if callback == nil {
++			return errors.New("Android socket protect callback is unavailable")
++		}
++		var rejected bool
++		err := connection.Control(func(fileDescriptor uintptr) {
++			rejected = C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
++		})
++		if err != nil {
++			return err
++		}
++		if rejected {
++			return fmt.Errorf("VpnService.protect rejected %s socket for %s", network, address)
++		}
++		return nil
++	}
++	process.DefaultPackageNameResolver = resolvePackageName
++}
++
++func clearPlatformHooks() {
++	dialer.DefaultSocketHook = nil
++	process.DefaultPackageNameResolver = nil
++}
++
++func resolvePackageName(metadata *MC.Metadata) (string, error) {
++	if metadata == nil {
++		return "", process.ErrNotFound
++	}
++	callback := currentResolveProcessCallback()
++	if callback == nil {
++		return "", process.ErrNotFound
++	}
++
++	source, ok := addrPortFromNetAddr(metadata.RawSrcAddr)
++	if !ok {
++		source = metadata.SourceAddrPort()
++	}
++	destination, ok := addrPortFromNetAddr(metadata.RawDstAddr)
++	if !ok {
++		destination = metadata.AddrPort()
++	}
++	if !source.IsValid() || !destination.IsValid() {
++		return "", process.ErrNotFound
++	}
++
++	var protocol int
++	switch {
++	case strings.HasPrefix(metadata.NetWork.String(), "tcp"):
++		protocol = syscall.IPPROTO_TCP
++	case strings.HasPrefix(metadata.NetWork.String(), "udp"):
++		protocol = syscall.IPPROTO_UDP
++	default:
++		return "", process.ErrInvalidNetwork
++	}
++
++	sourceAddress := C.CString(source.Addr().String())
++	destinationAddress := C.CString(destination.Addr().String())
++	defer C.free(unsafe.Pointer(sourceAddress))
++	defer C.free(unsafe.Pointer(destinationAddress))
++
++	encoded := C.androidcyaml_call_resolve(
++		callback,
++		C.int(protocol),
++		sourceAddress,
++		C.int(source.Port()),
++		destinationAddress,
++		C.int(destination.Port()),
++	)
++	if encoded == nil {
++		return "", process.ErrNotFound
++	}
++	defer C.free(unsafe.Pointer(encoded))
++	uidValue, packageName, found := strings.Cut(C.GoString(encoded), "\n")
++	if !found || packageName == "" {
++		return "", process.ErrNotFound
++	}
++	uid, err := strconv.ParseUint(uidValue, 10, 32)
++	if err != nil {
++		return "", process.ErrNotFound
++	}
++	metadata.Uid = uint32(uid)
++	return packageName, nil
++}
++
++func addrPortFromNetAddr(address net.Addr) (netip.AddrPort, bool) {
++	if address == nil {
++		return netip.AddrPort{}, false
++	}
++	if rawAddress, ok := address.(interface{ RawAddr() net.Addr }); ok {
++		if raw := rawAddress.RawAddr(); raw != nil {
++			address = raw
++		}
++	}
++	addrPorter, ok := address.(interface{ AddrPort() netip.AddrPort })
++	if !ok {
++		return netip.AddrPort{}, false
++	}
++	addrPort := addrPorter.AddrPort()
++	if !addrPort.IsValid() || addrPort.Port() == 0 {
++		return netip.AddrPort{}, false
++	}
++	return netip.AddrPortFrom(addrPort.Addr().Unmap(), addrPort.Port()), true
++}
