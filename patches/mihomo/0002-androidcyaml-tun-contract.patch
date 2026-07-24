@@ -1,0 +1,231 @@
+From: AndroidCyaml build patch
+Subject: [PATCH] android: add VpnService TUN contract
+
+Applied only inside AndroidCyaml's temporary mihomo checkout.
+
+diff --git a/android/jni/config.go b/android/jni/config.go
+new file mode 100644
+--- /dev/null
++++ b/android/jni/config.go
+@@ -0,0 +1,221 @@
++//go:build android && cgo
++
++package main
++
++import (
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/netip"
++	"sort"
++	"strings"
++
++	"github.com/metacubex/mihomo/component/process"
++	"github.com/metacubex/mihomo/config"
++	MC "github.com/metacubex/mihomo/constant"
++	LC "github.com/metacubex/mihomo/listener/config"
++)
++
++const (
++	embeddedIPv4Prefix = "172.19.0.1/30"
++	embeddedIPv6Prefix = "fdfe:dcba:9876::1/126"
++	embeddedMTU        = 9000
++)
++
++type embeddedOptions struct {
++	FileDescriptor  int
++	Stack           string
++	IPv6Enabled     bool
++	ProcessMatching bool
++}
++
++type tunSpec struct {
++	MTU                      uint32   `json:"mtu"`
++	Inet4Address             []string `json:"inet4Address"`
++	Inet6Address             []string `json:"inet6Address"`
++	AutoRoute                bool     `json:"autoRoute"`
++	Inet4RouteAddress        []string `json:"inet4RouteAddress"`
++	Inet6RouteAddress        []string `json:"inet6RouteAddress"`
++	Inet4RouteExcludeAddress []string `json:"inet4RouteExcludeAddress"`
++	Inet6RouteExcludeAddress []string `json:"inet6RouteExcludeAddress"`
++	DNSServerAddress         []string `json:"dnsServerAddress"`
++	IncludePackage           []string `json:"includePackage"`
++	ExcludePackage           []string `json:"excludePackage"`
++}
++
++func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte, error) {
++	if cfg == nil || cfg.General == nil {
++		return nil, errors.New("android embedded runtime received an incomplete configuration")
++	}
++
++	stackName := strings.ToLower(strings.TrimSpace(options.Stack))
++	if stackName == "" {
++		stackName = "system"
++	}
++	stack, found := MC.StackTypeMapping[stackName]
++	if !found {
++		return nil, fmt.Errorf("unsupported Android TUN stack: %s", options.Stack)
++	}
++
++	tunConfig := &cfg.General.Tun
++	if len(tunConfig.RouteAddressSet) != 0 || len(tunConfig.RouteExcludeAddressSet) != 0 {
++		return nil, errors.New("Android VpnService does not support dynamic TUN route-address-set fields")
++	}
++
++	originalAutoRoute := tunConfig.AutoRoute
++	tunConfig.Enable = true
++	tunConfig.Device = "AndroidCyaml"
++	tunConfig.Stack = stack
++	tunConfig.MTU = embeddedMTU
++	tunConfig.GSO = false
++	tunConfig.GSOMaxSize = 0
++	tunConfig.Inet4Address = []netip.Prefix{netip.MustParsePrefix(embeddedIPv4Prefix)}
++	if options.IPv6Enabled {
++		tunConfig.Inet6Address = []netip.Prefix{netip.MustParsePrefix(embeddedIPv6Prefix)}
++		cfg.General.IPv6 = true
++	} else {
++		cfg.General.IPv6 = false
++		tunConfig.Inet6Address = nil
++		tunConfig.Inet6RouteAddress = nil
++		tunConfig.Inet6RouteExcludeAddress = nil
++		tunConfig.RouteAddress = ipv4Prefixes(tunConfig.RouteAddress)
++		tunConfig.RouteExcludeAddress = ipv4Prefixes(tunConfig.RouteExcludeAddress)
++		tunConfig.LoopbackAddress = ipv4Addresses(tunConfig.LoopbackAddress)
++	}
++	if cfg.DNS != nil {
++		cfg.DNS.IPv6 = cfg.DNS.IPv6 && options.IPv6Enabled
++	}
++
++	if options.ProcessMatching {
++		cfg.General.FindProcessMode = process.FindProcessAlways
++	} else {
++		cfg.General.FindProcessMode = process.FindProcessOff
++	}
++
++	// Preserve route intent for the prepare pass so Java can build the matching
++	// VpnService profile before sing-tun receives the descriptor.
++	tunConfig.AutoRoute = originalAutoRoute
++	dnsEnabled := cfg.DNS != nil && cfg.DNS.Enable
++	spec := makeTunSpec(*tunConfig, dnsEnabled)
++	payload, err := json.Marshal(spec)
++	if err != nil {
++		return nil, fmt.Errorf("encode Android TUN options: %w", err)
++	}
++
++	if options.FileDescriptor >= 0 {
++		tunConfig.FileDescriptor = options.FileDescriptor
++		tunConfig.AutoRoute = false
++		tunConfig.AutoRedirect = false
++		tunConfig.AutoDetectInterface = false
++		tunConfig.IncludePackage = nil
++		tunConfig.ExcludePackage = nil
++		tunConfig.IncludeAndroidUser = nil
++		tunConfig.IncludeUID = nil
++		tunConfig.IncludeUIDRange = nil
++		tunConfig.ExcludeUID = nil
++		tunConfig.ExcludeUIDRange = nil
++	}
++	return payload, nil
++}
++
++func makeTunSpec(tunConfig LC.Tun, dnsEnabled bool) tunSpec {
++	routes := append([]netip.Prefix{}, tunConfig.RouteAddress...)
++	routes = append(routes, tunConfig.Inet4RouteAddress...)
++	routes = append(routes, tunConfig.Inet6RouteAddress...)
++	excludedRoutes := append([]netip.Prefix{}, tunConfig.RouteExcludeAddress...)
++	excludedRoutes = append(excludedRoutes, tunConfig.Inet4RouteExcludeAddress...)
++	excludedRoutes = append(excludedRoutes, tunConfig.Inet6RouteExcludeAddress...)
++
++	inet4Routes, inet6Routes := splitPrefixes(routes)
++	inet4Excluded, inet6Excluded := splitPrefixes(excludedRoutes)
++	return tunSpec{
++		MTU:                      tunConfig.MTU,
++		Inet4Address:             prefixStrings(tunConfig.Inet4Address),
++		Inet6Address:             prefixStrings(tunConfig.Inet6Address),
++		AutoRoute:                tunConfig.AutoRoute,
++		Inet4RouteAddress:        inet4Routes,
++		Inet6RouteAddress:        inet6Routes,
++		Inet4RouteExcludeAddress: inet4Excluded,
++		Inet6RouteExcludeAddress: inet6Excluded,
++		DNSServerAddress:         dnsServerAddresses(tunConfig, dnsEnabled),
++		IncludePackage:           uniqueSorted(append([]string{}, tunConfig.IncludePackage...)),
++		ExcludePackage:           uniqueSorted(append([]string{}, tunConfig.ExcludePackage...)),
++	}
++}
++
++func splitPrefixes(prefixes []netip.Prefix) ([]string, []string) {
++	var inet4 []string
++	var inet6 []string
++	for _, prefix := range prefixes {
++		if !prefix.IsValid() {
++			continue
++		}
++		if prefix.Addr().Is4() {
++			inet4 = append(inet4, prefix.String())
++		} else {
++			inet6 = append(inet6, prefix.String())
++		}
++	}
++	return uniqueSorted(inet4), uniqueSorted(inet6)
++}
++
++func prefixStrings(prefixes []netip.Prefix) []string {
++	result := make([]string, 0, len(prefixes))
++	for _, prefix := range prefixes {
++		if prefix.IsValid() {
++			result = append(result, prefix.String())
++		}
++	}
++	return uniqueSorted(result)
++}
++
++func dnsServerAddresses(tunConfig LC.Tun, enabled bool) []string {
++	if !enabled {
++		return nil
++	}
++	addresses := append([]netip.Prefix{}, tunConfig.Inet4Address...)
++	addresses = append(addresses, tunConfig.Inet6Address...)
++	result := make([]string, 0, len(addresses))
++	for _, prefix := range addresses {
++		if !prefix.IsValid() {
++			continue
++		}
++		address := prefix.Addr().Next()
++		if address.IsValid() && prefix.Contains(address) {
++			result = append(result, address.String())
++		}
++	}
++	return uniqueSorted(result)
++}
++
++func ipv4Prefixes(values []netip.Prefix) []netip.Prefix {
++	result := make([]netip.Prefix, 0, len(values))
++	for _, value := range values {
++		if value.IsValid() && value.Addr().Is4() {
++			result = append(result, value)
++		}
++	}
++	return result
++}
++
++func ipv4Addresses(values []netip.Addr) []netip.Addr {
++	result := make([]netip.Addr, 0, len(values))
++	for _, value := range values {
++		if value.IsValid() && value.Is4() {
++			result = append(result, value)
++		}
++	}
++	return result
++}
++
++func uniqueSorted(values []string) []string {
++	sort.Strings(values)
++	result := values[:0]
++	for _, value := range values {
++		if value == "" || (len(result) != 0 && result[len(result)-1] == value) {
++			continue
++		}
++		result = append(result, value)
++	}
++	return result
++}
