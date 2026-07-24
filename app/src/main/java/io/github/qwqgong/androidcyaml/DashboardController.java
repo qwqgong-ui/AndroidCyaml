@@ -24,8 +24,6 @@ final class DashboardController {
     private final FrameLayout container;
     private final MessageSink messages;
     private WebView webView;
-    private String retainedPageUrl;
-    private String retainedRootUrl;
     private String loadedUrl;
     private int controllerPort;
 
@@ -41,7 +39,7 @@ final class DashboardController {
             return;
         }
         if (webView != null) {
-            release(false);
+            release();
         }
         WebView dashboard = createWebView();
         webView = dashboard;
@@ -53,11 +51,7 @@ final class DashboardController {
                 )
         );
         loadedUrl = url;
-        String pageUrl = retainedPageUrl != null && url.equals(retainedRootUrl)
-                ? retainedPageUrl
-                : url;
-        clearRetainedNavigation();
-        dashboard.loadUrl(pageUrl);
+        dashboard.loadUrl(url);
     }
 
     boolean handleBack() {
@@ -70,26 +64,14 @@ final class DashboardController {
 
     void onTrimMemory(int level, boolean activityVisible) {
         if (!activityVisible && level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-            release(true);
+            release();
         }
     }
 
-    void release(boolean retainNavigation) {
+    void release() {
         WebView dashboard = webView;
         if (dashboard == null) {
-            if (!retainNavigation) {
-                clearRetainedNavigation();
-            }
             return;
-        }
-        if (retainNavigation) {
-            String pageUrl = dashboard.getUrl();
-            retainedPageUrl = pageUrl != null && isControllerUri(Uri.parse(pageUrl))
-                    ? pageUrl
-                    : loadedUrl;
-            retainedRootUrl = loadedUrl;
-        } else {
-            clearRetainedNavigation();
         }
         webView = null;
         loadedUrl = null;
@@ -100,11 +82,6 @@ final class DashboardController {
         dashboard.setWebViewClient(null);
         dashboard.removeAllViews();
         dashboard.destroy();
-    }
-
-    private void clearRetainedNavigation() {
-        retainedPageUrl = null;
-        retainedRootUrl = null;
     }
 
     @SuppressLint("SetJavaScriptEnabled")

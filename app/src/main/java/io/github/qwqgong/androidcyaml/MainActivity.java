@@ -42,7 +42,7 @@ public final class MainActivity extends Activity implements
     private boolean lockdown;
     private boolean updatingVpnToggle;
     private boolean autoStartAttempted;
-    private boolean activityResumed;
+    private boolean activityVisible;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -78,30 +78,36 @@ public final class MainActivity extends Activity implements
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        activityResumed = true;
+    protected void onStart() {
+        super.onStart();
+        activityVisible = true;
         controlClient.bind();
     }
 
     @Override
-    protected void onPause() {
-        activityResumed = false;
+    protected void onStop() {
+        activityVisible = false;
         controlClient.unbind();
-        dashboard.release(true);
-        super.onPause();
+        dashboard.release();
+        super.onStop();
+        if (!isChangingConfigurations()
+                && (getPackageName() + ":ui").equals(
+                        android.app.Application.getProcessName()
+                )) {
+            android.os.Process.killProcess(android.os.Process.myPid());
+        }
     }
 
     @Override
     protected void onDestroy() {
-        dashboard.release(false);
+        dashboard.release();
         super.onDestroy();
     }
 
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        dashboard.onTrimMemory(level, activityResumed);
+        dashboard.onTrimMemory(level, activityVisible);
     }
 
     @Override
@@ -155,7 +161,7 @@ public final class MainActivity extends Activity implements
     public void onControlDisconnected() {
         coreProgress.setVisibility(View.GONE);
         coreStatus.setText(R.string.control_service_disconnected);
-        dashboard.release(true);
+        dashboard.release();
     }
 
     @Override
@@ -260,14 +266,14 @@ public final class MainActivity extends Activity implements
                 || runtimeState == RuntimeState.STOPPING;
         setVpnToggle(connected);
         vpnToggle.setEnabled(!transitional && !(alwaysOn && connected));
-        if (activityResumed
+        if (activityVisible
                 && runtimeState == RuntimeState.RUNNING
                 && snapshot.dashboardUrl() != null
                 && !snapshot.dashboardUrl().isBlank()
                 && snapshot.controllerPort() > 0) {
             dashboard.load(snapshot.dashboardUrl(), snapshot.controllerPort());
         } else {
-            dashboard.release(true);
+            dashboard.release();
         }
         maybeAutoStart();
     }

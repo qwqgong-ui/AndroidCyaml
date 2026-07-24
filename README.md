@@ -150,8 +150,8 @@ AndroidCyaml 按 [Android 17 应用内存限制](https://developer.android.com/a
 处理内存压力：
 
 - VPN、TUN 和 mihomo 留在默认前台服务进程，WebView 仅存在于可回收的 `:ui` 进程。
-- UI 进入后台后销毁 WebView，只保留当前控制器页面 URL，不保留可能较大的 WebView 历史
-  `Bundle`；UI 回收不影响 VPN。
+- UI 进入后台后解除绑定、销毁 WebView 并结束独立 `:ui` 进程；再次打开时冷启动并重新加载
+  Dashboard，UI 回收不影响 VPN。
 - 默认进程接收 OPPO `itgsa.intent.action.TRIM`/`KILL` 广播，在后台线程释放可重建缓存、保存已
   落盘状态，并通过 Binder 返回处理结果。PSS 只在后台低频采样。
 - 空闲服务进程收到内存回调时不会因此加载 `libmihomo.so`。核心运行时会清理 DNS、接口和
