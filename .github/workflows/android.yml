@@ -35,11 +35,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          : > build.log
           sdkmanager --channel=1 "cmdline-tools;latest"
-          "${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager" \
-            --channel=1 \
-            "platforms;android-37" \
-            "build-tools;37.0.0" \
+          android_cli="$(
+            find "${ANDROID_SDK_ROOT}/cmdline-tools" \
+              -path '*/bin/android' -type f -print \
+              | sort -V | tail -n 1
+          )"
+          [[ -x "${android_cli}" ]]
+          "${android_cli}" --sdk="${ANDROID_SDK_ROOT}" sdk install \
+            platforms/android-37.0 \
+            build-tools/37.0.0 \
+            --beta
+          sdkmanager \
             "cmake;3.22.1" \
             "ndk;29.0.14206865"
 
