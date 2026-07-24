@@ -10,6 +10,7 @@ interface IAppControl {
     void restartRuntime(IOperationCallback callback);
     void importConfig(in Uri source, IOperationCallback callback);
     void setRuntimeOverrides(
+            String tunStack,
             boolean processMatching,
             boolean ipv6Enabled,
             IOperationCallback callback

@@ -40,11 +40,7 @@ final class MihomoFileStore {
 
         File ui = new File(home, "ui");
         ensureDashboard(home, ui);
-        File binary = new File(context.getApplicationInfo().nativeLibraryDir, "libmihomo.so");
-        if (!binary.isFile()) {
-            throw new IOException("APK 中缺少 arm64 mihomo 核心：" + binary);
-        }
-        return new MihomoPaths(home, config, ui, binary);
+        return new MihomoPaths(home, config, ui);
     }
 
     void makeConfigReadOnly(File config) throws IOException {
