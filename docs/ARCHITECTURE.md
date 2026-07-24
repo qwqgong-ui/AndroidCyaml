@@ -12,38 +12,71 @@
 | `NativePlatformCallbacks` | per-socket `protect(fd)` and Android UID/package lookup | TUN packet processing |
 | `MihomoNative` | Java JNI contract and native response decoding | VPN lifecycle |
 | `libandroidcyaml.so` | JNI exports, JavaVM attachment and callback dispatch | mihomo configuration semantics |
-| `libmihomo.so` | config parsing, sing-tun stacks, DNS, sniffer, rules and outbounds | Android UI and foreground-service policy |
+| `native/mihomo` | C ABI exports, in-memory Android config adaptation and mihomo package orchestration | Android UI and service policy |
+| patched mihomo source | config parsing, sing-tun stacks, DNS, sniffer, rules and outbounds | Android JNI implementation |
 | UI/Binder | user intent and observation | runtime ownership |
 
 `MainActivity` runs in `:ui`; `AppControlService`, `AndroidVpnService`, both native libraries and the Go runtime
 remain in the default VPN service process.
+
+## Core isolation
+
+`qwqgong-ui/mihomo:Alpha` is a desktop-safe branch and contains no AndroidCyaml JNI, VpnService or runtime
+override commits. AndroidCyaml pins one clean mihomo commit and owns all Android-specific integration locally.
+
+The build applies exactly one patch:
+
+```text
+patches/mihomo/0001-androidcyaml-platform-hooks.patch
+├── component/process/process.go
+└── listener/sing_tun/server_android.go
+```
+
+The first hunk adds an endpoint-aware platform process resolver callback. The second avoids starting sing-tun's
+Android package database when package selection was already completed by `VpnService.Builder`. The build script
+checks the patch before applying it and rejects any unexpected changed path.
+
+All larger Android behavior lives outside the core checkout:
+
+```text
+native/mihomo/main.go
+├── JNI-facing C ABI exports
+├── system / gVisor / mixed selection
+├── fixed /30 and /126 TUN contract
+├── adaptive IPv6 mutation
+├── find-process-mode mutation
+├── TUN FD injection
+└── dialer.DefaultSocketHook → protect(fd)
+```
+
+The patch is applied only to `.third_party/mihomo-src`, which is ignored by Git. The mihomo repository and its
+`Alpha` branch are not mutated by an AndroidCyaml build.
 
 ## Native library relationship
 
 ```text
 Java MihomoNative
   → libandroidcyaml.so
-      → libmihomo.so
-          → androidcyaml_protect_socket(fd)
-          → androidcyaml_resolve_process(...)
+      → libmihomo.so generated from native/mihomo
+          → registered C function pointers
               → NativePlatformCallbacks
 ```
 
 `libmihomo.so` is built with Go `-buildmode=c-shared`. `libandroidcyaml.so` links against the stable SONAME
-`libmihomo.so`; CI rejects absolute `DT_NEEDED` paths. Both libraries are arm64 and use at least 16 KiB LOAD
-alignment.
+`libmihomo.so`; CI rejects absolute `DT_NEEDED` paths and circular reverse references. Both libraries are arm64
+and use at least 16 KiB LOAD alignment.
 
 ## Startup transaction
 
 1. Android enters foreground-service mode.
 2. The coordinator reads the persisted stack/process/IPv6 settings.
-3. `MihomoNative.prepareTun` parses `config.yaml` inside the embedded core.
-4. The core applies the selected stack and fixed Android interface contract:
+3. `MihomoNative.prepareTun` parses `config.yaml` inside the embedded Go runtime.
+4. `native/mihomo` applies the selected stack and fixed Android interface contract:
    - IPv4 `172.19.0.1/30`;
    - IPv6 `fdfe:dcba:9876::1/126` when effective;
    - MTU 9000;
    - GSO disabled.
-5. The core returns JSON containing the exact `VpnService.Builder` addresses, routes, DNS and package scope.
+5. The Go runtime returns JSON containing the exact `VpnService.Builder` addresses, routes, DNS and package scope.
 6. Android establishes or reuses the VPN TUN.
 7. Java duplicates the TUN descriptor and transfers that duplicate to `MihomoNative.start`.
 8. The Go runtime installs per-socket protect and process-owner hooks, applies the parsed configuration and starts
@@ -60,7 +93,7 @@ have not changed.
 The whole application UID is intentionally kept inside VPN routing. For every real mihomo outbound socket:
 
 1. `dialer.DefaultSocketHook` receives the raw FD before connect.
-2. Go calls the C callback `androidcyaml_protect_socket`.
+2. Go invokes the registered C function pointer.
 3. C++ attaches the current Go thread to the JVM when necessary.
 4. `NativePlatformCallbacks.protectSocket` calls `AndroidVpnService.protect(fd)`.
 5. A rejected protect operation fails the dial instead of allowing a routing loop.
@@ -86,15 +119,15 @@ The selection is independent of YAML and never written back:
 - `gvisor`: all supported protocols use gVisor.
 - `mixed`: official mihomo behavior—TCP system, UDP gVisor.
 
-The fixed `/30` and `/126` prefixes guarantee the system stack has a second interface address for local listener
+The fixed `/30` and `/126` prefixes guarantee the system stack has a second interface address for local-listener
 NAT. Stack changes restart the embedded core transactionally; the Android TUN is reused when its Builder contract
 is unchanged.
 
 ## Process matching
 
-When enabled, the core forces `find-process-mode: always`. The process resolver sends protocol and original source
-and destination endpoints through JNI to `ConnectivityManager.getConnectionOwnerUid()`, then maps the UID to a
-stable package name. When disabled, the mode is forced to `off`.
+When enabled, the AndroidCyaml wrapper forces `find-process-mode: always`. The patched process entry sends protocol
+and original source/destination endpoints through JNI to `ConnectivityManager.getConnectionOwnerUid()`, then maps
+the UID to a stable package name. When disabled, the mode is forced to `off`.
 
 ## Adaptive IPv6 transaction
 
@@ -124,7 +157,8 @@ The following components are intentionally gone:
 - JSON request framing and `SCM_RIGHTS` transfer;
 - whole-package VPN exclusion;
 - stale subprocess reaper;
-- HEV/tun2socks/SOCKS packet conversion.
+- HEV/tun2socks/SOCKS packet conversion;
+- Android-specific commits on the shared mihomo `Alpha` branch.
 
 Keeping TUN processing, DNS mapping, sniffing, process attribution and outbound protection in one VPN service
 process avoids the metadata loss of a TUN-to-SOCKS bridge and restores the system stack's TCP feedback path.
