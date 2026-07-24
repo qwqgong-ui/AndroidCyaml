@@ -2,7 +2,7 @@ diff --git a/component/process/process.go b/component/process/process.go
 index ace3bc635..8f194bd35 100644
 --- a/component/process/process.go
 +++ b/component/process/process.go
-@@ -24,11 +24,23 @@ func FindProcessName(network string, srcIP netip.Addr, srcPort int) (uint32, str
+@@ -24,10 +24,22 @@ func FindProcessName(network string, srcIP netip.Addr, srcPort int) (uint32, str
  	return findProcessName(network, srcIP, srcPort)
  }
  
