@@ -36,14 +36,14 @@ final class ConfigInstaller {
                 fileStore.moveReplacing(paths.config(), backup);
             }
             fileStore.moveReplacing(candidate, paths.config());
-            fileStore.makeConfigReadOnly(paths.config());
+            fileStore.makeConfigOwnerReadWrite(paths.config());
             return new Transaction(fileStore, paths.config(), backup, candidate);
         } catch (IOException exception) {
             Files.deleteIfExists(candidate.toPath());
             if (backup.isFile()) {
                 Files.deleteIfExists(paths.config().toPath());
                 fileStore.moveReplacing(backup, paths.config());
-                fileStore.makeConfigReadOnly(paths.config());
+                fileStore.makeConfigOwnerReadWrite(paths.config());
             }
             throw exception;
         }
@@ -106,7 +106,7 @@ final class ConfigInstaller {
                 throw new IOException("上一份配置不存在，无法回滚");
             }
             fileStore.moveReplacing(backup, config);
-            fileStore.makeConfigReadOnly(config);
+            fileStore.makeConfigOwnerReadWrite(config);
             finished = true;
         }
 

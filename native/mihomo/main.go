@@ -132,7 +132,7 @@ func AndroidCyamlFree(value *C.char) {
 func AndroidCyamlValidate(homeValue, configValue *C.char) *C.char {
 	home := C.GoString(homeValue)
 	configPath := C.GoString(configValue)
-	if err := initializeHome(home); err != nil {
+	if err := initializeRuntimePaths(home, configPath); err != nil {
 		return respond(nil, err)
 	}
 	configuration, err := os.ReadFile(configPath)
@@ -152,7 +152,7 @@ func AndroidCyamlPrepareTun(
 ) *C.char {
 	home := C.GoString(homeValue)
 	configPath := C.GoString(configValue)
-	if err := initializeHome(home); err != nil {
+	if err := initializeRuntimePaths(home, configPath); err != nil {
 		return respond(nil, err)
 	}
 	configuration, err := os.ReadFile(configPath)
@@ -249,23 +249,16 @@ func AndroidCyamlTrimMemory() C.int {
 	return 1
 }
 
-func initializeHome(home string) error {
+func initializeRuntimePaths(home, configPath string) error {
 	if home == "" || !filepath.IsAbs(home) {
 		return errors.New("mihomo home directory must be absolute")
-	}
-	MC.SetHomeDir(home)
-	return config.Init(home)
-}
-
-func initializeRuntimePaths(home, configPath string) error {
-	if err := initializeHome(home); err != nil {
-		return err
 	}
 	if configPath == "" || !filepath.IsAbs(configPath) {
 		return errors.New("mihomo configuration path must be absolute")
 	}
+	MC.SetHomeDir(home)
 	MC.SetConfig(configPath)
-	return nil
+	return config.Init(home)
 }
 
 func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte, error) {
