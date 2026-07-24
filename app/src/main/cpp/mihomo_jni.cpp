@@ -271,11 +271,12 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
         jstring config_path,
         jstring ui_path,
         jstring controller_address,
-        jstring secret,
         jstring stack,
+        jstring log_level,
         jint tun_file_descriptor,
         jboolean ipv6_enabled,
         jboolean process_matching,
+        jboolean lan_web_ui_public,
         jobject callbacks
 ) {
     if (!installCallback(env, callbacks)) {
@@ -287,18 +288,19 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
     std::string config_value = stringFromJava(env, config_path);
     std::string ui_value = stringFromJava(env, ui_path);
     std::string controller_value = stringFromJava(env, controller_address);
-    std::string secret_value = stringFromJava(env, secret);
     std::string stack_value = stringFromJava(env, stack);
+    std::string log_level_value = stringFromJava(env, log_level);
     return stringFromNative(env, AndroidCyamlStart(
             const_cast<char*>(home_value.c_str()),
             const_cast<char*>(config_value.c_str()),
             const_cast<char*>(ui_value.c_str()),
             const_cast<char*>(controller_value.c_str()),
-            const_cast<char*>(secret_value.c_str()),
             const_cast<char*>(stack_value.c_str()),
+            const_cast<char*>(log_level_value.c_str()),
             static_cast<int>(tun_file_descriptor),
             ipv6_enabled == JNI_TRUE ? 1 : 0,
-            process_matching == JNI_TRUE ? 1 : 0
+            process_matching == JNI_TRUE ? 1 : 0,
+            lan_web_ui_public == JNI_TRUE ? 1 : 0
     ));
 }
 

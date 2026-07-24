@@ -1,6 +1,5 @@
 package io.github.qwqgong.androidcyaml;
 
-import android.content.Context;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
@@ -10,53 +9,48 @@ import java.util.concurrent.TimeUnit;
 final class MihomoRuntime implements AutoCloseable {
     private static final String TAG = "AndroidCyaml/Runtime";
 
-    private final Context context;
     private final MihomoFileStore fileStore;
     private final AndroidTunManager tunManager;
     private final NativePlatformCallbacks platformCallbacks;
     private final RuntimeOverrideSettings settings;
     private final boolean ipv6Enabled;
-    private final String controllerSecret;
 
     private MihomoController controller;
     private boolean started;
 
     MihomoRuntime(
-            Context context,
             MihomoFileStore fileStore,
             AndroidTunManager tunManager,
             NativePlatformCallbacks platformCallbacks,
             RuntimeOverrideSettings settings,
             boolean ipv6Enabled
     ) {
-        this.context = context.getApplicationContext();
         this.fileStore = fileStore;
         this.tunManager = tunManager;
         this.platformCallbacks = platformCallbacks;
         this.settings = settings == null ? RuntimeOverrideSettings.defaults() : settings;
         this.ipv6Enabled = ipv6Enabled;
-        controllerSecret = ControllerSecretStore.getOrCreate(this.context);
     }
 
     String start() throws IOException, InterruptedException {
         MihomoPaths paths = fileStore.ensureReady();
-        controller = MihomoController.reserve(controllerSecret);
+        controller = MihomoController.reserve(settings.lanWebUiPublic());
         TunOptions tunOptions = MihomoNative.prepareTun(paths, settings, ipv6Enabled);
         ParcelFileDescriptor tunnel = tunManager.open(tunOptions);
         ParcelFileDescriptor duplicate = ParcelFileDescriptor.dup(tunnel.getFileDescriptor());
         int nativeFd = duplicate.detachFd();
         boolean nativeAcceptedDescriptor = false;
         try {
-            MihomoNative.start(
+            String controllerSecret = MihomoNative.start(
                     paths,
                     controller,
-                    controllerSecret,
                     settings,
                     ipv6Enabled,
                     nativeFd,
                     platformCallbacks
             );
             nativeAcceptedDescriptor = true;
+            controller.setSecret(controllerSecret);
             controller.awaitReady(90, TimeUnit.SECONDS);
             controller.awaitTun(10, TimeUnit.SECONDS);
             started = true;
@@ -65,6 +59,8 @@ final class MihomoRuntime implements AutoCloseable {
                     + " · " + stackDetail(settings.tunStack())
                     + (settings.processMatching() ? " · 进程匹配" : " · 不匹配进程")
                     + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
+                    + " · 日志 " + settings.logLevel().wireValue()
+                    + " · WebUI " + controller.listenerAddress()
                     + " · zashboard " + BuildConfig.ZASHBOARD_VERSION;
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {

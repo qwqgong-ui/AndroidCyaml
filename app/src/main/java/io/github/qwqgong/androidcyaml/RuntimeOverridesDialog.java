@@ -5,9 +5,12 @@ import android.content.Context;
 import android.graphics.Typeface;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
+import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
 
@@ -16,11 +19,7 @@ import java.util.Map;
 
 final class RuntimeOverridesDialog {
     interface Listener {
-        void onOverridesSelected(
-                TunStackMode tunStack,
-                boolean processMatching,
-                boolean ipv6Enabled
-        );
+        void onOverridesSelected(RuntimeOverrideSettings settings);
     }
 
     private RuntimeOverridesDialog() {}
@@ -31,6 +30,9 @@ final class RuntimeOverridesDialog {
             boolean processMatching,
             boolean ipv6Enabled,
             boolean ipv6Effective,
+            RuntimeLogLevel currentLogLevel,
+            boolean currentLanWebUiPublic,
+            int controllerPort,
             Listener listener
     ) {
         int horizontalPadding = dp(context, 24);
@@ -73,6 +75,34 @@ final class RuntimeOverridesDialog {
                 context.getString(R.string.override_tun_stack_summary)
         ), matchWidth());
 
+        content.addView(
+                sectionTitle(context, R.string.override_log_level),
+                topSpaced(context)
+        );
+        RuntimeLogLevel[] logLevels = RuntimeLogLevel.values();
+        String[] logLabels = new String[logLevels.length];
+        for (int index = 0; index < logLevels.length; index++) {
+            logLabels[index] = logLevelLabel(context, logLevels[index]);
+        }
+        Spinner logLevel = new Spinner(context);
+        ArrayAdapter<String> logAdapter = new ArrayAdapter<>(
+                context,
+                android.R.layout.simple_spinner_item,
+                logLabels
+        );
+        logAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        logLevel.setAdapter(logAdapter);
+        logLevel.setSelection(indexOf(
+                logLevels,
+                currentLogLevel == null ? RuntimeLogLevel.WARNING : currentLogLevel
+        ));
+        logLevel.setMinimumHeight(dp(context, 48));
+        content.addView(logLevel, matchWidth());
+        content.addView(summary(
+                context,
+                context.getString(R.string.override_log_level_summary)
+        ), matchWidth());
+
         Switch process = switchView(
                 context,
                 R.string.override_process_matching,
@@ -94,17 +124,47 @@ final class RuntimeOverridesDialog {
                         : context.getString(R.string.override_ipv6_disabled)
         ));
 
+        Switch lanWebUi = switchView(
+                context,
+                R.string.override_lan_webui_public,
+                currentLanWebUiPublic
+        );
+        content.addView(lanWebUi, topSpaced(context));
+        TextView lanWebUiStatus = summary(
+                context,
+                lanWebUiStatus(
+                        context,
+                        currentLanWebUiPublic,
+                        controllerPort
+                )
+        );
+        content.addView(lanWebUiStatus, matchWidth());
+        lanWebUi.setOnCheckedChangeListener((button, checked) -> lanWebUiStatus.setText(
+                lanWebUiStatus(
+                        context,
+                        checked,
+                        checked == currentLanWebUiPublic ? controllerPort : 0
+                )
+        ));
+
+        ScrollView scroll = new ScrollView(context);
+        scroll.addView(content, matchWidth());
         new AlertDialog.Builder(context)
                 .setTitle(R.string.runtime_overrides)
-                .setView(content)
+                .setView(scroll)
                 .setNegativeButton(R.string.cancel, null)
                 .setPositiveButton(R.string.apply, (dialog, which) -> {
                     TunStackMode selected = stackById.get(stackGroup.getCheckedRadioButtonId());
-                    listener.onOverridesSelected(
+                    int logLevelIndex = logLevel.getSelectedItemPosition();
+                    listener.onOverridesSelected(new RuntimeOverrideSettings(
                             selected == null ? TunStackMode.SYSTEM : selected,
                             process.isChecked(),
-                            ipv6.isChecked()
-                    );
+                            ipv6.isChecked(),
+                            logLevelIndex >= 0 && logLevelIndex < logLevels.length
+                                    ? logLevels[logLevelIndex]
+                                    : RuntimeLogLevel.WARNING,
+                            lanWebUi.isChecked()
+                    ));
                 })
                 .show();
     }
@@ -167,6 +227,46 @@ final class RuntimeOverridesDialog {
         return context.getString(ipv6Effective
                 ? R.string.override_ipv6_available
                 : R.string.override_ipv6_auto_disabled);
+    }
+
+    private static String lanWebUiStatus(
+            Context context,
+            boolean lanWebUiPublic,
+            int controllerPort
+    ) {
+        if (lanWebUiPublic) {
+            return controllerPort > 0
+                    ? context.getString(
+                            R.string.override_lan_webui_public_running,
+                            controllerPort
+                    )
+                    : context.getString(R.string.override_lan_webui_public_pending);
+        }
+        return controllerPort > 0
+                ? context.getString(
+                        R.string.override_lan_webui_local_running,
+                        controllerPort
+                )
+                : context.getString(R.string.override_lan_webui_local_pending);
+    }
+
+    private static String logLevelLabel(Context context, RuntimeLogLevel logLevel) {
+        return context.getString(switch (logLevel) {
+            case SILENT -> R.string.override_log_silent;
+            case ERROR -> R.string.override_log_error;
+            case WARNING -> R.string.override_log_warning;
+            case INFO -> R.string.override_log_info;
+            case DEBUG -> R.string.override_log_debug;
+        });
+    }
+
+    private static int indexOf(RuntimeLogLevel[] values, RuntimeLogLevel target) {
+        for (int index = 0; index < values.length; index++) {
+            if (values[index] == target) {
+                return index;
+            }
+        }
+        return 0;
     }
 
     private static LinearLayout.LayoutParams matchWidth() {

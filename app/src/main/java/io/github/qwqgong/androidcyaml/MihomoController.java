@@ -11,35 +11,47 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 final class MihomoController {
-    private static final String HOST = "127.0.0.1";
+    private static final String LOCAL_HOST = "127.0.0.1";
+    private static final String PUBLIC_HOST = "0.0.0.0";
     private static final int PREFERRED_PORT = 17_890;
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
 
-    private final String secret;
+    private final String listenerHost;
     private final int port;
+    private String secret = "";
 
-    private MihomoController(String secret, int port) {
-        this.secret = secret;
+    private MihomoController(String listenerHost, int port) {
+        this.listenerHost = listenerHost;
         this.port = port;
     }
 
-    static MihomoController reserve(String secret) throws IOException {
-        return new MihomoController(secret, findAvailablePort());
+    static MihomoController reserve(boolean lanWebUiPublic) throws IOException {
+        String listenerHost = lanWebUiPublic ? PUBLIC_HOST : LOCAL_HOST;
+        return new MihomoController(listenerHost, findAvailablePort(listenerHost));
     }
 
     int port() {
         return port;
     }
 
+    String listenerAddress() {
+        return listenerHost + ":" + port;
+    }
+
+    void setSecret(String secret) {
+        this.secret = secret == null ? "" : secret;
+    }
+
     String dashboardUrl() {
-        return "http://" + HOST + ":" + port
-                + "/ui/#/setup?hostname=" + HOST
+        return "http://" + LOCAL_HOST + ":" + port
+                + "/ui/#/setup?hostname=" + LOCAL_HOST
                 + "&port=" + port
-                + "&secret=" + secret
+                + "&secret=" + URLEncoder.encode(secret, StandardCharsets.UTF_8)
                 + "&disableUpgradeCore=1&disableTunMode=1&type=clash";
     }
 
@@ -104,11 +116,13 @@ final class MihomoController {
     }
 
     private HttpURLConnection open(String path) throws IOException {
-        URL url = new URL("http://" + HOST + ":" + port + path);
+        URL url = new URL("http://" + LOCAL_HOST + ":" + port + path);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setConnectTimeout(500);
         connection.setReadTimeout(1_000);
-        connection.setRequestProperty("Authorization", "Bearer " + secret);
+        if (!secret.isEmpty()) {
+            connection.setRequestProperty("Authorization", "Bearer " + secret);
+        }
         return connection;
     }
 
@@ -129,20 +143,26 @@ final class MihomoController {
         }
     }
 
-    private static int findAvailablePort() throws IOException {
+    private static int findAvailablePort(String listenerHost) throws IOException {
         try (ServerSocket reservation = new ServerSocket()) {
             reservation.setReuseAddress(true);
             reservation.bind(
-                    new InetSocketAddress(InetAddress.getByName(HOST), PREFERRED_PORT),
+                    new InetSocketAddress(
+                            InetAddress.getByName(listenerHost),
+                            PREFERRED_PORT
+                    ),
                     1
             );
             return PREFERRED_PORT;
         } catch (IOException ignored) {
-            // Fall back to an ephemeral loopback origin.
+            // Fall back to an ephemeral address on the same listener interface.
         }
         try (ServerSocket reservation = new ServerSocket()) {
             reservation.setReuseAddress(false);
-            reservation.bind(new InetSocketAddress(InetAddress.getByName(HOST), 0), 1);
+            reservation.bind(
+                    new InetSocketAddress(InetAddress.getByName(listenerHost), 0),
+                    1
+            );
             return reservation.getLocalPort();
         }
     }

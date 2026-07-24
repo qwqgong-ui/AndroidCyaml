@@ -1,7 +1,10 @@
 package io.github.qwqgong.androidcyaml;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -17,6 +20,7 @@ final class RuntimeCoordinator {
     }
 
     private static final String TAG = "AndroidCyaml/Coordinator";
+    private static final int ANDROID_17_API = 37;
     private static volatile RuntimeCoordinator instance;
 
     private final Context context;
@@ -136,17 +140,27 @@ final class RuntimeCoordinator {
             String stackValue,
             boolean processMatching,
             boolean ipv6Enabled,
+            String logLevelValue,
+            boolean lanWebUiPublic,
             OperationCallback callback
     ) {
         final TunStackMode stack;
+        final RuntimeLogLevel logLevel;
         try {
             stack = TunStackMode.fromWireValue(stackValue);
+            logLevel = RuntimeLogLevel.fromWireValue(logLevelValue);
         } catch (IllegalArgumentException exception) {
             postOperation(callback, false, usefulMessage(exception));
             return;
         }
         executor.execute(() -> setRuntimeOverridesInternal(
-                new RuntimeOverrideSettings(stack, processMatching, ipv6Enabled),
+                new RuntimeOverrideSettings(
+                        stack,
+                        processMatching,
+                        ipv6Enabled,
+                        logLevel,
+                        lanWebUiPublic
+                ),
                 callback
         ));
     }
@@ -183,10 +197,25 @@ final class RuntimeCoordinator {
 
     private String startRuntimeOnExistingService() throws IOException, InterruptedException {
         RuntimeOverrideSettings settings = overrideStore.settings();
+        boolean localNetworkFallback = settings.lanWebUiPublic()
+                && !hasLocalNetworkAccess();
+        if (localNetworkFallback) {
+            settings = new RuntimeOverrideSettings(
+                    settings.tunStack(),
+                    settings.processMatching(),
+                    settings.ipv6Enabled(),
+                    settings.logLevel(),
+                    false
+            );
+            overrideStore.setSettings(settings);
+        }
         boolean requestedIpv6 =
                 settings.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
+        String localNetworkDetail = localNetworkFallback
+                ? " · 局域网权限未授权，WebUI 已恢复本机"
+                : "";
         try {
-            return startRuntime(settings, requestedIpv6);
+            return startRuntime(settings, requestedIpv6) + localNetworkDetail;
         } catch (IOException | InterruptedException firstFailure) {
             if (!requestedIpv6) {
                 throw firstFailure;
@@ -197,7 +226,9 @@ final class RuntimeCoordinator {
             }
             Log.w(TAG, "IPv6 runtime startup failed; retrying with IPv6 disabled", firstFailure);
             try {
-                return startRuntime(settings, false) + " · IPv6 自动关闭";
+                return startRuntime(settings, false)
+                        + " · IPv6 自动关闭"
+                        + localNetworkDetail;
             } catch (IOException | InterruptedException fallbackFailure) {
                 if (fallbackFailure instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
@@ -220,7 +251,6 @@ final class RuntimeCoordinator {
         }
         closeRuntime();
         MihomoRuntime candidate = new MihomoRuntime(
-                context,
                 fileStore,
                 tunManager,
                 platformCallbacks,
@@ -277,6 +307,10 @@ final class RuntimeCoordinator {
             RuntimeOverrideSettings requested,
             OperationCallback callback
     ) {
+        if (requested.lanWebUiPublic() && !hasLocalNetworkAccess()) {
+            postOperation(callback, false, "未授予 Android 17 局域网访问权限");
+            return;
+        }
         RuntimeOverrideSettings previous = overrideStore.settings();
         if (requested.equals(previous)) {
             stateBus.publish(stateBus.snapshot());
@@ -296,7 +330,11 @@ final class RuntimeCoordinator {
             effectiveIpv6Enabled =
                     requested.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
             stateBus.publish(stateBus.snapshot());
-            postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
+            postOperation(
+                    callback,
+                    true,
+                    describeOverrides(requested, effectiveIpv6Enabled, 0)
+            );
             return;
         }
 
@@ -304,7 +342,17 @@ final class RuntimeCoordinator {
         try {
             String detail = startRuntimeOnExistingService();
             publish(RuntimeState.RUNNING, detail);
-            postOperation(callback, true, describeOverrides(requested, effectiveIpv6Enabled));
+            MihomoRuntime current = runtime;
+            RuntimeOverrideSettings applied = overrideStore.settings();
+            postOperation(
+                    callback,
+                    true,
+                    describeOverrides(
+                            applied,
+                            effectiveIpv6Enabled,
+                            current == null ? 0 : current.controllerPort()
+                    )
+            );
         } catch (Exception applyFailure) {
             try {
                 overrideStore.setSettings(previous);
@@ -402,6 +450,12 @@ final class RuntimeCoordinator {
         return service != null && tunManager != null && platformCallbacks != null;
     }
 
+    private boolean hasLocalNetworkAccess() {
+        return Build.VERSION.SDK_INT < ANDROID_17_API
+                || context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
     private void failActiveService(String message) {
         AndroidVpnService failedService = service;
         cleanupAll();
@@ -455,7 +509,8 @@ final class RuntimeCoordinator {
 
     private static String describeOverrides(
             RuntimeOverrideSettings settings,
-            boolean ipv6Effective
+            boolean ipv6Effective,
+            int controllerPort
     ) {
         String stack = switch (settings.tunStack()) {
             case SYSTEM -> "system 全栈";
@@ -471,7 +526,14 @@ final class RuntimeCoordinator {
         } else {
             ipv6 = "IPv6 已开启，但当前环境不可用，已自动使用 IPv4";
         }
-        return stack + "；" + process + "；" + ipv6;
+        String logLevel = "日志 " + settings.logLevel().wireValue();
+        String webUi = settings.lanWebUiPublic()
+                ? "WebUI 监听 0.0.0.0"
+                : "WebUI 监听 127.0.0.1";
+        if (controllerPort > 0) {
+            webUi += ":" + controllerPort;
+        }
+        return stack + "；" + process + "；" + ipv6 + "；" + logLevel + "；" + webUi;
     }
 
     private static String usefulMessage(Throwable throwable) {

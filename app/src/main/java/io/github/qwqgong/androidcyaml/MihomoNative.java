@@ -38,27 +38,31 @@ final class MihomoNative {
         return TunOptionsCodec.fromJson(payload);
     }
 
-    static void start(
+    static String start(
             MihomoPaths paths,
             MihomoController controller,
-            String secret,
             RuntimeOverrideSettings settings,
             boolean ipv6Enabled,
             int tunFileDescriptor,
             NativePlatformCallbacks callbacks
     ) throws IOException {
-        requireSuccess(nativeStart(
+        JSONObject payload = requireSuccess(nativeStart(
                 paths.home().getAbsolutePath(),
                 paths.config().getAbsolutePath(),
                 paths.ui().getAbsolutePath(),
-                "127.0.0.1:" + controller.port(),
-                secret,
+                controller.listenerAddress(),
                 settings.tunStack().wireValue(),
+                settings.logLevel().wireValue(),
                 tunFileDescriptor,
                 ipv6Enabled,
                 settings.processMatching(),
+                settings.lanWebUiPublic(),
                 callbacks
         ));
+        if (payload == null || !payload.has("controllerSecret")) {
+            throw new IOException("mihomo 未返回控制器鉴权信息");
+        }
+        return payload.optString("controllerSecret", "");
     }
 
     static void stop() throws IOException {
@@ -108,11 +112,12 @@ final class MihomoNative {
             String configPath,
             String uiPath,
             String controllerAddress,
-            String secret,
             String stack,
+            String logLevel,
             int tunFileDescriptor,
             boolean ipv6Enabled,
             boolean processMatching,
+            boolean lanWebUiPublic,
             NativePlatformCallbacks callbacks
     );
 

@@ -55,6 +55,8 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                 String tunStack,
                 boolean processMatching,
                 boolean ipv6Enabled,
+                String logLevel,
+                boolean lanWebUiPublic,
                 IOperationCallback callback
         ) {
             enforceSameAppCaller();
@@ -62,6 +64,8 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     tunStack,
                     processMatching,
                     ipv6Enabled,
+                    logLevel,
+                    lanWebUiPublic,
                     (success, message) -> complete(callback, success, message)
             );
         }
@@ -119,7 +123,9 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     overrides.tunStack().wireValue(),
                     overrides.processMatching(),
                     overrides.ipv6Enabled(),
-                    coordinator.effectiveIpv6Enabled()
+                    coordinator.effectiveIpv6Enabled(),
+                    overrides.logLevel().wireValue(),
+                    overrides.lanWebUiPublic()
             );
         } catch (RemoteException ignored) {
             // RemoteCallbackList removes dead UI callbacks automatically.

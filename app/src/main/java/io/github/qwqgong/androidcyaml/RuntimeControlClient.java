@@ -22,7 +22,9 @@ final class RuntimeControlClient {
                 String tunStack,
                 boolean processMatching,
                 boolean ipv6Enabled,
-                boolean ipv6Effective
+                boolean ipv6Effective,
+                String logLevel,
+                boolean lanWebUiPublic
         );
 
         void onControlDisconnected();
@@ -51,7 +53,9 @@ final class RuntimeControlClient {
                 String tunStack,
                 boolean processMatching,
                 boolean ipv6Enabled,
-                boolean ipv6Effective
+                boolean ipv6Effective,
+                String logLevel,
+                boolean lanWebUiPublic
         ) {
             mainHandler.post(() -> listener.onRuntimeSnapshot(
                     state,
@@ -63,7 +67,9 @@ final class RuntimeControlClient {
                     tunStack,
                     processMatching,
                     ipv6Enabled,
-                    ipv6Effective
+                    ipv6Effective,
+                    logLevel,
+                    lanWebUiPublic
             ));
         }
     };
@@ -172,6 +178,8 @@ final class RuntimeControlClient {
             TunStackMode tunStack,
             boolean processMatching,
             boolean ipv6Enabled,
+            RuntimeLogLevel logLevel,
+            boolean lanWebUiPublic,
             ResultCallback result
     ) {
         IAppControl current = service;
@@ -180,11 +188,14 @@ final class RuntimeControlClient {
             return;
         }
         TunStackMode stack = tunStack == null ? TunStackMode.SYSTEM : tunStack;
+        RuntimeLogLevel level = logLevel == null ? RuntimeLogLevel.WARNING : logLevel;
         try {
             current.setRuntimeOverrides(
                     stack.wireValue(),
                     processMatching,
                     ipv6Enabled,
+                    level.wireValue(),
+                    lanWebUiPublic,
                     operationCallback(result)
             );
         } catch (RemoteException exception) {

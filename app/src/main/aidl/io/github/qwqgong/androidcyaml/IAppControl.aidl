@@ -13,6 +13,8 @@ interface IAppControl {
             String tunStack,
             boolean processMatching,
             boolean ipv6Enabled,
+            String logLevel,
+            boolean lanWebUiPublic,
             IOperationCallback callback
     );
 }

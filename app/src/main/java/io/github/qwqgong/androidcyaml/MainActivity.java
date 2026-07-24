@@ -1,8 +1,11 @@
 package io.github.qwqgong.androidcyaml;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
@@ -20,6 +23,8 @@ public final class MainActivity extends Activity implements
         VpnUiController.Listener {
     private static final int REQUEST_VPN_PERMISSION = 10_001;
     private static final int REQUEST_CONFIG_FILE = 10_002;
+    private static final int REQUEST_LOCAL_NETWORK_PERMISSION = 10_003;
+    private static final int ANDROID_17_API = 37;
 
     private RuntimeControlClient controlClient;
     private DashboardController dashboard;
@@ -38,11 +43,15 @@ public final class MainActivity extends Activity implements
     private boolean processMatching = true;
     private boolean ipv6Enabled = true;
     private boolean ipv6Effective = true;
+    private RuntimeLogLevel logLevel = RuntimeLogLevel.WARNING;
+    private boolean lanWebUiPublic;
+    private int controllerPort;
     private boolean alwaysOn;
     private boolean lockdown;
     private boolean updatingVpnToggle;
     private boolean autoStartAttempted;
     private boolean activityVisible;
+    private RuntimeOverrideSettings pendingRuntimeOverrides;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -126,6 +135,29 @@ public final class MainActivity extends Activity implements
     }
 
     @Override
+    public void onRequestPermissionsResult(
+            int requestCode,
+            String[] permissions,
+            int[] grantResults
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_LOCAL_NETWORK_PERMISSION) {
+            return;
+        }
+        RuntimeOverrideSettings requested = pendingRuntimeOverrides;
+        pendingRuntimeOverrides = null;
+        if (requested == null) {
+            return;
+        }
+        if (grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            submitRuntimeOverrides(requested);
+        } else {
+            showToast(getString(R.string.local_network_permission_denied));
+        }
+    }
+
+    @Override
     public void onRuntimeSnapshot(
             int state,
             String detail,
@@ -136,7 +168,9 @@ public final class MainActivity extends Activity implements
             String newTunStack,
             boolean newProcessMatching,
             boolean newIpv6Enabled,
-            boolean newIpv6Effective
+            boolean newIpv6Effective,
+            String newLogLevel,
+            boolean newLanWebUiPublic
     ) {
         RuntimeState[] values = RuntimeState.values();
         RuntimeState parsed = state >= 0 && state < values.length
@@ -147,9 +181,16 @@ public final class MainActivity extends Activity implements
         } catch (IllegalArgumentException ignored) {
             tunStack = TunStackMode.SYSTEM;
         }
+        try {
+            logLevel = RuntimeLogLevel.fromWireValue(newLogLevel);
+        } catch (IllegalArgumentException ignored) {
+            logLevel = RuntimeLogLevel.WARNING;
+        }
         processMatching = newProcessMatching;
         ipv6Enabled = newIpv6Enabled;
         ipv6Effective = newIpv6Effective;
+        lanWebUiPublic = newLanWebUiPublic;
+        this.controllerPort = controllerPort;
         applySnapshot(
                 new RuntimeSnapshot(parsed, detail, dashboardUrl, controllerPort),
                 newAlwaysOn,
@@ -161,6 +202,7 @@ public final class MainActivity extends Activity implements
     public void onControlDisconnected() {
         coreProgress.setVisibility(View.GONE);
         coreStatus.setText(R.string.control_service_disconnected);
+        controllerPort = 0;
         dashboard.release();
     }
 
@@ -184,15 +226,10 @@ public final class MainActivity extends Activity implements
                 processMatching,
                 ipv6Enabled,
                 ipv6Effective,
-                (newTunStack, newProcessMatching, newIpv6Enabled) ->
-                        controlClient.setRuntimeOverrides(
-                                newTunStack,
-                                newProcessMatching,
-                                newIpv6Enabled,
-                                (success, detail) -> showToast(success
-                                        ? getString(R.string.runtime_override_applied, detail)
-                                        : getString(R.string.runtime_override_failed, detail))
-                        )
+                logLevel,
+                lanWebUiPublic,
+                controllerPort,
+                this::applyRuntimeOverrides
         );
     }
 
@@ -319,6 +356,35 @@ public final class MainActivity extends Activity implements
                     ? getString(R.string.config_imported)
                     : getString(R.string.config_import_failed, detail));
         });
+    }
+
+    private void applyRuntimeOverrides(RuntimeOverrideSettings requested) {
+        if (requested.lanWebUiPublic()
+                && Build.VERSION.SDK_INT >= ANDROID_17_API
+                && checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingRuntimeOverrides = requested;
+            requestPermissions(
+                    new String[]{Manifest.permission.ACCESS_LOCAL_NETWORK},
+                    REQUEST_LOCAL_NETWORK_PERMISSION
+            );
+            return;
+        }
+        submitRuntimeOverrides(requested);
+    }
+
+    private void submitRuntimeOverrides(RuntimeOverrideSettings requested) {
+        pendingRuntimeOverrides = null;
+        controlClient.setRuntimeOverrides(
+                requested.tunStack(),
+                requested.processMatching(),
+                requested.ipv6Enabled(),
+                requested.logLevel(),
+                requested.lanWebUiPublic(),
+                (success, detail) -> showToast(success
+                        ? getString(R.string.runtime_override_applied, detail)
+                        : getString(R.string.runtime_override_failed, detail))
+        );
     }
 
     private void maybeAutoStart() {

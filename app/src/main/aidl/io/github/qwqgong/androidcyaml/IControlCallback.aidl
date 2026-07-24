@@ -11,6 +11,8 @@ oneway interface IControlCallback {
             String tunStack,
             boolean processMatching,
             boolean ipv6Enabled,
-            boolean ipv6Effective
+            boolean ipv6Effective,
+            String logLevel,
+            boolean lanWebUiPublic
     );
 }

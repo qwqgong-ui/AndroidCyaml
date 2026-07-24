@@ -69,6 +69,7 @@ import (
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/hub/route"
 	LC "github.com/metacubex/mihomo/listener/config"
+	MLog "github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel/statistic"
 )
 
@@ -89,6 +90,10 @@ type embeddedOptions struct {
 	Stack           string
 	IPv6Enabled     bool
 	ProcessMatching bool
+}
+
+type startPayload struct {
+	ControllerSecret string `json:"controllerSecret"`
 }
 
 type tunSpec struct {
@@ -183,11 +188,12 @@ func AndroidCyamlStart(
 	configValue,
 	uiValue,
 	controllerValue,
-	secretValue,
-	stackValue *C.char,
+	stackValue,
+	logLevelValue *C.char,
 	fileDescriptor,
 	ipv6Value,
-	processMatchingValue C.int,
+	processMatchingValue,
+	lanWebUiPublicValue C.int,
 ) *C.char {
 	runtimeMu.Lock()
 	defer runtimeMu.Unlock()
@@ -208,10 +214,25 @@ func AndroidCyamlStart(
 	if err != nil {
 		return respond(nil, err)
 	}
+	if cfg == nil || cfg.General == nil || cfg.Controller == nil {
+		return respond(nil, errors.New("AndroidCyaml received an incomplete mihomo configuration"))
+	}
+
+	logLevelName := strings.ToLower(strings.TrimSpace(C.GoString(logLevelValue)))
+	logLevel, found := MLog.LogLevelMapping[logLevelName]
+	if !found {
+		return respond(nil, fmt.Errorf("unsupported mihomo log level: %s", logLevelName))
+	}
+	if lanWebUiPublicValue != 0 && strings.TrimSpace(cfg.Controller.Secret) == "" {
+		return respond(
+			nil,
+			errors.New("局域网公开 WebUI 需要 config.yaml 中设置非空 secret"),
+		)
+	}
 
 	cfg.Controller.ExternalUI = C.GoString(uiValue)
 	cfg.Controller.ExternalController = C.GoString(controllerValue)
-	cfg.Controller.Secret = C.GoString(secretValue)
+	cfg.General.LogLevel = logLevel
 	_, err = prepareEmbeddedConfig(cfg, embeddedOptions{
 		FileDescriptor:  int(fileDescriptor),
 		Stack:           C.GoString(stackValue),
@@ -221,13 +242,17 @@ func AndroidCyamlStart(
 	if err != nil {
 		return respond(nil, err)
 	}
+	payload, err := json.Marshal(startPayload{ControllerSecret: cfg.Controller.Secret})
+	if err != nil {
+		return respond(nil, fmt.Errorf("encode controller credentials: %w", err))
+	}
 
 	installPlatformHooks()
 	route.SetEmbedMode(true)
 	hub.ApplyConfig(cfg)
 	active = true
 	releaseRebuildableMemory(false)
-	return respond(nil, nil)
+	return respond(payload, nil)
 }
 
 //export AndroidCyamlStop
