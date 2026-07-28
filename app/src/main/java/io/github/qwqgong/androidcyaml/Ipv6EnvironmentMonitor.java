@@ -62,7 +62,8 @@ final class Ipv6EnvironmentMonitor {
     ) {}
 
     private static final String TAG = "AndroidCyaml/Network";
-    private static final long DEBOUNCE_MILLIS = 750L;
+    private static final long READY_DEBOUNCE_MILLIS = 100L;
+    private static final long LOST_HANDOVER_GRACE_MILLIS = 650L;
 
     private final ConnectivityManager connectivityManager;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -119,7 +120,7 @@ final class Ipv6EnvironmentMonitor {
                         selectedCapabilities = null;
                         selectedLinkProperties = null;
                     }
-                    scheduleEvaluation();
+                    scheduleEvaluation(LOST_HANDOVER_GRACE_MILLIS);
                 }
             };
 
@@ -202,12 +203,12 @@ final class Ipv6EnvironmentMonitor {
                 return;
             }
         }
-        scheduleEvaluation();
+        scheduleEvaluation(READY_DEBOUNCE_MILLIS);
     }
 
-    private void scheduleEvaluation() {
+    private void scheduleEvaluation(long delayMillis) {
         handler.removeCallbacks(evaluation);
-        handler.postDelayed(evaluation, DEBOUNCE_MILLIS);
+        handler.postDelayed(evaluation, delayMillis);
     }
 
     private void evaluateAndNotify() {

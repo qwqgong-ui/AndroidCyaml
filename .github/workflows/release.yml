@@ -22,13 +22,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Apply AndroidCyaml update patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git apply --check --whitespace=error-all patches/automation/androidcyaml-update.patch
-          git apply --whitespace=error-all patches/automation/androidcyaml-update.patch
-
       - name: Resolve and validate release version
         id: release
         shell: bash

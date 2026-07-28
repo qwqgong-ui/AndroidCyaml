@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "8f2101d46826bafdc541fdce3ec7676e59f80a4a"
+val mihomoCommit = "5323a94e12d2dde9a276adf5f73de441ff9d7bd5"
 val mihomoPatchFile = rootProject.file("patches/mihomo/0001-androidcyaml-platform-hooks.patch")
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
 val mihomoWrapperMain = rootProject.file("native/mihomo/main.go")
@@ -32,8 +32,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 136
-        versionName = "0.6.136"
+        versionCode = 138
+        versionName = "0.6.138"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -160,4 +160,13 @@ tasks.configureEach {
     if (name == "packageRelease" || name == "bundleRelease") {
         dependsOn(verifyReleaseSigning)
     }
+    if (name.startsWith("configureCMake")
+            || name.startsWith("buildCMake")
+            || name.contains("ExternalNativeBuild")) {
+        dependsOn(buildMihomo)
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(buildMihomo)
 }

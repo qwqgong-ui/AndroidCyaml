@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
-readonly MIHOMO_COMMIT="0d91f2a2f5334109c1d9cd17f14e525fc38c60bb"
+readonly MIHOMO_COMMIT="5323a94e12d2dde9a276adf5f73de441ff9d7bd5"
 readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo/0001-androidcyaml-platform-hooks.patch"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
 readonly BUILD_RECIPE_VERSION="17"
@@ -93,6 +93,19 @@ fi
 git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
+
+shopt -s nullglob
+mihomo_patches=("${SOURCE_DIR}"/patches/mihomo/*.patch)
+(( ${#mihomo_patches[@]} > 0 )) || {
+    echo "No external mihomo patches found at ${SOURCE_DIR}/patches/mihomo" >&2
+    exit 1
+}
+for patch in "${mihomo_patches[@]}"; do
+    git -C "${SOURCE_DIR}" apply --check --whitespace=error-all "${patch}"
+    git -C "${SOURCE_DIR}" apply --whitespace=error-all "${patch}"
+done
+git -C "${SOURCE_DIR}" diff --check
+git -C "${SOURCE_DIR}" add -A
 
 # AndroidCyaml owns this patch. The mihomo checkout remains pinned to a clean,
 # desktop-safe commit and is modified only inside the ignored build directory.
