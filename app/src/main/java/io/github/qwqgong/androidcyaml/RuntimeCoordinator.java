@@ -21,11 +21,14 @@ final class RuntimeCoordinator {
 
     private static final String TAG = "AndroidCyaml/Coordinator";
     private static final int ANDROID_17_API = 37;
+    private static final long IPV6_REBUILD_STABILIZATION_MILLIS = 750L;
     private static volatile RuntimeCoordinator instance;
 
     private final Context context;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Runnable ipv6Reconciliation =
+            () -> executor.execute(this::reconcileIpv6State);
     private final RuntimeStateBus stateBus = new RuntimeStateBus();
     private final MihomoFileStore fileStore;
     private final ConfigInstaller configInstaller;
@@ -390,16 +393,36 @@ final class RuntimeCoordinator {
         }
 
         boolean pathChanged = state.pathChangedFrom(previous);
+        refreshRuntimeForNetworkChange(previous, state, pathChanged);
         if (!state.available()) {
-            refreshRuntimeForNetworkChange(previous, state, pathChanged);
+            mainHandler.removeCallbacks(ipv6Reconciliation);
             stateBus.publish(stateBus.snapshot());
             return;
         }
 
         boolean targetIpv6 = settings.ipv6Enabled() && state.ipv6Usable();
         if (targetIpv6 == effectiveIpv6Enabled) {
-            refreshRuntimeForNetworkChange(previous, state, pathChanged);
+            mainHandler.removeCallbacks(ipv6Reconciliation);
             stateBus.publish(stateBus.snapshot());
+            return;
+        }
+
+        mainHandler.removeCallbacks(ipv6Reconciliation);
+        mainHandler.postDelayed(
+                ipv6Reconciliation,
+                IPV6_REBUILD_STABILIZATION_MILLIS
+        );
+        stateBus.publish(stateBus.snapshot());
+    }
+
+    private void reconcileIpv6State() {
+        Ipv6EnvironmentMonitor.State state = underlyingNetworkState;
+        if (!hasActiveService() || state == null || !state.available()) {
+            return;
+        }
+        RuntimeOverrideSettings settings = overrideStore.settings();
+        boolean targetIpv6 = settings.ipv6Enabled() && state.ipv6Usable();
+        if (targetIpv6 == effectiveIpv6Enabled) {
             return;
         }
 
@@ -467,6 +490,7 @@ final class RuntimeCoordinator {
     }
 
     private void cleanupAll() {
+        mainHandler.removeCallbacks(ipv6Reconciliation);
         networkMonitor.stop();
         closeRuntime();
         if (tunManager != null) {
