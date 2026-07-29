@@ -8,6 +8,7 @@ on:
     paths:
       - "app/build.gradle.kts"
       - "scripts/build_mihomo.sh"
+      - ".github/workflows/release.yml"
 
 permissions:
   contents: write
