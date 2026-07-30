@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "834c0f5078ea89e18596591038655fc4029b1186"
+val mihomoCommit = "73b359107894c383df8760e174689cb2fe6b52cc"
 val mihomoPatchFile = rootProject.file("patches/mihomo/0001-androidcyaml-platform-hooks.patch")
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
 val mihomoWrapperMain = rootProject.file("native/mihomo/main.go")
@@ -32,8 +32,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 143
-        versionName = "0.6.143"
+        versionCode = 144
+        versionName = "0.6.144"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
