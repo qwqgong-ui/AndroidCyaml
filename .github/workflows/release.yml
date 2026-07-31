@@ -2,6 +2,9 @@ name: Signed Android Release
 
 on:
   workflow_dispatch:
+  issues:
+    types:
+      - opened
   push:
     branches:
       - main
@@ -19,6 +22,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'issues' || github.event.issue.title == 'release: AndroidCyaml v0.6.146'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
