@@ -77,6 +77,7 @@ for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeValidate \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart \
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetTcpConcurrent \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning \
@@ -92,6 +93,7 @@ for symbol in \
     AndroidCyamlValidate \
     AndroidCyamlPrepareTun \
     AndroidCyamlStart \
+    AndroidCyamlSetTcpConcurrent \
     AndroidCyamlStop \
     AndroidCyamlNotifyNetworkChanged \
     AndroidCyamlIsRunning \

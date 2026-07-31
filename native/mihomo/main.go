@@ -255,6 +255,18 @@ func AndroidCyamlStart(
 	return respond(payload, nil)
 }
 
+//export AndroidCyamlSetTcpConcurrent
+func AndroidCyamlSetTcpConcurrent(enabledValue C.int) *C.char {
+	runtimeMu.Lock()
+	defer runtimeMu.Unlock()
+
+	if !active {
+		return respond(nil, errors.New("mihomo runtime is not active"))
+	}
+	dialer.SetTcpConcurrent(enabledValue != 0)
+	return respond(nil, nil)
+}
+
 //export AndroidCyamlStop
 func AndroidCyamlStop() *C.char {
 	runtimeMu.Lock()

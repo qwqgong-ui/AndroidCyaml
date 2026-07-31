@@ -14,6 +14,7 @@ interface IAppControl {
             boolean processMatching,
             boolean ipv6Enabled,
             String logLevel,
+            boolean adaptiveTcpConcurrent,
             boolean lanWebUiPublic,
             IOperationCallback callback
     );

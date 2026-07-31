@@ -24,6 +24,7 @@ final class RuntimeControlClient {
                 boolean ipv6Enabled,
                 boolean ipv6Effective,
                 String logLevel,
+                boolean adaptiveTcpConcurrent,
                 boolean lanWebUiPublic
         );
 
@@ -55,6 +56,7 @@ final class RuntimeControlClient {
                 boolean ipv6Enabled,
                 boolean ipv6Effective,
                 String logLevel,
+                boolean adaptiveTcpConcurrent,
                 boolean lanWebUiPublic
         ) {
             mainHandler.post(() -> listener.onRuntimeSnapshot(
@@ -69,6 +71,7 @@ final class RuntimeControlClient {
                     ipv6Enabled,
                     ipv6Effective,
                     logLevel,
+                    adaptiveTcpConcurrent,
                     lanWebUiPublic
             ));
         }
@@ -179,6 +182,7 @@ final class RuntimeControlClient {
             boolean processMatching,
             boolean ipv6Enabled,
             RuntimeLogLevel logLevel,
+            boolean adaptiveTcpConcurrent,
             boolean lanWebUiPublic,
             ResultCallback result
     ) {
@@ -195,6 +199,7 @@ final class RuntimeControlClient {
                     processMatching,
                     ipv6Enabled,
                     level.wireValue(),
+                    adaptiveTcpConcurrent,
                     lanWebUiPublic,
                     operationCallback(result)
             );

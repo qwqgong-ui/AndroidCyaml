@@ -31,6 +31,7 @@ final class RuntimeOverridesDialog {
             boolean ipv6Enabled,
             boolean ipv6Effective,
             RuntimeLogLevel currentLogLevel,
+            boolean currentAdaptiveTcpConcurrent,
             boolean currentLanWebUiPublic,
             int controllerPort,
             Listener listener
@@ -124,6 +125,17 @@ final class RuntimeOverridesDialog {
                         : context.getString(R.string.override_ipv6_disabled)
         ));
 
+        Switch adaptiveTcpConcurrent = switchView(
+                context,
+                R.string.override_adaptive_tcp_concurrent,
+                currentAdaptiveTcpConcurrent
+        );
+        content.addView(adaptiveTcpConcurrent, topSpaced(context));
+        content.addView(summary(
+                context,
+                context.getString(R.string.override_adaptive_tcp_concurrent_summary)
+        ), matchWidth());
+
         Switch lanWebUi = switchView(
                 context,
                 R.string.override_lan_webui_public,
@@ -163,6 +175,7 @@ final class RuntimeOverridesDialog {
                             logLevelIndex >= 0 && logLevelIndex < logLevels.length
                                     ? logLevels[logLevelIndex]
                                     : RuntimeLogLevel.WARNING,
+                            adaptiveTcpConcurrent.isChecked(),
                             lanWebUi.isChecked()
                     ));
                 })

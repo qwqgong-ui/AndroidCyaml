@@ -58,6 +58,8 @@
     <string name="override_ipv6_auto_disabled">IPv6 开关保持开启，但当前环境不可用；运行时已自动重载为 IPv4-only。</string>
     <string name="override_ipv6_pending_environment">应用后将按当前网络环境决定是否实际启用 IPv6。</string>
     <string name="override_ipv6_disabled">IPv6 已手动关闭，mihomo 和 Android TUN 均使用 IPv4-only。</string>
+    <string name="override_adaptive_tcp_concurrent">按网络自动 TCP 并发</string>
+    <string name="override_adaptive_tcp_concurrent_summary">开启后仅 Wi‑Fi 强制使用 tcp-concurrent: true，手机流量及其他网络强制使用 false；关闭后所有网络均强制使用 false。</string>
     <string name="override_lan_webui_public">向局域网公开 WebUI</string>
     <string name="override_lan_webui_local_running">当前监听 127.0.0.1:%1$d，仅本机可访问；鉴权使用 config.yaml 中的 secret。</string>
     <string name="override_lan_webui_local_pending">应用后监听 127.0.0.1，仅本机可访问；鉴权使用 config.yaml 中的 secret。</string>

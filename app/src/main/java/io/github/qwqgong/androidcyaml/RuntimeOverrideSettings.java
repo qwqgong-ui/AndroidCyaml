@@ -5,6 +5,7 @@ record RuntimeOverrideSettings(
         boolean processMatching,
         boolean ipv6Enabled,
         RuntimeLogLevel logLevel,
+        boolean adaptiveTcpConcurrent,
         boolean lanWebUiPublic
 ) {
     RuntimeOverrideSettings {
@@ -18,6 +19,7 @@ record RuntimeOverrideSettings(
                 true,
                 true,
                 RuntimeLogLevel.WARNING,
+                false,
                 false
         );
     }

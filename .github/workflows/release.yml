@@ -67,6 +67,20 @@ jobs:
           go-version: "1.26.x"
           cache: false
 
+      - name: Cache Go modules and pinned mihomo JNI output
+        if: steps.release.outputs.exists != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            app/src/main/jniLibs/arm64-v8a/libmihomo.so
+            app/src/main/cpp/generated/libmihomo.h
+            .third_party/mihomo.commit
+          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/main.go', 'patches/mihomo/*.patch') }}
+          restore-keys: |
+            ${{ runner.os }}-mihomo-go1.26-ndk29-
+
       - uses: android-actions/setup-android@v4
         if: steps.release.outputs.exists != 'true'
 
@@ -115,7 +129,7 @@ jobs:
           echo "ANDROID_SIGNING_KEY_ALIAS=${KEY_ALIAS}" >> "${GITHUB_ENV}"
           echo "ANDROID_SIGNING_KEY_PASSWORD=${KEY_PASSWORD}" >> "${GITHUB_ENV}"
 
-      - name: Build, lint and verify optimized release
+      - name: Build, lint and verify optimized release APK
         if: steps.release.outputs.exists != 'true'
         shell: bash
         run: |
@@ -124,7 +138,6 @@ jobs:
           ./gradlew \
             :app:testDebugUnitTest \
             :app:assembleRelease \
-            :app:bundleRelease \
             :app:lintRelease \
             --stacktrace 2>&1 | tee build-release.log || status=$?
           if (( status == 0 )); then
@@ -134,7 +147,7 @@ jobs:
           if (( status == 0 )); then
             bash scripts/verify_art_optimization.sh \
               app/build/outputs/apk/release/app-release.apk \
-              app/build/outputs/bundle/release/app-release.aab \
+              app/build/outputs/mapping/release/mapping.txt \
               2>&1 | tee -a build-release.log || status=$?
           fi
           if (( status != 0 )); then
@@ -154,24 +167,20 @@ jobs:
         run: |
           set -euo pipefail
           source_apk="app/build/outputs/apk/release/app-release.apk"
-          source_aab="app/build/outputs/bundle/release/app-release.aab"
           source_mapping="app/build/outputs/mapping/release/mapping.txt"
           source_symbols="app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip"
           release_apk="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk"
-          release_aab="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.aab"
           release_mapping="AndroidCyaml-v${RELEASE_VERSION}-mapping.txt"
           release_symbols="AndroidCyaml-v${RELEASE_VERSION}-native-debug-symbols.zip"
           "${ANDROID_SDK_ROOT}/build-tools/37.0.0/apksigner" \
             verify --verbose --print-certs "${source_apk}"
           "${ANDROID_SDK_ROOT}/build-tools/37.0.0/zipalign" \
             -c -P 16 -v 4 "${source_apk}"
-          jarsigner -verify "${source_aab}"
           [[ -s "${source_mapping}" && -s "${source_symbols}" ]]
           cp "${source_apk}" "${release_apk}"
-          cp "${source_aab}" "${release_aab}"
           cp "${source_mapping}" "${release_mapping}"
           cp "${source_symbols}" "${release_symbols}"
-          sha256sum "${release_apk}" "${release_aab}" | tee SHA256SUMS
+          sha256sum "${release_apk}" | tee SHA256SUMS
 
       - name: Upload signed release artifact
         if: steps.release.outputs.exists != 'true'
@@ -180,7 +189,6 @@ jobs:
           name: AndroidCyaml-v${{ steps.release.outputs.version }}-signed
           path: |
             AndroidCyaml-v${{ steps.release.outputs.version }}-arm64-v8a.apk
-            AndroidCyaml-v${{ steps.release.outputs.version }}-arm64-v8a.aab
             AndroidCyaml-v${{ steps.release.outputs.version }}-mapping.txt
             AndroidCyaml-v${{ steps.release.outputs.version }}-native-debug-symbols.zip
             SHA256SUMS
@@ -198,7 +206,6 @@ jobs:
           set -euo pipefail
           gh release create "${RELEASE_TAG}" \
             "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk" \
-            "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.aab" \
             "SHA256SUMS" \
             --target "${GITHUB_SHA}" \
             --title "AndroidCyaml v${RELEASE_VERSION}" \

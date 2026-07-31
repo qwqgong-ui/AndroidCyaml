@@ -65,6 +65,10 @@ final class MihomoNative {
         return payload.optString("controllerSecret", "");
     }
 
+    static void setTcpConcurrent(boolean enabled) throws IOException {
+        requireSuccess(nativeSetTcpConcurrent(enabled));
+    }
+
     static void stop() throws IOException {
         requireSuccess(nativeStop());
     }
@@ -120,6 +124,8 @@ final class MihomoNative {
             boolean lanWebUiPublic,
             NativePlatformCallbacks callbacks
     );
+
+    private static native String nativeSetTcpConcurrent(boolean enabled);
 
     private static native String nativeStop();
 

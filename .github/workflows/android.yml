@@ -29,6 +29,19 @@ jobs:
           go-version: "1.26.x"
           cache: false
 
+      - name: Cache Go modules and pinned mihomo JNI output
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            app/src/main/jniLibs/arm64-v8a/libmihomo.so
+            app/src/main/cpp/generated/libmihomo.h
+            .third_party/mihomo.commit
+          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/main.go', 'patches/mihomo/*.patch') }}
+          restore-keys: |
+            ${{ runner.os }}-mihomo-go1.26-ndk29-
+
       - uses: android-actions/setup-android@v4
 
       - name: Install Android 17 SDK and NDK
@@ -53,7 +66,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Build and verify optimized artifacts
+      - name: Build and verify optimized APK
         shell: bash
         run: |
           set -o pipefail
@@ -61,7 +74,6 @@ jobs:
           ./gradlew \
             :app:testDebugUnitTest \
             :app:assembleOptimized \
-            :app:bundleOptimized \
             :app:lintOptimized \
             --stacktrace 2>&1 | tee build.log || status=$?
           if (( status == 0 )); then
@@ -72,7 +84,7 @@ jobs:
           if (( status == 0 )); then
             bash scripts/verify_art_optimization.sh \
               app/build/outputs/apk/optimized/app-optimized.apk \
-              app/build/outputs/bundle/optimized/app-optimized.aab \
+              app/build/outputs/mapping/optimized/mapping.txt \
               2>&1 | tee -a build.log || status=$?
           fi
           if (( status != 0 )); then
@@ -97,7 +109,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: AndroidCyaml-optimized-test
-          path: |
-            app/build/outputs/apk/optimized/app-optimized.apk
-            app/build/outputs/bundle/optimized/app-optimized.aab
+          path: app/build/outputs/apk/optimized/app-optimized.apk
           if-no-files-found: error

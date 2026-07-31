@@ -305,6 +305,17 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetTcpConcurrent(
+        JNIEnv* env,
+        jclass,
+        jboolean enabled
+) {
+    return stringFromNative(env, AndroidCyamlSetTcpConcurrent(
+            enabled == JNI_TRUE ? 1 : 0
+    ));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop(
         JNIEnv* env,
         jclass

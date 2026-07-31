@@ -41,6 +41,7 @@ final class RuntimeCoordinator {
     private volatile MihomoRuntime runtime;
     private volatile Ipv6EnvironmentMonitor.State underlyingNetworkState;
     private volatile boolean effectiveIpv6Enabled;
+    private volatile boolean effectiveTcpConcurrent;
 
     private RuntimeCoordinator(Context context) {
         this.context = context.getApplicationContext();
@@ -52,6 +53,8 @@ final class RuntimeCoordinator {
         underlyingNetworkState = networkMonitor.currentState();
         effectiveIpv6Enabled =
                 settings.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
+        effectiveTcpConcurrent =
+                settings.adaptiveTcpConcurrent() && underlyingNetworkState.wifi();
     }
 
     static RuntimeCoordinator getInstance(Context context) {
@@ -144,6 +147,7 @@ final class RuntimeCoordinator {
             boolean processMatching,
             boolean ipv6Enabled,
             String logLevelValue,
+            boolean adaptiveTcpConcurrent,
             boolean lanWebUiPublic,
             OperationCallback callback
     ) {
@@ -162,6 +166,7 @@ final class RuntimeCoordinator {
                         processMatching,
                         ipv6Enabled,
                         logLevel,
+                        adaptiveTcpConcurrent,
                         lanWebUiPublic
                 ),
                 callback
@@ -208,17 +213,21 @@ final class RuntimeCoordinator {
                     settings.processMatching(),
                     settings.ipv6Enabled(),
                     settings.logLevel(),
+                    settings.adaptiveTcpConcurrent(),
                     false
             );
             overrideStore.setSettings(settings);
         }
         boolean requestedIpv6 =
                 settings.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
+        boolean requestedTcpConcurrent =
+                settings.adaptiveTcpConcurrent() && underlyingNetworkState.wifi();
         String localNetworkDetail = localNetworkFallback
                 ? " · 局域网权限未授权，WebUI 已恢复本机"
                 : "";
         try {
-            return startRuntime(settings, requestedIpv6) + localNetworkDetail;
+            return startRuntime(settings, requestedIpv6, requestedTcpConcurrent)
+                    + localNetworkDetail;
         } catch (IOException | InterruptedException firstFailure) {
             if (!requestedIpv6) {
                 throw firstFailure;
@@ -229,7 +238,7 @@ final class RuntimeCoordinator {
             }
             Log.w(TAG, "IPv6 runtime startup failed; retrying with IPv6 disabled", firstFailure);
             try {
-                return startRuntime(settings, false)
+                return startRuntime(settings, false, requestedTcpConcurrent)
                         + " · IPv6 自动关闭"
                         + localNetworkDetail;
             } catch (IOException | InterruptedException fallbackFailure) {
@@ -247,7 +256,8 @@ final class RuntimeCoordinator {
 
     private String startRuntime(
             RuntimeOverrideSettings settings,
-            boolean ipv6Enabled
+            boolean ipv6Enabled,
+            boolean tcpConcurrentEnabled
     ) throws IOException, InterruptedException {
         if (!hasActiveService()) {
             throw new IOException("Android VPN 服务尚未初始化");
@@ -258,7 +268,8 @@ final class RuntimeCoordinator {
                 tunManager,
                 platformCallbacks,
                 settings,
-                ipv6Enabled
+                ipv6Enabled,
+                tcpConcurrentEnabled
         );
         runtime = candidate;
         try {
@@ -267,6 +278,7 @@ final class RuntimeCoordinator {
                 throw new IOException("mihomo 未建立 Android TUN");
             }
             effectiveIpv6Enabled = ipv6Enabled;
+            effectiveTcpConcurrent = tcpConcurrentEnabled;
             return runningDetail;
         } catch (IOException | InterruptedException exception) {
             candidate.close();
@@ -332,11 +344,18 @@ final class RuntimeCoordinator {
         if (!hasActiveService()) {
             effectiveIpv6Enabled =
                     requested.ipv6Enabled() && underlyingNetworkState.ipv6Usable();
+            effectiveTcpConcurrent =
+                    requested.adaptiveTcpConcurrent() && underlyingNetworkState.wifi();
             stateBus.publish(stateBus.snapshot());
             postOperation(
                     callback,
                     true,
-                    describeOverrides(requested, effectiveIpv6Enabled, 0)
+                    describeOverrides(
+                            requested,
+                            effectiveIpv6Enabled,
+                            effectiveTcpConcurrent,
+                            0
+                    )
             );
             return;
         }
@@ -353,6 +372,7 @@ final class RuntimeCoordinator {
                     describeOverrides(
                             applied,
                             effectiveIpv6Enabled,
+                            effectiveTcpConcurrent,
                             current == null ? 0 : current.controllerPort()
                     )
             );
@@ -386,12 +406,16 @@ final class RuntimeCoordinator {
         }
         underlyingNetworkState = state;
         RuntimeOverrideSettings settings = overrideStore.settings();
+        boolean targetTcpConcurrent =
+                settings.adaptiveTcpConcurrent() && state.wifi();
         if (!hasActiveService()) {
             effectiveIpv6Enabled = settings.ipv6Enabled() && state.ipv6Usable();
+            effectiveTcpConcurrent = targetTcpConcurrent;
             stateBus.publish(stateBus.snapshot());
             return;
         }
 
+        applyTcpConcurrentForNetwork(targetTcpConcurrent);
         boolean pathChanged = state.pathChangedFrom(previous);
         refreshRuntimeForNetworkChange(previous, state, pathChanged);
         if (!state.available()) {
@@ -413,6 +437,29 @@ final class RuntimeCoordinator {
                 IPV6_REBUILD_STABILIZATION_MILLIS
         );
         stateBus.publish(stateBus.snapshot());
+    }
+
+    private void applyTcpConcurrentForNetwork(boolean targetEnabled) {
+        if (targetEnabled == effectiveTcpConcurrent) {
+            return;
+        }
+        MihomoRuntime current = runtime;
+        if (current == null) {
+            return;
+        }
+        try {
+            current.setTcpConcurrent(targetEnabled);
+            effectiveTcpConcurrent = targetEnabled;
+            Log.i(
+                    TAG,
+                    targetEnabled
+                            ? "Enabled tcp-concurrent for Wi-Fi"
+                            : "Disabled tcp-concurrent outside Wi-Fi"
+            );
+        } catch (IOException exception) {
+            // A best-effort dialing optimization must not tear down the VPN.
+            Log.w(TAG, "Unable to update tcp-concurrent after network change", exception);
+        }
     }
 
     private void reconcileIpv6State() {
@@ -466,7 +513,9 @@ final class RuntimeCoordinator {
     private static String networkDescription(Ipv6EnvironmentMonitor.State state) {
         return state == null || !state.available()
                 ? "unavailable"
-                : state.networkHandle() + (state.ipv6Usable() ? "/dual-stack" : "/IPv4");
+                : state.networkHandle()
+                        + (state.wifi() ? "/Wi-Fi" : "/non-Wi-Fi")
+                        + (state.ipv6Usable() ? "/dual-stack" : "/IPv4");
     }
 
     private boolean hasActiveService() {
@@ -499,6 +548,7 @@ final class RuntimeCoordinator {
         }
         platformCallbacks = null;
         effectiveIpv6Enabled = false;
+        effectiveTcpConcurrent = false;
     }
 
     private void closeRuntime() {
@@ -534,6 +584,7 @@ final class RuntimeCoordinator {
     private static String describeOverrides(
             RuntimeOverrideSettings settings,
             boolean ipv6Effective,
+            boolean tcpConcurrentEffective,
             int controllerPort
     ) {
         String stack = switch (settings.tunStack()) {
@@ -550,6 +601,14 @@ final class RuntimeCoordinator {
         } else {
             ipv6 = "IPv6 已开启，但当前环境不可用，已自动使用 IPv4";
         }
+        String tcpConcurrent;
+        if (!settings.adaptiveTcpConcurrent()) {
+            tcpConcurrent = "TCP 并发已全局关闭";
+        } else if (tcpConcurrentEffective) {
+            tcpConcurrent = "TCP 并发已在 Wi-Fi 开启";
+        } else {
+            tcpConcurrent = "TCP 并发已在当前非 Wi-Fi 网络关闭";
+        }
         String logLevel = "日志 " + settings.logLevel().wireValue();
         String webUi = settings.lanWebUiPublic()
                 ? "WebUI 监听 0.0.0.0"
@@ -557,7 +616,8 @@ final class RuntimeCoordinator {
         if (controllerPort > 0) {
             webUi += ":" + controllerPort;
         }
-        return stack + "；" + process + "；" + ipv6 + "；" + logLevel + "；" + webUi;
+        return stack + "；" + process + "；" + ipv6 + "；" + tcpConcurrent
+                + "；" + logLevel + "；" + webUi;
     }
 
     private static String usefulMessage(Throwable throwable) {

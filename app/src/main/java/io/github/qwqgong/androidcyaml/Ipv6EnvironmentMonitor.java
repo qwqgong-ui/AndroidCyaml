@@ -30,18 +30,24 @@ final class Ipv6EnvironmentMonitor {
         void onUnderlyingNetworkChanged(State state);
     }
 
-    record State(long networkHandle, String linkSignature, boolean ipv6Usable) {
+    record State(
+            long networkHandle,
+            String linkSignature,
+            boolean ipv6Usable,
+            boolean wifi
+    ) {
         State {
             if (networkHandle == 0L) {
                 linkSignature = "";
                 ipv6Usable = false;
+                wifi = false;
             } else {
                 linkSignature = linkSignature == null ? "" : linkSignature;
             }
         }
 
         static State unavailable() {
-            return new State(0L, "", false);
+            return new State(0L, "", false, false);
         }
 
         boolean available() {
@@ -310,7 +316,8 @@ final class Ipv6EnvironmentMonitor {
         return new State(
                 snapshot.network().getNetworkHandle(),
                 linkSignature(properties),
-                ipv6Usable
+                ipv6Usable,
+                snapshot.capabilities().hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
         );
     }
 

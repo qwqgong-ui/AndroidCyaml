@@ -14,6 +14,7 @@ final class MihomoRuntime implements AutoCloseable {
     private final NativePlatformCallbacks platformCallbacks;
     private final RuntimeOverrideSettings settings;
     private final boolean ipv6Enabled;
+    private final boolean tcpConcurrentEnabled;
 
     private MihomoController controller;
     private boolean started;
@@ -23,13 +24,15 @@ final class MihomoRuntime implements AutoCloseable {
             AndroidTunManager tunManager,
             NativePlatformCallbacks platformCallbacks,
             RuntimeOverrideSettings settings,
-            boolean ipv6Enabled
+            boolean ipv6Enabled,
+            boolean tcpConcurrentEnabled
     ) {
         this.fileStore = fileStore;
         this.tunManager = tunManager;
         this.platformCallbacks = platformCallbacks;
         this.settings = settings == null ? RuntimeOverrideSettings.defaults() : settings;
         this.ipv6Enabled = ipv6Enabled;
+        this.tcpConcurrentEnabled = tcpConcurrentEnabled;
     }
 
     String start() throws IOException, InterruptedException {
@@ -50,6 +53,7 @@ final class MihomoRuntime implements AutoCloseable {
                     platformCallbacks
             );
             nativeAcceptedDescriptor = true;
+            MihomoNative.setTcpConcurrent(tcpConcurrentEnabled);
             controller.setSecret(controllerSecret);
             controller.awaitReady(90, TimeUnit.SECONDS);
             controller.awaitTun(10, TimeUnit.SECONDS);
@@ -59,6 +63,7 @@ final class MihomoRuntime implements AutoCloseable {
                     + " · " + stackDetail(settings.tunStack())
                     + (settings.processMatching() ? " · 进程匹配" : " · 不匹配进程")
                     + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
+                    + (tcpConcurrentEnabled ? " · TCP 并发" : " · TCP 并发关闭")
                     + " · 日志 " + settings.logLevel().wireValue()
                     + " · WebUI " + controller.listenerAddress()
                     + " · zashboard " + BuildConfig.ZASHBOARD_VERSION;
@@ -89,6 +94,12 @@ final class MihomoRuntime implements AutoCloseable {
 
     int trimRebuildableCaches() {
         return MihomoNative.trimMemory();
+    }
+
+    void setTcpConcurrent(boolean enabled) throws IOException {
+        if (started && MihomoNative.isRunning()) {
+            MihomoNative.setTcpConcurrent(enabled);
+        }
     }
 
     void onUnderlyingNetworkChanged() throws IOException {
