@@ -41,21 +41,23 @@ public final class NetworkAddressParserTest {
     }
 
     @Test
-    public void underlyingStateSeparatesPathAndIpv6Changes() {
+    public void underlyingStateSeparatesPathIpv6AndTransportChanges() {
         Ipv6EnvironmentMonitor.State wifiIpv4 =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0", false);
+                new Ipv6EnvironmentMonitor.State(100L, "wlan0", false, true);
         Ipv6EnvironmentMonitor.State wifiIpv6 =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0", true);
+                new Ipv6EnvironmentMonitor.State(100L, "wlan0", true, true);
         Ipv6EnvironmentMonitor.State mobileIpv6 =
-                new Ipv6EnvironmentMonitor.State(200L, "rmnet_data0", true);
+                new Ipv6EnvironmentMonitor.State(200L, "rmnet_data0", true, false);
         Ipv6EnvironmentMonitor.State wifiDnsChanged =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0-new-dns", true);
+                new Ipv6EnvironmentMonitor.State(100L, "wlan0-new-dns", true, true);
 
         assertFalse(wifiIpv6.pathChangedFrom(wifiIpv4));
         assertTrue(wifiDnsChanged.pathChangedFrom(wifiIpv6));
         assertTrue(mobileIpv6.pathChangedFrom(wifiIpv6));
         assertTrue(Ipv6EnvironmentMonitor.State.unavailable().pathChangedFrom(wifiIpv6));
         assertTrue(wifiIpv4.available());
+        assertTrue(wifiIpv6.wifi());
+        assertFalse(mobileIpv6.wifi());
         assertFalse(Ipv6EnvironmentMonitor.State.unavailable().available());
     }
 }
