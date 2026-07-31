@@ -157,7 +157,7 @@ val buildMihomo by tasks.registering(Exec::class) {
 }
 
 tasks.configureEach {
-    if (name == "packageRelease" || name == "bundleRelease") {
+    if (name == "packageRelease") {
         dependsOn(verifyReleaseSigning)
     }
     if (name.startsWith("configureCMake")
