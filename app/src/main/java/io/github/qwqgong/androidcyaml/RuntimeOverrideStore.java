@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 
 final class RuntimeOverrideStore {
     private static final String PREFERENCES = "androidcyaml_runtime_overrides";
-    private static final String TUN_STACK = "tun_stack_mode";
     private static final String PROCESS_MATCHING = "process_matching";
     private static final String IPV6_ENABLED = "ipv6_enabled";
     private static final String LOG_LEVEL = "log_level";
@@ -22,12 +21,6 @@ final class RuntimeOverrideStore {
     }
 
     RuntimeOverrideSettings settings() {
-        TunStackMode stack;
-        try {
-            stack = TunStackMode.fromWireValue(preferences.getString(TUN_STACK, "system"));
-        } catch (IllegalArgumentException ignored) {
-            stack = TunStackMode.SYSTEM;
-        }
         RuntimeLogLevel logLevel;
         try {
             logLevel = RuntimeLogLevel.fromWireValue(
@@ -37,7 +30,7 @@ final class RuntimeOverrideStore {
             logLevel = RuntimeLogLevel.WARNING;
         }
         return new RuntimeOverrideSettings(
-                stack,
+                TunStackMode.SYSTEM,
                 preferences.getBoolean(PROCESS_MATCHING, true),
                 preferences.getBoolean(IPV6_ENABLED, true),
                 logLevel,
@@ -51,12 +44,12 @@ final class RuntimeOverrideStore {
                 ? RuntimeOverrideSettings.defaults()
                 : settings;
         boolean persisted = preferences.edit()
-                .putString(TUN_STACK, value.tunStack().wireValue())
                 .putBoolean(PROCESS_MATCHING, value.processMatching())
                 .putBoolean(IPV6_ENABLED, value.ipv6Enabled())
                 .putString(LOG_LEVEL, value.logLevel().wireValue())
                 .putBoolean(ADAPTIVE_TCP_CONCURRENT, value.adaptiveTcpConcurrent())
                 .putBoolean(LAN_WEB_UI_PUBLIC, value.lanWebUiPublic())
+                .remove("tun_stack_mode")
                 .remove("tun_stack")
                 .commit();
         if (!persisted) {
