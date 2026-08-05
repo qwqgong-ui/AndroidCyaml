@@ -6,7 +6,7 @@ readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="9c3f86d7891e6f243da2b306e3d79b7519ebc639"
 readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo/0001-androidcyaml-platform-hooks.patch"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="17"
+readonly BUILD_RECIPE_VERSION="18"
 readonly NDK_VERSION="29.0.14206865"
 readonly NATIVE_API="35"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
@@ -156,7 +156,7 @@ readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X 
         go build \
         -mod=mod \
         -buildmode=c-shared \
-        -tags with_gvisor \
+        -tags "with_gvisor no_tailscale no_zerotier" \
         -trimpath \
         -ldflags "${LDFLAGS}" \
         -o "${TEMP_DIR}/libmihomo.so" \
