@@ -21,8 +21,9 @@ VPN 服务进程。
 
 ## Core isolation
 
-AndroidCyaml 固定一个 mihomo 提交，并在自己的临时构建目录中应用 Android 平台补丁。构建不会把
-JNI、VpnService 或运行时覆写代码写回 mihomo checkout。
+AndroidCyaml 固定 `qwqgong-ui/mihomo:Alpha` 的下游提交，并在自己的临时构建目录中应用 Android
+平台补丁。该下游分支已经与 `MetaCubeX/mihomo:Alpha` 分化：除协议模块裁剪外，还保留 UDP 域名
+原样转发补丁。构建不会把 JNI、VpnService 或运行时覆写代码写回 mihomo checkout。
 
 构建应用的补丁为：
 
@@ -60,6 +61,16 @@ CGO_ENABLED=1
 ```
 
 不启用 `with_gvisor`，因此 APK 内核不包含 gVisor/mixed TUN 栈；Tailscale 与 ZeroTier 出站也被裁剪。
+
+## UDP domain forwarding
+
+下游 mihomo 为可远端解析的代理出站设置 UDP remote-DNS 能力。当 metadata 中仍有原始域名时，
+`ResolveUDP` 不会强制填充 `DstIP`，UOT、XUDP 或原生 UDP 封装会继续携带 FQDN 与端口。只有不支持
+域名目标的出站才退回本地解析。
+
+因此 AndroidCyaml 从 fake-ip 映射或 sniffer 获得的 UDP 域名可以一直保留到代理服务器，由服务器侧
+DNS 按代理出口位置解析。该语义来自 `qwqgong-ui/mihomo` 的下游补丁，并非上游
+`MetaCubeX/mihomo` 当前默认行为；后续同步上游时必须继续重放并验证该补丁。
 
 ## Native library relationship
 
