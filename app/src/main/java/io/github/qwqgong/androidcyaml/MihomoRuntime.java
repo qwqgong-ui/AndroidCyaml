@@ -66,7 +66,7 @@ final class MihomoRuntime implements AutoCloseable {
                     + (tcpConcurrentEnabled ? " · TCP 并发" : " · TCP 并发关闭")
                     + " · 日志 " + settings.logLevel().wireValue()
                     + " · WebUI " + controller.listenerAddress()
-                    + " · zashboard " + BuildConfig.ZASHBOARD_VERSION;
+                    + " · zashboard " + fileStore.dashboardVersion();
         } catch (IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();

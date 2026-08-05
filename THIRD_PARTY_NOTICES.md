@@ -28,17 +28,26 @@ disabled GSO so the system stack has the adjacent addresses required by its TCP 
 ## zashboard
 
 - Project: <https://github.com/Zephyruso/zashboard>
-- Release: `v3.15.0`, asset `dist-no-fonts.zip`
-- Release archive SHA-256: `403b351d3663f5fe65db053cb2f3dc980108d8f86e8c6968d56164d3452592e1`
+- Source selection: latest stable GitHub Release, exact asset `dist-no-fonts.zip`
+- Integrity: SHA-256 digest returned for that release asset by the GitHub Releases API
 - License: MIT
 - Local license copy: [`LICENSES/zashboard-MIT.txt`](LICENSES/zashboard-MIT.txt)
 
-The unmodified release files are stored under `app/src/main/assets/zashboard` and served only from
-mihomo's loopback controller.
+Before every build, [`scripts/fetch_zashboard.sh`](scripts/fetch_zashboard.sh) resolves the latest stable
+release, selects only the no-font archive, verifies its release digest, and replaces
+`app/src/main/assets/zashboard`. The resolved release tag and asset ID are recorded in
+`app/src/main/assets/zashboard.version`. The unmodified files are served only from mihomo's loopback
+controller.
 
 ## MetaCubeX meta-rules-dat
 
 - Project: <https://github.com/MetaCubeX/meta-rules-dat>
-- Pinned data commit: `ab44fa37df7a2939806042c20af3a0bfd07152ea`
-- Bundled files: `GeoIP.dat`, `GeoSite.dat`
+- Source selection: latest GitHub Release
+- Bundled assets: `geoip-lite.dat` installed as `GeoIP.dat`, and full `geosite.dat` installed as `GeoSite.dat`
+- Integrity: SHA-256 digests returned for both release assets by the GitHub Releases API
 - License: GPL-3.0 (the repository root [`LICENSE`](LICENSE) contains the license text)
+
+Before every build, [`scripts/fetch_geodata.sh`](scripts/fetch_geodata.sh) resolves the latest release,
+verifies both assets, and replaces `app/src/main/assets/geodata`. The release ID and exact asset IDs are
+recorded in `app/src/main/assets/geodata.version` so an upgraded APK replaces the previously installed
+GeoIP and GeoSite files.

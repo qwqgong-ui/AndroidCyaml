@@ -18,6 +18,9 @@ import java.nio.file.StandardCopyOption;
 final class MihomoFileStore {
     static final int MAX_CONFIG_BYTES = 32 * 1024 * 1024;
 
+    private static final String ZASHBOARD_VERSION_ASSET = "zashboard.version";
+    private static final String GEODATA_VERSION_ASSET = "geodata.version";
+
     private final Context context;
 
     MihomoFileStore(Context context) {
@@ -35,12 +38,15 @@ final class MihomoFileStore {
             copyAssetFile("default-config.yaml", config);
         }
         makeConfigOwnerReadWrite(config);
-        copyAssetFileIfMissing("geodata/GeoIP.dat", new File(home, "GeoIP.dat"));
-        copyAssetFileIfMissing("geodata/GeoSite.dat", new File(home, "GeoSite.dat"));
+        ensureGeodata(home);
 
         File ui = new File(home, "ui");
         ensureDashboard(home, ui);
         return new MihomoPaths(home, config, ui);
+    }
+
+    String dashboardVersion() throws IOException {
+        return displayVersion(requiredAssetVersion(ZASHBOARD_VERSION_ASSET));
     }
 
     void makeConfigOwnerReadWrite(File config) throws IOException {
@@ -79,11 +85,37 @@ final class MihomoFileStore {
         Files.deleteIfExists(file.toPath());
     }
 
+    private void ensureGeodata(File home) throws IOException {
+        String bundledVersion = requiredAssetVersion(GEODATA_VERSION_ASSET);
+        File marker = new File(home, ".androidcyaml-geodata-version");
+        File geoIp = new File(home, "GeoIP.dat");
+        File geoSite = new File(home, "GeoSite.dat");
+        String installedVersion = marker.isFile() ? readText(marker).trim() : "";
+        if (bundledVersion.equals(installedVersion) && geoIp.isFile() && geoSite.isFile()) {
+            return;
+        }
+
+        File geoIpStaging = new File(home, "GeoIP.dat.installing");
+        File geoSiteStaging = new File(home, "GeoSite.dat.installing");
+        deleteIfExists(geoIpStaging);
+        deleteIfExists(geoSiteStaging);
+        try {
+            copyAssetFile("geodata/GeoIP.dat", geoIpStaging);
+            copyAssetFile("geodata/GeoSite.dat", geoSiteStaging);
+            moveReplacing(geoIpStaging, geoIp);
+            moveReplacing(geoSiteStaging, geoSite);
+            writeText(marker, bundledVersion);
+        } finally {
+            deleteIfExists(geoIpStaging);
+            deleteIfExists(geoSiteStaging);
+        }
+    }
+
     private void ensureDashboard(File home, File ui) throws IOException {
+        String bundledVersion = requiredAssetVersion(ZASHBOARD_VERSION_ASSET);
         File marker = new File(ui, ".androidcyaml-version");
         String installedVersion = marker.isFile() ? readText(marker).trim() : "";
-        if (BuildConfig.ZASHBOARD_VERSION.equals(installedVersion)
-                && new File(ui, "index.html").isFile()) {
+        if (bundledVersion.equals(installedVersion) && new File(ui, "index.html").isFile()) {
             return;
         }
 
@@ -95,7 +127,7 @@ final class MihomoFileStore {
             throw new IOException("无法创建面板暂存目录");
         }
         copyAssetTree("zashboard", staging);
-        writeText(new File(staging, ".androidcyaml-version"), BuildConfig.ZASHBOARD_VERSION);
+        writeText(new File(staging, ".androidcyaml-version"), bundledVersion);
         if (ui.exists()) {
             moveReplacing(ui, previous);
         }
@@ -110,9 +142,17 @@ final class MihomoFileStore {
         deleteRecursively(previous);
     }
 
-    private void copyAssetFileIfMissing(String assetPath, File destination) throws IOException {
-        if (!destination.isFile()) {
-            copyAssetFile(assetPath, destination);
+    private String requiredAssetVersion(String assetPath) throws IOException {
+        String version = readAssetText(assetPath).trim();
+        if (version.isEmpty()) {
+            throw new IOException("资源版本文件为空：" + assetPath);
+        }
+        return version;
+    }
+
+    private String readAssetText(String assetPath) throws IOException {
+        try (InputStream input = context.getAssets().open(assetPath)) {
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 
@@ -145,6 +185,11 @@ final class MihomoFileStore {
             }
             output.getFD().sync();
         }
+    }
+
+    private static String displayVersion(String versionToken) {
+        int separator = versionToken.indexOf('@');
+        return separator <= 0 ? versionToken : versionToken.substring(0, separator);
     }
 
     private static String readText(File file) throws IOException {

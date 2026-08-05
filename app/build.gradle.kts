@@ -8,8 +8,6 @@ val mihomoCommit = "2e5b53425d6e126cebe1121922fdafd1e99ff847"
 val mihomoPatchFile = rootProject.file("patches/mihomo/0001-androidcyaml-platform-hooks.patch")
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
 val mihomoWrapperMain = rootProject.file("native/mihomo/main.go")
-val zashboardVersion = "v3.15.0"
-val geodataCommit = "ab44fa37df7a2939806042c20af3a0bfd07152ea"
 val androidNdkVersion = "29.0.14206865"
 
 val releaseStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE")
@@ -48,8 +46,6 @@ android {
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
         buildConfigField("String", "MIHOMO_PATCH_SET", "\"${mihomoPatchFile.name}\"")
-        buildConfigField("String", "ZASHBOARD_VERSION", "\"$zashboardVersion\"")
-        buildConfigField("String", "GEODATA_COMMIT", "\"$geodataCommit\"")
     }
 
     buildFeatures {
@@ -137,6 +133,24 @@ val verifyReleaseSigning by tasks.registering {
     }
 }
 
+val fetchGeodata by tasks.registering(Exec::class) {
+    group = "build setup"
+    description = "Fetch latest MetaCubeX geoip-lite.dat and geosite.dat release assets"
+    workingDir(rootProject.projectDir)
+    commandLine("bash", "scripts/fetch_geodata.sh")
+    inputs.file(rootProject.file("scripts/fetch_geodata.sh"))
+    outputs.upToDateWhen { false }
+}
+
+val fetchZashboard by tasks.registering(Exec::class) {
+    group = "build setup"
+    description = "Fetch latest zashboard dist-no-fonts.zip release asset"
+    workingDir(rootProject.projectDir)
+    commandLine("bash", "scripts/fetch_zashboard.sh")
+    inputs.file(rootProject.file("scripts/fetch_zashboard.sh"))
+    outputs.upToDateWhen { false }
+}
+
 val mihomoLibrary = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libmihomo.so",
 )
@@ -168,5 +182,5 @@ tasks.configureEach {
 }
 
 tasks.named("preBuild") {
-    dependsOn(buildMihomo)
+    dependsOn(fetchGeodata, fetchZashboard, buildMihomo)
 }
