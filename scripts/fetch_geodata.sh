@@ -4,7 +4,6 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly RELEASE_API="https://api.github.com/repos/MetaCubeX/meta-rules-dat/releases/latest"
 readonly GEOIP_ASSET="geoip-lite.dat"
-readonly GEOSITE_ASSET="geosite.dat"
 readonly ASSETS_ROOT="${ROOT_DIR}/app/src/main/assets"
 readonly DESTINATION="${ASSETS_ROOT}/geodata"
 readonly VERSION_FILE="${ASSETS_ROOT}/geodata.version"
@@ -31,46 +30,51 @@ curl --fail --silent --show-error --location --retry 3 \
     "${RELEASE_API}"
 
 mapfile -t release_metadata < <(
-    python3 - "${TEMP_DIR}/release.json" "${GEOIP_ASSET}" "${GEOSITE_ASSET}" <<'PY'
+    python3 - "${TEMP_DIR}/release.json" "${GEOIP_ASSET}" <<'PY'
 import json
 import re
 import sys
 
-path, *required_names = sys.argv[1:]
+path, required_name = sys.argv[1:]
 with open(path, "r", encoding="utf-8") as handle:
     release = json.load(handle)
 
-assets = {asset.get("name"): asset for asset in release.get("assets", [])}
 release_id = release.get("id")
 if not isinstance(release_id, int):
     raise SystemExit("latest MetaCubeX release has no numeric id")
-print(release_id)
 
-for name in required_names:
-    asset = assets.get(name)
-    if asset is None:
-        raise SystemExit(f"latest MetaCubeX release is missing {name}")
-    asset_id = asset.get("id")
-    url = asset.get("browser_download_url")
-    digest = asset.get("digest") or ""
-    if not isinstance(asset_id, int) or not isinstance(url, str):
-        raise SystemExit(f"invalid release metadata for {name}")
-    match = re.fullmatch(r"sha256:([0-9a-fA-F]{64})", digest)
-    if match is None:
-        raise SystemExit(f"latest MetaCubeX release has no SHA-256 digest for {name}")
-    print(f"{asset_id}\t{url}\t{match.group(1).lower()}")
+asset = next(
+    (candidate for candidate in release.get("assets", [])
+     if candidate.get("name") == required_name),
+    None,
+)
+if asset is None:
+    raise SystemExit(f"latest MetaCubeX release is missing {required_name}")
+
+asset_id = asset.get("id")
+url = asset.get("browser_download_url")
+digest = asset.get("digest") or ""
+if not isinstance(asset_id, int) or not isinstance(url, str):
+    raise SystemExit(f"invalid release metadata for {required_name}")
+match = re.fullmatch(r"sha256:([0-9a-fA-F]{64})", digest)
+if match is None:
+    raise SystemExit(
+        f"latest MetaCubeX release has no SHA-256 digest for {required_name}"
+    )
+
+print(release_id)
+print(f"{asset_id}\t{url}\t{match.group(1).lower()}")
 PY
 )
 
-[[ "${#release_metadata[@]}" -eq 3 ]] || {
-    echo "unable to resolve latest MetaCubeX geodata release" >&2
+[[ "${#release_metadata[@]}" -eq 2 ]] || {
+    echo "unable to resolve latest MetaCubeX GeoIP release asset" >&2
     exit 1
 }
 
 readonly RELEASE_ID="${release_metadata[0]}"
 IFS=$'\t' read -r GEOIP_ASSET_ID GEOIP_URL GEOIP_SHA256 <<< "${release_metadata[1]}"
-IFS=$'\t' read -r GEOSITE_ASSET_ID GEOSITE_URL GEOSITE_SHA256 <<< "${release_metadata[2]}"
-readonly VERSION="${RELEASE_ID}@${GEOIP_ASSET_ID},${GEOSITE_ASSET_ID}"
+readonly VERSION="${RELEASE_ID}@${GEOIP_ASSET_ID}"
 
 verify_file() {
     local expected_sha="$1"
@@ -79,26 +83,19 @@ verify_file() {
 }
 
 if verify_file "${GEOIP_SHA256}" "${DESTINATION}/GeoIP.dat" \
-    && verify_file "${GEOSITE_SHA256}" "${DESTINATION}/GeoSite.dat" \
     && [[ -f "${VERSION_FILE}" ]] \
-    && [[ "$(<"${VERSION_FILE}")" == "${VERSION}" ]]; then
-    echo "MetaCubeX latest geodata release ${RELEASE_ID} is already present."
+    && [[ "$(<"${VERSION_FILE}")" == "${VERSION}" ]] \
+    && [[ ! -e "${DESTINATION}/GeoSite.dat" ]]; then
+    echo "MetaCubeX latest ${GEOIP_ASSET} release ${RELEASE_ID} is already present."
     exit 0
 fi
 
 curl --fail --silent --show-error --location --retry 3 \
     --output "${TEMP_DIR}/${GEOIP_ASSET}" \
     "${GEOIP_URL}"
-curl --fail --silent --show-error --location --retry 3 \
-    --output "${TEMP_DIR}/${GEOSITE_ASSET}" \
-    "${GEOSITE_URL}"
 
 verify_file "${GEOIP_SHA256}" "${TEMP_DIR}/${GEOIP_ASSET}" || {
     echo "${GEOIP_ASSET} checksum mismatch" >&2
-    exit 1
-}
-verify_file "${GEOSITE_SHA256}" "${TEMP_DIR}/${GEOSITE_ASSET}" || {
-    echo "${GEOSITE_ASSET} checksum mismatch" >&2
     exit 1
 }
 
@@ -107,7 +104,6 @@ readonly PREVIOUS="${ASSETS_ROOT}/geodata.previous"
 rm -rf "${STAGING}" "${PREVIOUS}"
 mkdir -p "${STAGING}"
 install -m 0644 "${TEMP_DIR}/${GEOIP_ASSET}" "${STAGING}/GeoIP.dat"
-install -m 0644 "${TEMP_DIR}/${GEOSITE_ASSET}" "${STAGING}/GeoSite.dat"
 
 if [[ -e "${DESTINATION}" ]]; then
     mv "${DESTINATION}" "${PREVIOUS}"
@@ -118,4 +114,4 @@ if ! mv "${STAGING}" "${DESTINATION}"; then
 fi
 rm -rf "${PREVIOUS}"
 printf '%s' "${VERSION}" > "${VERSION_FILE}"
-echo "Installed MetaCubeX release ${RELEASE_ID}: ${GEOIP_ASSET} as GeoIP.dat and ${GEOSITE_ASSET} as GeoSite.dat"
+echo "Installed MetaCubeX release ${RELEASE_ID}: ${GEOIP_ASSET} as GeoIP.dat"

@@ -43,11 +43,13 @@ controller.
 
 - Project: <https://github.com/MetaCubeX/meta-rules-dat>
 - Source selection: latest GitHub Release
-- Bundled assets: `geoip-lite.dat` installed as `GeoIP.dat`, and full `geosite.dat` installed as `GeoSite.dat`
-- Integrity: SHA-256 digests returned for both release assets by the GitHub Releases API
+- Bundled asset: `geoip-lite.dat`, installed as `GeoIP.dat`
+- Not bundled: GeoSite data; mihomo may acquire it according to the imported configuration
+- Integrity: SHA-256 digest returned for the release asset by the GitHub Releases API
 - License: GPL-3.0 (the repository root [`LICENSE`](LICENSE) contains the license text)
 
 Before every build, [`scripts/fetch_geodata.sh`](scripts/fetch_geodata.sh) resolves the latest release,
-verifies both assets, and replaces `app/src/main/assets/geodata`. The release ID and exact asset IDs are
-recorded in `app/src/main/assets/geodata.version` so an upgraded APK replaces the previously installed
-GeoIP and GeoSite files.
+verifies `geoip-lite.dat`, and replaces `app/src/main/assets/geodata`. The release ID and exact asset ID
+are recorded in `app/src/main/assets/geodata.version` so an upgraded APK replaces the previously installed
+GeoIP file. Upgrading from a build that bundled GeoSite removes that bundled legacy file once; future
+mihomo-managed GeoSite files are left untouched.

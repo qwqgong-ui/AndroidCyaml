@@ -135,7 +135,7 @@ val verifyReleaseSigning by tasks.registering {
 
 val fetchGeodata by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Fetch latest MetaCubeX geoip-lite.dat and geosite.dat release assets"
+    description = "Fetch latest MetaCubeX geoip-lite.dat release asset"
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/fetch_geodata.sh")
     inputs.file(rootProject.file("scripts/fetch_geodata.sh"))

@@ -89,25 +89,23 @@ final class MihomoFileStore {
         String bundledVersion = requiredAssetVersion(GEODATA_VERSION_ASSET);
         File marker = new File(home, ".androidcyaml-geodata-version");
         File geoIp = new File(home, "GeoIP.dat");
-        File geoSite = new File(home, "GeoSite.dat");
         String installedVersion = marker.isFile() ? readText(marker).trim() : "";
-        if (bundledVersion.equals(installedVersion) && geoIp.isFile() && geoSite.isFile()) {
+        if (bundledVersion.equals(installedVersion) && geoIp.isFile()) {
             return;
         }
 
         File geoIpStaging = new File(home, "GeoIP.dat.installing");
-        File geoSiteStaging = new File(home, "GeoSite.dat.installing");
         deleteIfExists(geoIpStaging);
-        deleteIfExists(geoSiteStaging);
         try {
             copyAssetFile("geodata/GeoIP.dat", geoIpStaging);
-            copyAssetFile("geodata/GeoSite.dat", geoSiteStaging);
             moveReplacing(geoIpStaging, geoIp);
-            moveReplacing(geoSiteStaging, geoSite);
+            if (hasBundledGeoSiteVersion(installedVersion)) {
+                deleteIfExists(new File(home, "GeoSite.dat"));
+            }
+            deleteIfExists(new File(home, "GeoSite.dat.installing"));
             writeText(marker, bundledVersion);
         } finally {
             deleteIfExists(geoIpStaging);
-            deleteIfExists(geoSiteStaging);
         }
     }
 
@@ -185,6 +183,25 @@ final class MihomoFileStore {
             }
             output.getFD().sync();
         }
+    }
+
+    private static boolean hasBundledGeoSiteVersion(String versionToken) {
+        if (versionToken.indexOf(',') >= 0) {
+            return true;
+        }
+        if (versionToken.length() != 40) {
+            return false;
+        }
+        for (int index = 0; index < versionToken.length(); index++) {
+            char value = versionToken.charAt(index);
+            boolean hexadecimal = (value >= '0' && value <= '9')
+                    || (value >= 'a' && value <= 'f')
+                    || (value >= 'A' && value <= 'F');
+            if (!hexadecimal) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static String displayVersion(String versionToken) {
