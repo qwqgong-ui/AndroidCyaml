@@ -9,7 +9,7 @@ record RuntimeOverrideSettings(
         boolean lanWebUiPublic
 ) {
     RuntimeOverrideSettings {
-        tunStack = tunStack == null ? TunStackMode.SYSTEM : tunStack;
+        tunStack = TunStackMode.SYSTEM;
         logLevel = logLevel == null ? RuntimeLogLevel.WARNING : logLevel;
     }
 
