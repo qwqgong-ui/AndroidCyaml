@@ -36,8 +36,19 @@ AndroidCyaml 固定使用 `app/build.gradle.kts` 中的 mihomo 提交。构建�
 sing-tun 的 Android 包数据库。JNI 导出、固定 TUN 合约、IPv6 处理、逐 socket `protect()` 和运行时
 配置变换都由 AndroidCyaml 仓库维护。构建脚本会拒绝补丁触碰约定之外的 mihomo 文件。
 
-`qwqgong-ui/mihomo:Alpha` 的独立桌面/多平台构建流程与 AndroidCyaml 的 JNI 集成分离；
-AndroidCyaml 只读取固定提交并在自己的临时构建目录中应用平台补丁。
+AndroidCyaml 固定使用 `qwqgong-ui/mihomo:Alpha` 的下游提交，而不是未经修改的上游
+`MetaCubeX/mihomo:Alpha`。该下游分支除构建裁剪外，还保留了 UDP 域名转发补丁，因此行为已经与
+上游内核分化。AndroidCyaml 的 JNI 集成仍只在自己的临时构建目录中应用，不会写回 mihomo checkout。
+
+### UDP 域名原样转发
+
+当 TUN、fake-ip 或嗅探恢复出 UDP 目标域名时，下游内核会对支持域名寻址或远端解析的代理保留
+`metadata.Host`，并将域名与端口原样封装给远端，而不是在客户端统一先解析为 IP。该行为覆盖支持
+远端 DNS 的 UDP、UOT/XUDP 等出站；不支持域名目标的出站仍会按原有逻辑在本地解析。
+
+这意味着例如 QUIC 的 `www.gstatic.com:443` 可以作为 FQDN 交给代理服务器，由服务器侧 DNS 决定
+最终地址，避免客户端 DNS 位置与代理出口位置不同导致命中错误的 CDN。此功能来自
+`qwqgong-ui/mihomo` 的下游补丁，不属于当前上游 `MetaCubeX/mihomo` 的默认行为。
 
 ## 运行时结构
 
