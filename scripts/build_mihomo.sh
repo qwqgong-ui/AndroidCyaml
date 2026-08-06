@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
-readonly MIHOMO_COMMIT="cc2b6479fe46d93aefa5633de5d2e5e2f52c69b8"
+readonly MIHOMO_COMMIT="c34bc9af3314e236fdff7f6fe807e345d958f282"
 readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo/0001-androidcyaml-platform-hooks.patch"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
 readonly BUILD_RECIPE_VERSION="19"
