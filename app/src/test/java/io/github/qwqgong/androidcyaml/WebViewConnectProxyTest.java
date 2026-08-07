@@ -1,12 +1,14 @@
 package io.github.qwqgong.androidcyaml;
 
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -89,6 +91,18 @@ public final class WebViewConnectProxyTest {
             client.getOutputStream().flush();
             String headers = readHeaders(client.getInputStream());
             assertTrue(headers.startsWith("HTTP/1.1 403"));
+        }
+    }
+
+    @Test
+    public void sameAuthorityCannotSilentlySwitchServers() throws Exception {
+        try (WebViewConnectProxy proxy = new WebViewConnectProxy()) {
+            proxy.register("https://same.invalid/xhttp", "127.0.0.1:1443");
+            proxy.register("https://same.invalid/other", "127.0.0.1:1443");
+            assertThrows(
+                    IOException.class,
+                    () -> proxy.register("https://same.invalid/xhttp", "127.0.0.1:2443")
+            );
         }
     }
 
