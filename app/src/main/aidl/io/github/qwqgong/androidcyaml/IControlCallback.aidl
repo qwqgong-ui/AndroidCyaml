@@ -14,6 +14,7 @@ oneway interface IControlCallback {
             boolean ipv6Effective,
             String logLevel,
             boolean adaptiveTcpConcurrent,
+            boolean webViewXhttp,
             boolean lanWebUiPublic
     );
 }
