@@ -148,6 +148,7 @@ final class RuntimeCoordinator {
             boolean ipv6Enabled,
             String logLevelValue,
             boolean adaptiveTcpConcurrent,
+            boolean webViewXhttp,
             boolean lanWebUiPublic,
             OperationCallback callback
     ) {
@@ -167,6 +168,7 @@ final class RuntimeCoordinator {
                         ipv6Enabled,
                         logLevel,
                         adaptiveTcpConcurrent,
+                        webViewXhttp,
                         lanWebUiPublic
                 ),
                 callback
@@ -214,6 +216,7 @@ final class RuntimeCoordinator {
                     settings.ipv6Enabled(),
                     settings.logLevel(),
                     settings.adaptiveTcpConcurrent(),
+                    settings.webViewXhttp(),
                     false
             );
             overrideStore.setSettings(settings);
@@ -546,7 +549,10 @@ final class RuntimeCoordinator {
             tunManager.close();
             tunManager = null;
         }
-        platformCallbacks = null;
+        if (platformCallbacks != null) {
+            platformCallbacks.close();
+            platformCallbacks = null;
+        }
         effectiveIpv6Enabled = false;
         effectiveTcpConcurrent = false;
     }
@@ -609,6 +615,9 @@ final class RuntimeCoordinator {
         } else {
             tcpConcurrent = "TCP 并发已在当前非 Wi-Fi 网络关闭";
         }
+        String xhttp = settings.webViewXhttp()
+                ? "XHTTP WebView 已开启"
+                : "XHTTP 使用 mihomo 原生栈";
         String logLevel = "日志 " + settings.logLevel().wireValue();
         String webUi = settings.lanWebUiPublic()
                 ? "WebUI 监听 0.0.0.0"
@@ -617,7 +626,7 @@ final class RuntimeCoordinator {
             webUi += ":" + controllerPort;
         }
         return stack + "；" + process + "；" + ipv6 + "；" + tcpConcurrent
-                + "；" + logLevel + "；" + webUi;
+                + "；" + xhttp + "；" + logLevel + "；" + webUi;
     }
 
     private static String usefulMessage(Throwable throwable) {
