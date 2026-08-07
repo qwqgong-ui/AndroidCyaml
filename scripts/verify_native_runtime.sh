@@ -97,6 +97,20 @@ for method in \
     }
 done
 
+for method in \
+    onReady \
+    requestBodyLength \
+    requestBodyChunk \
+    onHeaders \
+    onChunk \
+    onComplete \
+    onError; do
+    grep -Fxq "${method}" "${DEX_STRINGS}" || {
+        echo "R8 removed or renamed WebView JavaScript bridge method ${method}" >&2
+        exit 1
+    }
+done
+
 for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeValidate \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
