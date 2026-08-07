@@ -414,7 +414,8 @@ final class WebViewXhttpDialer implements AutoCloseable {
             throw new IOException("System WebView XHTTP only accepts HTTPS origin URLs");
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
-        if (host.indexOf(':') >= 0) {
+        if (host.indexOf(':') >= 0
+                && !(host.startsWith("[") && host.endsWith("]"))) {
             host = '[' + host + ']';
         }
         int port = uri.getPort();
