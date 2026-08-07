@@ -19,7 +19,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,7 +43,6 @@ final class WebViewXhttpDialer implements AutoCloseable {
     private static final String TAG = "AndroidCyaml/WebViewXHTTP";
     private static final long START_TIMEOUT_MILLIS = 45_000L;
     private static final int BODY_CHUNK_BYTES = 48 * 1024;
-    private static final String BASE_URL = "https://androidcyaml.invalid/";
 
     private static final String PAGE = """
             <!doctype html>
@@ -175,11 +176,15 @@ final class WebViewXhttpDialer implements AutoCloseable {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ConcurrentHashMap<Long, Task> tasks = new ConcurrentHashMap<>();
     private final AtomicLong nextId = new AtomicLong(1L);
-    private final CountDownLatch ready = new CountDownLatch(1);
+    private final CountDownLatch webViewReady = new CountDownLatch(1);
+    private final Object pageLock = new Object();
     private final AtomicBoolean closed = new AtomicBoolean(false);
     private final WebViewConnectProxy connectProxy;
     private volatile WebView webView;
     private volatile String initializationError;
+    private volatile CountDownLatch pageReady = new CountDownLatch(0);
+    private volatile String pageOrigin;
+    private volatile String pageError;
 
     WebViewXhttpDialer(Context context) throws IOException {
         Objects.requireNonNull(context);
@@ -192,7 +197,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
             } else {
                 mainHandler.post(create);
             }
-            await(ready, 15_000L, "System WebView did not initialize");
+            await(webViewReady, 15_000L, "System WebView did not initialize");
             if (webView == null) {
                 throw new IOException(initializationError == null
                         ? "System WebView did not initialize"
@@ -216,9 +221,8 @@ final class WebViewXhttpDialer implements AutoCloseable {
         try {
             metadata = new JSONObject(requestJson == null ? "{}" : requestJson);
             String url = metadata.optString("url", "");
-            if (!url.startsWith("https://")) {
-                return errorResult("System WebView XHTTP only accepts https URLs");
-            }
+            String origin = originOf(url);
+            ensurePageOrigin(origin);
             connectProxy.register(url, metadata.optString("serverAddress", ""));
         } catch (JSONException | IOException exception) {
             return errorResult(exception.getMessage() == null
@@ -324,7 +328,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
     private void createWebView(Context context) {
         if (closed.get()) {
             initializationError = "System WebView XHTTP was closed during startup";
-            ready.countDown();
+            webViewReady.countDown();
             return;
         }
         try {
@@ -339,15 +343,82 @@ final class WebViewXhttpDialer implements AutoCloseable {
             created.addJavascriptInterface(new JavascriptBridge(), "AndroidCyamlNative");
             created.setWebViewClient(new WebViewClient());
             webView = created;
-            created.loadDataWithBaseURL(BASE_URL, PAGE, "text/html", StandardCharsets.UTF_8.name(), null);
+            webViewReady.countDown();
         } catch (RuntimeException exception) {
             initializationError = "Unable to create System WebView XHTTP dialer: "
                     + (exception.getMessage() == null
                     ? exception.getClass().getSimpleName()
                     : exception.getMessage());
             Log.e(TAG, initializationError, exception);
-            ready.countDown();
+            webViewReady.countDown();
         }
+    }
+
+    private void ensurePageOrigin(String origin) throws IOException {
+        final CountDownLatch latch;
+        synchronized (pageLock) {
+            if (pageOrigin == null) {
+                pageOrigin = origin;
+                pageError = null;
+                pageReady = new CountDownLatch(1);
+                latch = pageReady;
+                mainHandler.post(() -> {
+                    WebView current = webView;
+                    if (current == null || closed.get()) {
+                        pageError = "System WebView is unavailable";
+                        latch.countDown();
+                        return;
+                    }
+                    try {
+                        current.loadDataWithBaseURL(
+                                origin + "/",
+                                PAGE,
+                                "text/html",
+                                StandardCharsets.UTF_8.name(),
+                                null
+                        );
+                    } catch (RuntimeException exception) {
+                        pageError = "Unable to load System WebView XHTTP origin: "
+                                + (exception.getMessage() == null
+                                ? exception.getClass().getSimpleName()
+                                : exception.getMessage());
+                        latch.countDown();
+                    }
+                });
+            } else if (!pageOrigin.equals(origin)) {
+                throw new IOException(
+                        "System WebView XHTTP runtime is already bound to "
+                                + pageOrigin + "; restart VPN before using " + origin
+                );
+            } else {
+                latch = pageReady;
+            }
+        }
+        await(latch, 15_000L, "System WebView XHTTP page did not initialize");
+        if (pageError != null) {
+            throw new IOException(pageError);
+        }
+    }
+
+    static String originOf(String urlValue) throws IOException {
+        final URI uri;
+        try {
+            uri = URI.create(urlValue == null ? "" : urlValue);
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("Invalid System WebView XHTTP URL", exception);
+        }
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || uri.getHost() == null
+                || uri.getHost().isBlank()
+                || uri.getUserInfo() != null) {
+            throw new IOException("System WebView XHTTP only accepts HTTPS origin URLs");
+        }
+        String host = uri.getHost().toLowerCase(Locale.ROOT);
+        if (host.indexOf(':') >= 0) {
+            host = '[' + host + ']';
+        }
+        int port = uri.getPort();
+        return "https://" + host + (port > 0 && port != 443 ? ":" + port : "");
     }
 
     private void installProxyOverride() throws IOException {
@@ -406,7 +477,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
     private final class JavascriptBridge {
         @JavascriptInterface
         public void onReady() {
-            ready.countDown();
+            pageReady.countDown();
         }
 
         @JavascriptInterface
