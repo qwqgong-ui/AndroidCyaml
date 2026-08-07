@@ -11,6 +11,10 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.webkit.ProxyConfig;
+import androidx.webkit.ProxyController;
+import androidx.webkit.WebViewFeature;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -173,17 +177,35 @@ final class WebViewXhttpDialer implements AutoCloseable {
     private final AtomicLong nextId = new AtomicLong(1L);
     private final CountDownLatch ready = new CountDownLatch(1);
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final WebViewConnectProxy connectProxy;
     private volatile WebView webView;
+    private volatile String initializationError;
 
     WebViewXhttpDialer(Context context) throws IOException {
         Objects.requireNonNull(context);
-        Runnable create = () -> createWebView(context.getApplicationContext());
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            create.run();
-        } else {
-            mainHandler.post(create);
+        connectProxy = new WebViewConnectProxy();
+        try {
+            installProxyOverride();
+            Runnable create = () -> createWebView(context.getApplicationContext());
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                create.run();
+            } else {
+                mainHandler.post(create);
+            }
+            await(ready, 15_000L, "System WebView did not initialize");
+            if (webView == null) {
+                throw new IOException(initializationError == null
+                        ? "System WebView did not initialize"
+                        : initializationError);
+            }
+        } catch (IOException | RuntimeException exception) {
+            clearProxyOverride();
+            connectProxy.close();
+            if (exception instanceof IOException ioException) {
+                throw ioException;
+            }
+            throw new IOException("Unable to initialize System WebView XHTTP", exception);
         }
-        await(ready, 15_000L, "System WebView did not initialize");
     }
 
     String startRequest(String requestJson, byte[] body) {
@@ -197,8 +219,11 @@ final class WebViewXhttpDialer implements AutoCloseable {
             if (!url.startsWith("https://")) {
                 return errorResult("System WebView XHTTP only accepts https URLs");
             }
-        } catch (JSONException exception) {
-            return errorResult("Invalid WebView XHTTP request metadata");
+            connectProxy.register(url, metadata.optString("serverAddress", ""));
+        } catch (JSONException | IOException exception) {
+            return errorResult(exception.getMessage() == null
+                    ? "Invalid WebView XHTTP request metadata"
+                    : exception.getMessage());
         }
 
         long id = nextId.getAndIncrement();
@@ -282,6 +307,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
         }
         tasks.forEach((id, task) -> task.close());
         tasks.clear();
+        clearProxyOverride();
         mainHandler.post(() -> {
             WebView current = webView;
             webView = null;
@@ -290,12 +316,14 @@ final class WebViewXhttpDialer implements AutoCloseable {
                 current.removeJavascriptInterface("AndroidCyamlNative");
                 current.destroy();
             }
+            connectProxy.close();
         });
     }
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     private void createWebView(Context context) {
         if (closed.get()) {
+            initializationError = "System WebView XHTTP was closed during startup";
             ready.countDown();
             return;
         }
@@ -313,8 +341,46 @@ final class WebViewXhttpDialer implements AutoCloseable {
             webView = created;
             created.loadDataWithBaseURL(BASE_URL, PAGE, "text/html", StandardCharsets.UTF_8.name(), null);
         } catch (RuntimeException exception) {
-            Log.e(TAG, "Unable to create System WebView XHTTP dialer", exception);
+            initializationError = "Unable to create System WebView XHTTP dialer: "
+                    + (exception.getMessage() == null
+                    ? exception.getClass().getSimpleName()
+                    : exception.getMessage());
+            Log.e(TAG, initializationError, exception);
             ready.countDown();
+        }
+    }
+
+    private void installProxyOverride() throws IOException {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+            throw new IOException("当前 Android System WebView 不支持进程级代理覆写");
+        }
+        ProxyConfig proxyConfig = new ProxyConfig.Builder()
+                .addProxyRule("127.0.0.1:" + connectProxy.port())
+                .build();
+        CountDownLatch applied = new CountDownLatch(1);
+        try {
+            ProxyController.getInstance().setProxyOverride(
+                    Runnable::run,
+                    proxyConfig,
+                    applied::countDown
+            );
+        } catch (IllegalArgumentException | UnsupportedOperationException exception) {
+            throw new IOException("无法配置 System WebView CONNECT 代理", exception);
+        }
+        await(applied, 10_000L, "System WebView CONNECT 代理应用超时");
+    }
+
+    private void clearProxyOverride() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+            return;
+        }
+        try {
+            ProxyController.getInstance().clearProxyOverride(
+                    Runnable::run,
+                    () -> {}
+            );
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to clear System WebView proxy override", exception);
         }
     }
 
