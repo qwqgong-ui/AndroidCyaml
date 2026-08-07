@@ -2,7 +2,6 @@ package io.github.qwqgong.androidcyaml;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
-import android.net.IpPrefix;
 import android.net.VpnService;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
@@ -91,9 +90,13 @@ final class AndroidTunManager implements Closeable {
     ) throws IOException {
         try {
             if (!options.includePackage().isEmpty()) {
-                // The embedded core must remain inside VpnService routing. Its
-                // real outbound sockets are excluded individually with protect().
-                builder.addAllowedApplication(ownPackage);
+                // Normal embedded mode keeps the core inside the VPN and
+                // protects each actual outbound socket. WebView XHTTP cannot
+                // expose Chromium socket FDs, so browser mode omits this package
+                // from the allow-list while preserving every selected target.
+                if (!options.bypassOwnPackage()) {
+                    builder.addAllowedApplication(ownPackage);
+                }
                 int acceptedTargets = 0;
                 for (String packageName : options.includePackage()) {
                     if (ownPackage.equals(packageName)) {
@@ -106,6 +109,9 @@ final class AndroidTunManager implements Closeable {
                         Log.w(TAG, "Ignoring unavailable included package " + packageName);
                     }
                 }
+                if (acceptedTargets == 0 && options.bypassOwnPackage()) {
+                    throw new IOException("WebView XHTTP 开启后 tun.include-package 未匹配任何目标应用");
+                }
                 if (acceptedTargets == 0
                         && options.includePackage().stream().noneMatch(ownPackage::equals)) {
                     throw new IOException("tun.include-package 未匹配任何已安装应用");
@@ -113,9 +119,14 @@ final class AndroidTunManager implements Closeable {
                 return;
             }
 
+            if (options.bypassOwnPackage()) {
+                builder.addDisallowedApplication(ownPackage);
+            }
             for (String packageName : options.excludePackage()) {
                 if (ownPackage.equals(packageName)) {
-                    Log.w(TAG, "Ignoring exclusion of the embedded core package");
+                    if (!options.bypassOwnPackage()) {
+                        Log.w(TAG, "Ignoring exclusion of the embedded core package");
+                    }
                     continue;
                 }
                 try {
@@ -125,7 +136,7 @@ final class AndroidTunManager implements Closeable {
                 }
             }
         } catch (PackageManager.NameNotFoundException exception) {
-            throw new IOException("AndroidCyaml 自身包无法加入 VPN 白名单", exception);
+            throw new IOException("AndroidCyaml 自身包无法应用 VPN 路由策略", exception);
         } catch (RuntimeException exception) {
             throw new IOException("Android 应用路由配置失败", exception);
         }
