@@ -4,9 +4,9 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="dc4c194c61013541858bca76359e5226d5add7a2"
-readonly PATCH_FILE="${ROOT_DIR}/patches/mihomo/0001-androidcyaml-platform-hooks.patch"
+readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="20"
+readonly BUILD_RECIPE_VERSION="21"
 readonly NDK_VERSION="29.0.14206865"
 readonly NATIVE_API="35"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
@@ -21,19 +21,31 @@ readonly MARKER_FILE="${ROOT_DIR}/.third_party/mihomo.commit"
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v go >/dev/null || { echo "Go 1.26+ is required" >&2; exit 1; }
 command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 1; }
-[[ -f "${PATCH_FILE}" ]] || { echo "mihomo patch is missing: ${PATCH_FILE}" >&2; exit 1; }
-[[ -f "${WRAPPER_SOURCE_DIR}/go.mod" && -f "${WRAPPER_SOURCE_DIR}/main.go" ]] || {
-    echo "AndroidCyaml Go wrapper sources are incomplete" >&2
+[[ -d "${PATCH_DIR}" ]] || { echo "mihomo patch directory is missing: ${PATCH_DIR}" >&2; exit 1; }
+[[ -f "${WRAPPER_SOURCE_DIR}/go.mod" ]] || {
+    echo "AndroidCyaml Go wrapper module is incomplete" >&2
     exit 1
 }
 
-readonly PATCH_DIGEST="$(sha256sum "${PATCH_FILE}" | awk '{ print $1 }')"
-readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${WRAPPER_SOURCE_DIR}/main.go" | sha256sum | awk '{ print $1 }')"
+shopt -s nullglob
+androidcyaml_patches=("${PATCH_DIR}"/*.patch)
+wrapper_sources=("${WRAPPER_SOURCE_DIR}"/*.go)
+(( ${#androidcyaml_patches[@]} > 0 )) || {
+    echo "No AndroidCyaml-owned mihomo patches found in ${PATCH_DIR}" >&2
+    exit 1
+}
+(( ${#wrapper_sources[@]} > 0 )) || {
+    echo "No AndroidCyaml Go wrapper sources found in ${WRAPPER_SOURCE_DIR}" >&2
+    exit 1
+}
+
+readonly PATCH_DIGEST="$(cat "${androidcyaml_patches[@]}" | sha256sum | awk '{ print $1 }')"
+readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" | sha256sum | awk '{ print $1 }')"
 readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:${PATCH_DIGEST}:${WRAPPER_DIGEST}:android-arm64-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
 if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
-    echo "mihomo ${MIHOMO_COMMIT:0:8} with AndroidCyaml patch ${PATCH_DIGEST:0:8} is already built."
+    echo "mihomo ${MIHOMO_COMMIT:0:8} with AndroidCyaml patches ${PATCH_DIGEST:0:8} is already built."
     exit 0
 fi
 
@@ -94,7 +106,6 @@ git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
 
-shopt -s nullglob
 mihomo_patches=("${SOURCE_DIR}"/patches/mihomo/*.patch)
 (( ${#mihomo_patches[@]} > 0 )) || {
     echo "No external mihomo patches found at ${SOURCE_DIR}/patches/mihomo" >&2
@@ -107,16 +118,21 @@ done
 git -C "${SOURCE_DIR}" diff --check
 git -C "${SOURCE_DIR}" add -A
 
-# AndroidCyaml owns this patch. The mihomo checkout remains pinned to a clean,
+# AndroidCyaml owns these patches. The mihomo checkout remains pinned to a
 # desktop-safe commit and is modified only inside the ignored build directory.
-git -C "${SOURCE_DIR}" apply --check --whitespace=error-all "${PATCH_FILE}"
-git -C "${SOURCE_DIR}" apply --whitespace=error-all "${PATCH_FILE}"
+for patch in "${androidcyaml_patches[@]}"; do
+    git -C "${SOURCE_DIR}" apply --check --whitespace=error-all "${patch}"
+    git -C "${SOURCE_DIR}" apply --whitespace=error-all "${patch}"
+done
 git -C "${SOURCE_DIR}" diff --check
 
-readonly EXPECTED_PATCH_PATHS=$'component/process/process.go\nlistener/sing_tun/server_android.go'
-readonly ACTUAL_PATCH_PATHS="$(git -C "${SOURCE_DIR}" diff --name-only | sort)"
+readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/process/process.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
+readonly ACTUAL_PATCH_PATHS="$({
+    git -C "${SOURCE_DIR}" diff --name-only
+    git -C "${SOURCE_DIR}" ls-files --others --exclude-standard
+} | sort -u)"
 if [[ "${ACTUAL_PATCH_PATHS}" != "${EXPECTED_PATCH_PATHS}" ]]; then
-    echo "AndroidCyaml patch touched unexpected mihomo files:" >&2
+    echo "AndroidCyaml patches touched unexpected mihomo files:" >&2
     printf '%s\n' "${ACTUAL_PATCH_PATHS}" >&2
     exit 1
 fi
@@ -132,9 +148,19 @@ case "${INSTALLED_GO_VERSION}" in
         ;;
 esac
 
+# Compile and exercise the actual patched kernel before cross-compiling the JNI
+# library. This catches patch drift and XHTTP integration failures directly.
+(
+    cd "${SOURCE_DIR}"
+    env \
+        GOWORK=off \
+        GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        go test ./transport/xhttp ./adapter/outbound
+)
+
 rm -rf "${MODULE_DIR}" "${TEMP_DIR}"
 mkdir -p "${MODULE_DIR}" "${TEMP_DIR}"
-cp "${WRAPPER_SOURCE_DIR}/go.mod" "${WRAPPER_SOURCE_DIR}/main.go" "${MODULE_DIR}/"
+cp "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" "${MODULE_DIR}/"
 printf '\nreplace github.com/metacubex/mihomo => ../mihomo-src\n' >> "${MODULE_DIR}/go.mod"
 
 readonly BUILD_TIME="$(git -C "${SOURCE_DIR}" show -s --format=%cI "${MIHOMO_COMMIT}")"
@@ -172,4 +198,4 @@ mv -f "${TEMP_DIR}/libmihomo.so" "${OUTPUT_LIBRARY}"
 mv -f "${TEMP_DIR}/libmihomo.h" "${OUTPUT_HEADER}"
 rmdir "${TEMP_DIR}"
 printf '%s' "${EXPECTED_MARKER}" > "${MARKER_FILE}"
-echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from clean mihomo plus the AndroidCyaml-owned patch"
+echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from clean mihomo plus the AndroidCyaml-owned patches"
