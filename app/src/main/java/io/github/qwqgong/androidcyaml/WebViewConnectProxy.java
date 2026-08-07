@@ -62,7 +62,14 @@ final class WebViewConnectProxy implements AutoCloseable {
         }
         int port = url.getPort() > 0 ? url.getPort() : 443;
         InetSocketAddress target = parseSocketAddress(serverAddress, port);
-        targets.put(authorityKey(host, port), target);
+        String key = authorityKey(host, port);
+        InetSocketAddress existing = targets.putIfAbsent(key, target);
+        if (existing != null && !existing.equals(target)) {
+            throw new IOException(
+                    "同一 XHTTP host 不能同时映射到多个 server："
+                            + key + " -> " + existing + " / " + target
+            );
+        }
     }
 
     private void acceptLoop() {
