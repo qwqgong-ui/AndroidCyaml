@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - copy
       - "agent/**"
   pull_request:
   workflow_dispatch:
@@ -38,7 +39,7 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/libmihomo.so
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/main.go', 'patches/mihomo/*.patch') }}
+          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
           restore-keys: |
             ${{ runner.os }}-mihomo-go1.26-ndk29-
 
