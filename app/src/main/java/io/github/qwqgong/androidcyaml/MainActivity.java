@@ -45,6 +45,7 @@ public final class MainActivity extends Activity implements
     private boolean ipv6Effective = true;
     private RuntimeLogLevel logLevel = RuntimeLogLevel.WARNING;
     private boolean adaptiveTcpConcurrent;
+    private boolean webViewXhttp;
     private boolean lanWebUiPublic;
     private int controllerPort;
     private boolean alwaysOn;
@@ -172,6 +173,7 @@ public final class MainActivity extends Activity implements
             boolean newIpv6Effective,
             String newLogLevel,
             boolean newAdaptiveTcpConcurrent,
+            boolean newWebViewXhttp,
             boolean newLanWebUiPublic
     ) {
         RuntimeState[] values = RuntimeState.values();
@@ -192,6 +194,7 @@ public final class MainActivity extends Activity implements
         ipv6Enabled = newIpv6Enabled;
         ipv6Effective = newIpv6Effective;
         adaptiveTcpConcurrent = newAdaptiveTcpConcurrent;
+        webViewXhttp = newWebViewXhttp;
         lanWebUiPublic = newLanWebUiPublic;
         this.controllerPort = controllerPort;
         applySnapshot(
@@ -231,6 +234,7 @@ public final class MainActivity extends Activity implements
                 ipv6Effective,
                 logLevel,
                 adaptiveTcpConcurrent,
+                webViewXhttp,
                 lanWebUiPublic,
                 controllerPort,
                 this::applyRuntimeOverrides
@@ -385,6 +389,7 @@ public final class MainActivity extends Activity implements
                 requested.ipv6Enabled(),
                 requested.logLevel(),
                 requested.adaptiveTcpConcurrent(),
+                requested.webViewXhttp(),
                 requested.lanWebUiPublic(),
                 (success, detail) -> showToast(success
                         ? getString(R.string.runtime_override_applied, detail)
