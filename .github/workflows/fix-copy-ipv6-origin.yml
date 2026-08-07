@@ -1,0 +1,54 @@
+name: Apply IPv6 WebView origin fix
+
+on:
+  push:
+    branches:
+      - copy
+    paths:
+      - ".github/workflows/fix-copy-ipv6-origin.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: copy
+          fetch-depth: 0
+
+      - name: Patch IPv6 origin normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/src/main/java/io/github/qwqgong/androidcyaml/WebViewXhttpDialer.java")
+          source = path.read_text(encoding="utf-8")
+          old = """        if (host.indexOf(':') >= 0) {
+                      host = '[' + host + ']';
+                  }
+          """
+          new = """        if (host.indexOf(':') >= 0
+                          && !(host.startsWith("[") && host.endsWith("]"))) {
+                      host = '[' + host + ']';
+                  }
+          """
+          if source.count(old) != 1:
+              raise SystemExit("IPv6 origin normalization block did not match exactly once")
+          path.write_text(source.replace(old, new, 1), encoding="utf-8")
+          PY
+          git diff --check
+
+      - name: Commit IPv6 origin fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/io/github/qwqgong/androidcyaml/WebViewXhttpDialer.java
+          git commit -m "fix: normalize IPv6 WebView origins"
+          git push origin HEAD:copy
