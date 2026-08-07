@@ -57,6 +57,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                 boolean ipv6Enabled,
                 String logLevel,
                 boolean adaptiveTcpConcurrent,
+                boolean webViewXhttp,
                 boolean lanWebUiPublic,
                 IOperationCallback callback
         ) {
@@ -67,6 +68,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     ipv6Enabled,
                     logLevel,
                     adaptiveTcpConcurrent,
+                    webViewXhttp,
                     lanWebUiPublic,
                     (success, message) -> complete(callback, success, message)
             );
@@ -128,6 +130,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     coordinator.effectiveIpv6Enabled(),
                     overrides.logLevel().wireValue(),
                     overrides.adaptiveTcpConcurrent(),
+                    overrides.webViewXhttp(),
                     overrides.lanWebUiPublic()
             );
         } catch (RemoteException ignored) {
