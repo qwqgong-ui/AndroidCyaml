@@ -14,6 +14,25 @@ record RuntimeOverrideSettings(
         logLevel = logLevel == null ? RuntimeLogLevel.WARNING : logLevel;
     }
 
+    RuntimeOverrideSettings(
+            TunStackMode tunStack,
+            boolean processMatching,
+            boolean ipv6Enabled,
+            RuntimeLogLevel logLevel,
+            boolean adaptiveTcpConcurrent,
+            boolean lanWebUiPublic
+    ) {
+        this(
+                tunStack,
+                processMatching,
+                ipv6Enabled,
+                logLevel,
+                adaptiveTcpConcurrent,
+                false,
+                lanWebUiPublic
+        );
+    }
+
     static RuntimeOverrideSettings defaults() {
         return new RuntimeOverrideSettings(
                 TunStackMode.SYSTEM,
