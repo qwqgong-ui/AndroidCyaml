@@ -15,6 +15,7 @@ interface IAppControl {
             boolean ipv6Enabled,
             String logLevel,
             boolean adaptiveTcpConcurrent,
+            boolean webViewXhttp,
             boolean lanWebUiPublic,
             IOperationCallback callback
     );
