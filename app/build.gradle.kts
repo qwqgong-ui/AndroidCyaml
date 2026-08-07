@@ -5,9 +5,14 @@ plugins {
 }
 
 val mihomoCommit = "dc4c194c61013541858bca76359e5226d5add7a2"
-val mihomoPatchFile = rootProject.file("patches/mihomo/0001-androidcyaml-platform-hooks.patch")
+val mihomoPatchDir = rootProject.file("patches/mihomo")
+val mihomoPatchFiles = fileTree(mihomoPatchDir) {
+    include("*.patch")
+}
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
-val mihomoWrapperMain = rootProject.file("native/mihomo/main.go")
+val mihomoWrapperSources = fileTree(rootProject.file("native/mihomo")) {
+    include("*.go")
+}
 val androidNdkVersion = "29.0.14206865"
 
 val releaseStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE")
@@ -45,7 +50,7 @@ android {
         }
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
-        buildConfigField("String", "MIHOMO_PATCH_SET", "\"${mihomoPatchFile.name}\"")
+        buildConfigField("String", "MIHOMO_PATCH_SET", "\"patches/mihomo/*.patch\"")
     }
 
     buildFeatures {
@@ -158,13 +163,13 @@ val mihomoHeader = layout.projectDirectory.file("src/main/cpp/generated/libmihom
 
 val buildMihomo by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Build clean mihomo plus the AndroidCyaml-owned JNI patch"
+    description = "Build clean mihomo plus the AndroidCyaml-owned JNI patches"
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
-    inputs.file(mihomoPatchFile)
+    inputs.files(mihomoPatchFiles)
     inputs.file(mihomoWrapperGoMod)
-    inputs.file(mihomoWrapperMain)
+    inputs.files(mihomoWrapperSources)
     inputs.property("mihomoCommit", mihomoCommit)
     inputs.property("androidNdkVersion", androidNdkVersion)
     outputs.files(mihomoLibrary, mihomoHeader)
