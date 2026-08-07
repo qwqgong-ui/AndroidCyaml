@@ -1,20 +1,19 @@
-name: Signed Android Release
+name: Signed Android Copy Prerelease
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - copy
     paths:
       - "app/build.gradle.kts"
-      - "scripts/build_mihomo.sh"
       - ".github/workflows/release.yml"
 
 permissions:
   contents: write
 
 concurrency:
-  group: signed-android-release
+  group: signed-android-copy-prerelease
   cancel-in-progress: false
 
 jobs:
@@ -27,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve release version
+      - name: Resolve prerelease version
         id: release
         shell: bash
         env:
@@ -37,6 +36,7 @@ jobs:
 
           version="$(sed -nE 's/^[[:space:]]*versionName = "([0-9]+\.[0-9]+\.[0-9]+)"/\1/p' app/build.gradle.kts | head -n 1)"
           [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "${version}" == "0.7.1" ]]
 
           tag="v${version}"
           if gh release view "${tag}" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
@@ -50,10 +50,10 @@ jobs:
           echo "exists=${exists}" >> "${GITHUB_OUTPUT}"
           echo "RELEASE_VERSION=${version}" >> "${GITHUB_ENV}"
 
-      - name: Stop when release already exists
+      - name: Stop when prerelease already exists
         if: steps.release.outputs.exists == 'true'
         shell: bash
-        run: echo "Release ${{ steps.release.outputs.tag }} already exists; nothing to publish."
+        run: echo "Prerelease ${{ steps.release.outputs.tag }} already exists; nothing to publish."
 
       - uses: actions/setup-java@v5
         if: steps.release.outputs.exists != 'true'
@@ -77,7 +77,7 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/libmihomo.so
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/main.go', 'patches/mihomo/*.patch') }}
+          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
           restore-keys: |
             ${{ runner.os }}-mihomo-go1.26-ndk29-
 
@@ -129,7 +129,7 @@ jobs:
           echo "ANDROID_SIGNING_KEY_ALIAS=${KEY_ALIAS}" >> "${GITHUB_ENV}"
           echo "ANDROID_SIGNING_KEY_PASSWORD=${KEY_PASSWORD}" >> "${GITHUB_ENV}"
 
-      - name: Build, lint and verify optimized release APK
+      - name: Build, lint and verify signed release APK
         if: steps.release.outputs.exists != 'true'
         shell: bash
         run: |
@@ -142,7 +142,8 @@ jobs:
             --stacktrace 2>&1 | tee build-release.log || status=$?
           if (( status == 0 )); then
             bash scripts/verify_native_runtime.sh \
-              app/build/outputs/apk/release/app-release.apk 2>&1 | tee -a build-release.log || status=$?
+              app/build/outputs/apk/release/app-release.apk \
+              2>&1 | tee -a build-release.log || status=$?
           fi
           if (( status == 0 )); then
             bash scripts/verify_art_optimization.sh \
@@ -161,7 +162,7 @@ jobs:
           fi
           exit "${status}"
 
-      - name: Verify and name release artifacts
+      - name: Verify and name prerelease files
         if: steps.release.outputs.exists != 'true'
         shell: bash
         run: |
@@ -169,34 +170,85 @@ jobs:
           source_apk="app/build/outputs/apk/release/app-release.apk"
           source_mapping="app/build/outputs/mapping/release/mapping.txt"
           source_symbols="app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip"
+          source_patch="patches/mihomo/0002-androidcyaml-webview-xhttp.patch"
+
           release_apk="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk"
           release_mapping="AndroidCyaml-v${RELEASE_VERSION}-mapping.txt"
           release_symbols="AndroidCyaml-v${RELEASE_VERSION}-native-debug-symbols.zip"
+          release_patch="AndroidCyaml-v${RELEASE_VERSION}-webview-xhttp.patch"
+          release_commit="AndroidCyaml-v${RELEASE_VERSION}-commit.txt"
+          release_log="AndroidCyaml-v${RELEASE_VERSION}-build.log"
+
           "${ANDROID_SDK_ROOT}/build-tools/37.0.0/apksigner" \
             verify --verbose --print-certs "${source_apk}"
           "${ANDROID_SDK_ROOT}/build-tools/37.0.0/zipalign" \
             -c -P 16 -v 4 "${source_apk}"
-          [[ -s "${source_mapping}" && -s "${source_symbols}" ]]
+          [[ -s "${source_mapping}" && -s "${source_symbols}" && -s "${source_patch}" ]]
+
           cp "${source_apk}" "${release_apk}"
           cp "${source_mapping}" "${release_mapping}"
           cp "${source_symbols}" "${release_symbols}"
-          sha256sum "${release_apk}" | tee SHA256SUMS
+          cp "${source_patch}" "${release_patch}"
+          cp build-release.log "${release_log}"
+          printf '%s\n' "${GITHUB_SHA}" > "${release_commit}"
 
-      - name: Upload signed release artifact
+          sha256sum \
+            "${release_apk}" \
+            "${release_mapping}" \
+            "${release_symbols}" \
+            "${release_patch}" \
+            "${release_commit}" \
+            "${release_log}" \
+            | tee SHA256SUMS
+
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## 关键修复
+
+          - 修复启动 VPN 后显示“运行时控制服务已断开”。原因是优化构建中的 R8 无法推断 JNI 反射入口，删除或改名了三个 WebView XHTTP 回调；native 启动无论开关状态都会查找这些方法，因此两种模式都会失败。
+          - 增加 APK 级回归检查：构建完成后直接检查 DEX 中的 JNI 回调 ABI，避免再次生成“编译成功但运行时失效”的包。
+          - 修复隐藏 WebView 的页面原点。页面现在使用实际 XHTTP HTTPS origin 加载，使 Fetch 与目标请求同源，不再从固定假域名触发 Chromium CORS 拦截。
+
+          ## WebView XHTTP 行为
+
+          - 关闭覆写：完整使用 mihomo 原生 XHTTP/TLS 行为。
+          - 开启覆写：用户 YAML 不改写；XHTTP framing、session、sequence 和 packet-up 分包仍由 mihomo 处理，TLS 与 HTTP 请求由 Android System WebView 发出。
+          - 配置中的固定 `server:port` 仍由回环 CONNECT 映射使用；URL、SNI 和证书验证保持 `host/servername`。
+          - `stream-one` 只在运行时内存对象中转换为 `packet-up`，配置文件本身保持原样。
+
+          ## 当前预发布限制
+
+          - 仅支持标准 TLS XHTTP；REALITY、ShadowTLS、Restls、JLS、H3-only、Cookie placement 和 `download-settings` 会明确拒绝。
+          - 一个 VPN 运行周期绑定一个 XHTTP HTTPS origin；切换到不同 host 后需要重启 VPN。
+          - ECH、连接复用与底层 socket 参数由设备安装的 System WebView/Chromium 决定，无法保证等同于 mihomo 的 `ech-opts`、XMUX 或 TFO。
+          - 服务端必须接受 `packet-up` 或自动模式；只允许 `stream-one` 的服务端无法使用当前 WebView Fetch 数据面。
+
+          ## 验证范围
+
+          - Debug 单元测试、Release R8、Android Lint、JNI/CGO arm64 构建。
+          - mihomo `transport/xhttp` 与 `adapter/outbound` 测试。
+          - JNI 导出、DEX 回调名称、SONAME、DT_NEEDED、16 KiB LOAD 对齐、APK 签名和 zipalign。
+
+          本页面下方 Assets 包含签名 APK、SHA-256、R8 mapping、native symbols、mihomo 补丁、构建日志和对应提交号。该版本来自 `copy` 分支，不进入 `main`。
+          EOF
+
+      - name: Upload signed prerelease artifact
         if: steps.release.outputs.exists != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: AndroidCyaml-v${{ steps.release.outputs.version }}-signed
+          name: AndroidCyaml-v${{ steps.release.outputs.version }}-copy-prerelease
           path: |
             AndroidCyaml-v${{ steps.release.outputs.version }}-arm64-v8a.apk
             AndroidCyaml-v${{ steps.release.outputs.version }}-mapping.txt
             AndroidCyaml-v${{ steps.release.outputs.version }}-native-debug-symbols.zip
+            AndroidCyaml-v${{ steps.release.outputs.version }}-webview-xhttp.patch
+            AndroidCyaml-v${{ steps.release.outputs.version }}-commit.txt
+            AndroidCyaml-v${{ steps.release.outputs.version }}-build.log
             SHA256SUMS
-            build-release.log
+            RELEASE_NOTES.md
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub release
+      - name: Publish GitHub prerelease
         if: steps.release.outputs.exists != 'true'
         shell: bash
         env:
@@ -206,7 +258,13 @@ jobs:
           set -euo pipefail
           gh release create "${RELEASE_TAG}" \
             "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk" \
+            "AndroidCyaml-v${RELEASE_VERSION}-mapping.txt" \
+            "AndroidCyaml-v${RELEASE_VERSION}-native-debug-symbols.zip" \
+            "AndroidCyaml-v${RELEASE_VERSION}-webview-xhttp.patch" \
+            "AndroidCyaml-v${RELEASE_VERSION}-commit.txt" \
+            "AndroidCyaml-v${RELEASE_VERSION}-build.log" \
             "SHA256SUMS" \
             --target "${GITHUB_SHA}" \
-            --title "AndroidCyaml v${RELEASE_VERSION}" \
-            --generate-notes
+            --title "AndroidCyaml v${RELEASE_VERSION} · WebView XHTTP 预发布" \
+            --notes-file RELEASE_NOTES.md \
+            --prerelease
