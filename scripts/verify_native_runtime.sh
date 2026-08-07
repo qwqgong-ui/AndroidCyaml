@@ -10,11 +10,13 @@ readonly APK="$1"
 [[ -f "${APK}" ]] || { echo "APK not found: ${APK}" >&2; exit 1; }
 command -v unzip >/dev/null || { echo "unzip is required" >&2; exit 1; }
 command -v readelf >/dev/null || { echo "readelf is required" >&2; exit 1; }
+command -v strings >/dev/null || { echo "strings is required" >&2; exit 1; }
 
 readonly WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "${WORK_DIR}"' EXIT
 
 unzip -q "${APK}" \
+    'classes*.dex' \
     'lib/arm64-v8a/libandroidcyaml.so' \
     'lib/arm64-v8a/libmihomo.so' \
     -d "${WORK_DIR}"
@@ -24,10 +26,20 @@ readonly CORE="${WORK_DIR}/lib/arm64-v8a/libmihomo.so"
 readonly WRAPPER_SYMBOLS="${WORK_DIR}/wrapper-symbols.txt"
 readonly CORE_SYMBOLS="${WORK_DIR}/core-symbols.txt"
 readonly CORE_UNDEFINED="${WORK_DIR}/core-undefined.txt"
+readonly DEX_STRINGS="${WORK_DIR}/dex-strings.txt"
 [[ -s "${WRAPPER}" && -s "${CORE}" ]] || {
     echo "APK does not contain both embedded runtime libraries" >&2
     exit 1
 }
+mapfile -d '' dex_files < <(find "${WORK_DIR}" -maxdepth 1 -type f -name 'classes*.dex' -print0 | sort -z)
+(( ${#dex_files[@]} > 0 )) || {
+    echo "APK does not contain classes.dex" >&2
+    exit 1
+}
+for dex in "${dex_files[@]}"; do
+    strings "${dex}"
+done > "${DEX_STRINGS}"
+
 readelf -Ws "${WRAPPER}" > "${WRAPPER_SYMBOLS}"
 readelf -Ws "${CORE}" > "${CORE_SYMBOLS}"
 
@@ -73,6 +85,18 @@ if readelf -d "${WRAPPER}" | grep 'Shared library:' | grep -q '/'; then
     exit 1
 fi
 
+for method in \
+    protectSocket \
+    resolveProcessOwner \
+    startBrowserRequest \
+    readBrowserResponse \
+    closeBrowserRequest; do
+    grep -Fxq "${method}" "${DEX_STRINGS}" || {
+        echo "R8 removed or renamed JNI callback method ${method}" >&2
+        exit 1
+    }
+done
+
 for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeValidate \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
@@ -113,4 +137,4 @@ if grep -Eq '^androidcyaml_(protect_socket|resolve_process)$' "${CORE_UNDEFINED}
     exit 1
 fi
 
-echo "Verified embedded mihomo JNI runtime in ${APK}"
+echo "Verified embedded mihomo JNI runtime and callback ABI in ${APK}"
