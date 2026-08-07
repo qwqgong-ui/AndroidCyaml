@@ -76,6 +76,7 @@ fi
 for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeValidate \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun \
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetWebViewXhttpEnabled \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetTcpConcurrent \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop \
@@ -90,8 +91,10 @@ done
 
 for symbol in \
     AndroidCyamlInstallCallbacks \
+    AndroidCyamlInstallBrowserCallbacks \
     AndroidCyamlValidate \
     AndroidCyamlPrepareTun \
+    AndroidCyamlSetBrowserDialerEnabled \
     AndroidCyamlStart \
     AndroidCyamlSetTcpConcurrent \
     AndroidCyamlStop \
