@@ -1,6 +1,7 @@
 package io.github.qwqgong.androidcyaml;
 
 import android.app.Application;
+import android.webkit.WebView;
 
 public final class AndroidCyamlApplication extends Application {
     @SuppressWarnings("FieldCanBeLocal")
@@ -14,6 +15,10 @@ public final class AndroidCyamlApplication extends Application {
             // enabled. Do not call WebView.disableWebView(): that API is
             // irreversible for the lifetime of this VPN process.
             fairMemoryManager = FairMemoryManager.start(this);
+        } else {
+            // Dashboard and Browser Dialer may coexist in different app
+            // processes. Chromium requires a separate data directory for each.
+            WebView.setDataDirectorySuffix("ui");
         }
         // Run in both processes so a reclaimed :ui process can record its own
         // exit even while the foreground-service process stayed alive.
