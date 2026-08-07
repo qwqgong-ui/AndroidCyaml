@@ -1,0 +1,218 @@
+From 8f913c8626e2dbbdf435d594b98fdd9c2749d001 Mon Sep 17 00:00:00 2001
+From: qwqgong-ui <248246420+qwqgong-ui@users.noreply.github.com>
+Date: Fri, 7 Aug 2026 18:00:00 +0900
+Subject: [PATCH] xhttp: add injectable browser transport
+
+Allow AndroidCyaml to replace the standard XHTTP HTTP transport at runtime
+without changing the user's proxy YAML. Browser mode deliberately resolves to
+packet-up because Fetch does not expose a full-duplex stream-one response while
+the request body remains open. The normal transport remains untouched when no
+factory is installed.
+---
+ adapter/outbound/vless.go                  | 35 ++++++++++++++++
+ transport/xhttp/browser_transport.go       | 62 +++++++++++++++++++++++++++++
+ transport/xhttp/browser_transport_test.go  | 55 +++++++++++++++++++++++++
+ 3 files changed, 152 insertions(+)
+ create mode 100644 transport/xhttp/browser_transport.go
+ create mode 100644 transport/xhttp/browser_transport_test.go
+
+diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
+index 6b9edd3..624f9d4 100644
+--- a/adapter/outbound/vless.go
++++ b/adapter/outbound/vless.go
+@@ -524,7 +524,27 @@ func NewVless(option VlessOption) (*Vless, error) {
+ 			ReuseConfig:          reuseCfg,
+ 		}
+ 
++		useBrowserTransport := xhttp.BrowserTransportEnabled()
++		if useBrowserTransport {
++			if !option.TLS {
++				return nil, errors.New("xhttp WebView transport requires TLS")
++			}
++			if securityMode != "" {
++				return nil, fmt.Errorf("xhttp WebView transport does not support %s", securityMode)
++			}
++			if len(option.ALPN) == 1 && option.ALPN[0] == "h3" {
++				return nil, errors.New("xhttp WebView transport cannot force HTTP/3")
++			}
++			// Fetch request streaming is half-duplex. Keep the imported YAML
++			// unchanged and select packet-up only in this in-memory client copy.
++			cfg.Mode = "packet-up"
++			// Browser connection reuse is controlled by Chromium, not XMUX.
++			cfg.ReuseConfig = nil
++		}
++
+ 		makeTransport := func() http.RoundTripper {
++			if useBrowserTransport {
++				return xhttp.BrowserTransportMaker(xhttp.BrowserTransportOptions{
++					ServerAddress: v.addr,
++					Host:          requestHost,
++				})()
++			}
+ 			return xhttp.NewTransport(
+ 				func(ctx context.Context) (net.Conn, error) {
+ 					return v.dialer.DialContext(ctx, "tcp", v.addr)
+@@ -654,7 +674,22 @@ func NewVless(option VlessOption) (*Vless, error) {
+ 					downloadHKeepAlivePeriod = time.Duration(ds.ReuseSettings.HKeepAlivePeriod) * time.Second
+ 			}
+ 
++			if useBrowserTransport {
++				if !downloadTLS {
++					return nil, errors.New("xhttp WebView download transport requires TLS")
++				}
++				if downloadSecurityMode != "" {
++					return nil, fmt.Errorf("xhttp WebView download transport does not support %s", downloadSecurityMode)
++				}
++				if len(downloadALPN) == 1 && downloadALPN[0] == "h3" {
++					return nil, errors.New("xhttp WebView download transport cannot force HTTP/3")
++				}
++				downloadCfg.ReuseConfig = nil
++			}
++
+ 			cfg.DownloadConfig = &downloadCfg
+ 
+ 			makeDownloadTransport = func() http.RoundTripper {
++				if useBrowserTransport {
++					return xhttp.BrowserTransportMaker(xhttp.BrowserTransportOptions{
++						ServerAddress: downloadAddr,
++						Host:          downloadHost,
++					})()
++				}
+ 				return xhttp.NewTransport(
+ 					func(ctx context.Context) (net.Conn, error) {
+ 						return v.dialer.DialContext(ctx, "tcp", downloadAddr)
+diff --git a/transport/xhttp/browser_transport.go b/transport/xhttp/browser_transport.go
+new file mode 100644
+index 0000000..f29ae1e
+--- /dev/null
++++ b/transport/xhttp/browser_transport.go
+@@ -0,0 +1,62 @@
++package xhttp
++
++import (
++	"errors"
++	"sync"
++
++	"github.com/metacubex/http"
++)
++
++// BrowserTransportOptions identifies the original proxy endpoint and the URL
++// host used by XHTTP. Android may use ServerAddress for endpoint pinning while
++// preserving Host as the browser-visible origin and TLS server name.
++type BrowserTransportOptions struct {
++	ServerAddress string
++	Host          string
++}
++
++// BrowserTransportFactory is installed by an embedding application. Returning
++// a RoundTripper keeps the XHTTP framing/session implementation inside mihomo
++// while moving TLS and HTTP request generation into the platform browser.
++type BrowserTransportFactory func(BrowserTransportOptions) (http.RoundTripper, error)
++
++var (
++	browserTransportMu      sync.RWMutex
++	browserTransportFactory BrowserTransportFactory
++)
++
++func SetBrowserTransportFactory(factory BrowserTransportFactory) {
++	browserTransportMu.Lock()
++	browserTransportFactory = factory
++	browserTransportMu.Unlock()
++}
++
++func BrowserTransportEnabled() bool {
++	browserTransportMu.RLock()
++	enabled := browserTransportFactory != nil
++	browserTransportMu.RUnlock()
++	return enabled
++}
++
++func NewBrowserTransport(options BrowserTransportOptions) (http.RoundTripper, error) {
++	browserTransportMu.RLock()
++	factory := browserTransportFactory
++	browserTransportMu.RUnlock()
++	if factory == nil {
++		return nil, errors.New("xhttp browser transport is not installed")
++	}
++	return factory(options)
++}
++
++type browserErrorTransport struct {
++	err error
++}
++
++func (t browserErrorTransport) RoundTrip(*http.Request) (*http.Response, error) {
++	return nil, t.err
++}
++
++func BrowserTransportMaker(options BrowserTransportOptions) TransportMaker {
++	return func() http.RoundTripper {
++		transport, err := NewBrowserTransport(options)
++		if err != nil {
++			return browserErrorTransport{err: err}
++		}
++		return transport
++	}
++}
++
+diff --git a/transport/xhttp/browser_transport_test.go b/transport/xhttp/browser_transport_test.go
+new file mode 100644
+index 0000000..a15282d
+--- /dev/null
++++ b/transport/xhttp/browser_transport_test.go
+@@ -0,0 +1,55 @@
++package xhttp
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/metacubex/http"
++)
++
++type roundTripFunc func(*http.Request) (*http.Response, error)
++
++func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
++	return f(request)
++}
++
++func TestBrowserTransportFactory(t *testing.T) {
++	SetBrowserTransportFactory(nil)
++	t.Cleanup(func() { SetBrowserTransportFactory(nil) })
++
++	if BrowserTransportEnabled() {
++		t.Fatal("browser transport unexpectedly enabled")
++	}
++	if _, err := NewBrowserTransport(BrowserTransportOptions{}); err == nil {
++		t.Fatal("NewBrowserTransport succeeded without a factory")
++	}
++
++	wantErr := errors.New("browser request reached test transport")
++	wantOptions := BrowserTransportOptions{
++		ServerAddress: "203.0.113.10:443",
++		Host:          "example.com",
++	}
++	SetBrowserTransportFactory(func(options BrowserTransportOptions) (http.RoundTripper, error) {
++		if options != wantOptions {
++			t.Fatalf("options = %#v, want %#v", options, wantOptions)
++		}
++		return roundTripFunc(func(*http.Request) (*http.Response, error) {
++			return nil, wantErr
++		}), nil
++	})
++
++	if !BrowserTransportEnabled() {
++		t.Fatal("browser transport not enabled after factory install")
++	}
++	transport := BrowserTransportMaker(wantOptions)()
++	request, err := http.NewRequest(http.MethodGet, "https://example.com/test", nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = transport.RoundTrip(request); !errors.Is(err, wantErr) {
++		t.Fatalf("RoundTrip error = %v, want %v", err, wantErr)
++	}
++}
++
+-- 
+2.47.3
