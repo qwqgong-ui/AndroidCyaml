@@ -36,6 +36,11 @@ final class MihomoRuntime implements AutoCloseable {
     }
 
     String start() throws IOException, InterruptedException {
+        if (settings.webViewXhttp() && AndroidVpnService.isLockdownMode()) {
+            throw new IOException(
+                    "XHTTP WebView 无法在系统 VPN 锁定模式下运行；Chromium socket 无法取得 FD 调用 protect()"
+            );
+        }
         MihomoPaths paths = fileStore.ensureReady();
         controller = MihomoController.reserve(settings.lanWebUiPublic());
         platformCallbacks.configureWebViewXhttp(settings.webViewXhttp());
