@@ -1,7 +1,5 @@
 package io.github.qwqgong.androidcyaml;
 
-import android.util.Log;
-
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,7 +29,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * System WebView. Unknown authorities are rejected; this is not an open proxy.</p>
  */
 final class WebViewConnectProxy implements AutoCloseable {
-    private static final String TAG = "AndroidCyaml/WVProxy";
     private static final int MAX_LINE_BYTES = 16 * 1024;
     private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
 
@@ -76,10 +73,9 @@ final class WebViewConnectProxy implements AutoCloseable {
                 client.setTcpNoDelay(true);
                 sockets.add(client);
                 workers.execute(() -> handle(client));
-            } catch (IOException exception) {
-                if (!closed.get()) {
-                    Log.w(TAG, "CONNECT proxy accept failed", exception);
-                }
+            } catch (IOException ignored) {
+                // Listener closure and transient accept failures both end this
+                // iteration. The loop exits once close() flips the state.
             }
         }
     }
@@ -131,10 +127,8 @@ final class WebViewConnectProxy implements AutoCloseable {
                     outputOf(client)
             ));
             copy(input, upstream.getOutputStream());
-        } catch (IOException exception) {
-            if (!closed.get()) {
-                Log.d(TAG, "CONNECT tunnel closed", exception);
-            }
+        } catch (IOException ignored) {
+            // CONNECT tunnels routinely end with one side closing first.
         } finally {
             closeSocket(client);
             closeSocket(upstream);
@@ -151,10 +145,8 @@ final class WebViewConnectProxy implements AutoCloseable {
             if (input != null && output != null) {
                 copy(input, output);
             }
-        } catch (IOException exception) {
-            if (!closed.get()) {
-                Log.d(TAG, "Reverse CONNECT tunnel closed", exception);
-            }
+        } catch (IOException ignored) {
+            // CONNECT tunnels routinely end with one side closing first.
         } finally {
             closeSocket(sourceSocket);
             closeSocket(destinationSocket);
