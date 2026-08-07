@@ -188,5 +188,5 @@ tasks.configureEach {
 }
 
 tasks.named("preBuild") {
-    dependsOn(fetchGeodata, fetchZashboard, buildMihomo)
+    dependsOn(fetchGeodata, buildMihomo)
 }

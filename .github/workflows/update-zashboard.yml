@@ -1,0 +1,51 @@
+name: Update Zashboard
+
+on:
+  schedule:
+    # 04:17 Asia/Taipei (UTC+8).
+    - cron: "17 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-zashboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch latest Zashboard assets
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash scripts/fetch_zashboard.sh
+
+      - name: Commit tracked asset update
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git add --all -- \
+            app/src/main/assets/zashboard \
+            app/src/main/assets/zashboard.version
+
+          if git diff --cached --quiet; then
+            echo "Zashboard assets are already current."
+            exit 0
+          fi
+
+          version="$(<app/src/main/assets/zashboard.version)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update zashboard to ${version%%@*}"
+          git pull --rebase origin main
+          git push origin HEAD:main
