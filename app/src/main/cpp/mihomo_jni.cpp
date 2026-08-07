@@ -1,5 +1,6 @@
 #include <jni.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -13,6 +14,9 @@ std::mutex g_callback_mutex;
 jobject g_callback = nullptr;
 jmethodID g_protect_method = nullptr;
 jmethodID g_resolve_method = nullptr;
+jmethodID g_browser_start_method = nullptr;
+jmethodID g_browser_read_method = nullptr;
+jmethodID g_browser_close_method = nullptr;
 
 class AttachedEnv {
 public:
@@ -71,6 +75,23 @@ void clearJavaException(JNIEnv* env) {
     }
 }
 
+char* copyJavaString(JNIEnv* env, jstring value) {
+    if (value == nullptr) {
+        return nullptr;
+    }
+    const char* chars = env->GetStringUTFChars(value, nullptr);
+    if (chars == nullptr) {
+        return nullptr;
+    }
+    const size_t length = std::strlen(chars);
+    char* copy = static_cast<char*>(std::malloc(length + 1));
+    if (copy != nullptr) {
+        std::memcpy(copy, chars, length + 1);
+    }
+    env->ReleaseStringUTFChars(value, chars);
+    return copy;
+}
+
 void clearCallback(JNIEnv* env) {
     std::lock_guard<std::mutex> guard(g_callback_mutex);
     if (g_callback != nullptr) {
@@ -79,6 +100,9 @@ void clearCallback(JNIEnv* env) {
     g_callback = nullptr;
     g_protect_method = nullptr;
     g_resolve_method = nullptr;
+    g_browser_start_method = nullptr;
+    g_browser_read_method = nullptr;
+    g_browser_close_method = nullptr;
 }
 
 bool installCallback(JNIEnv* env, jobject callback) {
@@ -97,8 +121,28 @@ bool installCallback(JNIEnv* env, jobject callback) {
             "resolveProcessOwner",
             "(ILjava/lang/String;ILjava/lang/String;I)Ljava/lang/String;"
     );
+    jmethodID browser_start = env->GetMethodID(
+            callback_class,
+            "startBrowserRequest",
+            "(Ljava/lang/String;[B)Ljava/lang/String;"
+    );
+    jmethodID browser_read = env->GetMethodID(
+            callback_class,
+            "readBrowserResponse",
+            "(J[B)I"
+    );
+    jmethodID browser_close = env->GetMethodID(
+            callback_class,
+            "closeBrowserRequest",
+            "(J)V"
+    );
     env->DeleteLocalRef(callback_class);
-    if (protect == nullptr || resolve == nullptr || env->ExceptionCheck()) {
+    if (protect == nullptr
+            || resolve == nullptr
+            || browser_start == nullptr
+            || browser_read == nullptr
+            || browser_close == nullptr
+            || env->ExceptionCheck()) {
         clearJavaException(env);
         return false;
     }
@@ -110,10 +154,20 @@ bool installCallback(JNIEnv* env, jobject callback) {
     g_callback = global;
     g_protect_method = protect;
     g_resolve_method = resolve;
+    g_browser_start_method = browser_start;
+    g_browser_read_method = browser_read;
+    g_browser_close_method = browser_close;
     return true;
 }
 
-jobject localCallback(JNIEnv* env, jmethodID* protect, jmethodID* resolve) {
+jobject localCallback(
+        JNIEnv* env,
+        jmethodID* protect,
+        jmethodID* resolve,
+        jmethodID* browser_start,
+        jmethodID* browser_read,
+        jmethodID* browser_close
+) {
     std::lock_guard<std::mutex> guard(g_callback_mutex);
     if (g_callback == nullptr) {
         return nullptr;
@@ -123,6 +177,15 @@ jobject localCallback(JNIEnv* env, jmethodID* protect, jmethodID* resolve) {
     }
     if (resolve != nullptr) {
         *resolve = g_resolve_method;
+    }
+    if (browser_start != nullptr) {
+        *browser_start = g_browser_start_method;
+    }
+    if (browser_read != nullptr) {
+        *browser_read = g_browser_read_method;
+    }
+    if (browser_close != nullptr) {
+        *browser_close = g_browser_close_method;
     }
     return env->NewLocalRef(g_callback);
 }
@@ -134,7 +197,7 @@ int protectSocketCallback(int fd) {
         return 0;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, &method, nullptr);
+    jobject callback = localCallback(env, &method, nullptr, nullptr, nullptr, nullptr);
     if (callback == nullptr || method == nullptr) {
         return 0;
     }
@@ -160,7 +223,7 @@ char* resolveProcessCallback(
         return nullptr;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, nullptr, &method);
+    jobject callback = localCallback(env, nullptr, &method, nullptr, nullptr, nullptr);
     if (callback == nullptr || method == nullptr) {
         return nullptr;
     }
@@ -183,28 +246,124 @@ char* resolveProcessCallback(
     env->DeleteLocalRef(callback);
     if (env->ExceptionCheck()) {
         clearJavaException(env);
+        if (result != nullptr) {
+            env->DeleteLocalRef(result);
+        }
         return nullptr;
     }
-    if (result == nullptr) {
+    char* copy = copyJavaString(env, result);
+    if (result != nullptr) {
+        env->DeleteLocalRef(result);
+    }
+    return copy;
+}
+
+char* browserStartCallback(
+        const char* request_json,
+        const void* body,
+        int body_length
+) {
+    AttachedEnv attached;
+    JNIEnv* env = attached.get();
+    if (env == nullptr || body_length < 0) {
+        return nullptr;
+    }
+    jmethodID method = nullptr;
+    jobject callback = localCallback(env, nullptr, nullptr, &method, nullptr, nullptr);
+    if (callback == nullptr || method == nullptr) {
         return nullptr;
     }
 
-    const char* chars = env->GetStringUTFChars(result, nullptr);
-    if (chars == nullptr || chars[0] == '\0') {
-        if (chars != nullptr) {
-            env->ReleaseStringUTFChars(result, chars);
-        }
-        env->DeleteLocalRef(result);
+    jstring metadata = env->NewStringUTF(request_json == nullptr ? "{}" : request_json);
+    jbyteArray request_body = env->NewByteArray(static_cast<jsize>(body_length));
+    if (request_body == nullptr || metadata == nullptr) {
+        clearJavaException(env);
+        if (metadata != nullptr) env->DeleteLocalRef(metadata);
+        if (request_body != nullptr) env->DeleteLocalRef(request_body);
+        env->DeleteLocalRef(callback);
         return nullptr;
     }
-    size_t length = std::strlen(chars);
-    char* copy = static_cast<char*>(std::malloc(length + 1));
-    if (copy != nullptr) {
-        std::memcpy(copy, chars, length + 1);
+    if (body_length > 0 && body != nullptr) {
+        env->SetByteArrayRegion(
+                request_body,
+                0,
+                static_cast<jsize>(body_length),
+                reinterpret_cast<const jbyte*>(body)
+        );
     }
-    env->ReleaseStringUTFChars(result, chars);
-    env->DeleteLocalRef(result);
+    auto result = static_cast<jstring>(env->CallObjectMethod(
+            callback,
+            method,
+            metadata,
+            request_body
+    ));
+    env->DeleteLocalRef(metadata);
+    env->DeleteLocalRef(request_body);
+    env->DeleteLocalRef(callback);
+    if (env->ExceptionCheck()) {
+        clearJavaException(env);
+        if (result != nullptr) env->DeleteLocalRef(result);
+        return nullptr;
+    }
+    char* copy = copyJavaString(env, result);
+    if (result != nullptr) env->DeleteLocalRef(result);
     return copy;
+}
+
+int browserReadCallback(int64_t request_id, void* buffer, int capacity) {
+    AttachedEnv attached;
+    JNIEnv* env = attached.get();
+    if (env == nullptr || buffer == nullptr || capacity <= 0) {
+        return -1;
+    }
+    jmethodID method = nullptr;
+    jobject callback = localCallback(env, nullptr, nullptr, nullptr, &method, nullptr);
+    if (callback == nullptr || method == nullptr) {
+        return -1;
+    }
+    jbyteArray destination = env->NewByteArray(static_cast<jsize>(capacity));
+    if (destination == nullptr) {
+        clearJavaException(env);
+        env->DeleteLocalRef(callback);
+        return -1;
+    }
+    jint count = env->CallIntMethod(
+            callback,
+            method,
+            static_cast<jlong>(request_id),
+            destination
+    );
+    if (!env->ExceptionCheck() && count > 0 && count <= capacity) {
+        env->GetByteArrayRegion(
+                destination,
+                0,
+                count,
+                reinterpret_cast<jbyte*>(buffer)
+        );
+    }
+    if (env->ExceptionCheck() || count > capacity) {
+        clearJavaException(env);
+        count = -1;
+    }
+    env->DeleteLocalRef(destination);
+    env->DeleteLocalRef(callback);
+    return static_cast<int>(count);
+}
+
+void browserCloseCallback(int64_t request_id) {
+    AttachedEnv attached;
+    JNIEnv* env = attached.get();
+    if (env == nullptr) {
+        return;
+    }
+    jmethodID method = nullptr;
+    jobject callback = localCallback(env, nullptr, nullptr, nullptr, nullptr, &method);
+    if (callback == nullptr || method == nullptr) {
+        return;
+    }
+    env->CallVoidMethod(callback, method, static_cast<jlong>(request_id));
+    clearJavaException(env);
+    env->DeleteLocalRef(callback);
 }
 }  // namespace
 
@@ -214,10 +373,16 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
             reinterpret_cast<void*>(&protectSocketCallback),
             reinterpret_cast<void*>(&resolveProcessCallback)
     );
+    AndroidCyamlInstallBrowserCallbacks(
+            reinterpret_cast<void*>(&browserStartCallback),
+            reinterpret_cast<void*>(&browserReadCallback),
+            reinterpret_cast<void*>(&browserCloseCallback)
+    );
     return JNI_VERSION_1_6;
 }
 
 extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void*) {
+    AndroidCyamlInstallBrowserCallbacks(nullptr, nullptr, nullptr);
     AndroidCyamlInstallCallbacks(nullptr, nullptr);
     JNIEnv* env = nullptr;
     if (vm != nullptr && vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
@@ -260,6 +425,17 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun(
             const_cast<char*>(stack_value.c_str()),
             ipv6_enabled == JNI_TRUE ? 1 : 0,
             process_matching == JNI_TRUE ? 1 : 0
+    ));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetWebViewXhttpEnabled(
+        JNIEnv* env,
+        jclass,
+        jboolean enabled
+) {
+    return stringFromNative(env, AndroidCyamlSetBrowserDialerEnabled(
+            enabled == JNI_TRUE ? 1 : 0
     ));
 }
 
@@ -321,6 +497,8 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop(
         jclass
 ) {
     jstring result = stringFromNative(env, AndroidCyamlStop());
+    char* disable_result = AndroidCyamlSetBrowserDialerEnabled(0);
+    AndroidCyamlFree(disable_result);
     clearCallback(env);
     return result;
 }
