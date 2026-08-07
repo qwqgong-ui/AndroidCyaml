@@ -85,6 +85,9 @@ if readelf -d "${WRAPPER}" | grep 'Shared library:' | grep -q '/'; then
     exit 1
 fi
 
+# These names are consumed by C++ GetMethodID and do not otherwise appear in
+# Java string constants. Exact DEX-string matches therefore catch R8 removal or
+# obfuscation without confusing embedded JavaScript source with method entries.
 for method in \
     protectSocket \
     resolveProcessOwner \
@@ -93,20 +96,6 @@ for method in \
     closeBrowserRequest; do
     grep -Fxq "${method}" "${DEX_STRINGS}" || {
         echo "R8 removed or renamed JNI callback method ${method}" >&2
-        exit 1
-    }
-done
-
-for method in \
-    onReady \
-    requestBodyLength \
-    requestBodyChunk \
-    onHeaders \
-    onChunk \
-    onComplete \
-    onError; do
-    grep -Fxq "${method}" "${DEX_STRINGS}" || {
-        echo "R8 removed or renamed WebView JavaScript bridge method ${method}" >&2
         exit 1
     }
 done
