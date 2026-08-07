@@ -2,6 +2,8 @@ package io.github.qwqgong.androidcyaml;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.net.Network;
+import android.net.VpnService;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
@@ -10,6 +12,8 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceError;
+import android.webkit.WebResourceRequest;
 
 import androidx.webkit.ProxyConfig;
 import androidx.webkit.ProxyController;
@@ -19,10 +23,12 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.Locale;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -30,6 +36,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Executes XHTTP HTTP requests through Android System WebView.
@@ -175,37 +183,61 @@ final class WebViewXhttpDialer implements AutoCloseable {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ConcurrentHashMap<Long, Task> tasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, OriginPage> pages = new ConcurrentHashMap<>();
     private final AtomicLong nextId = new AtomicLong(1L);
     private final CountDownLatch webViewReady = new CountDownLatch(1);
-    private final Object pageLock = new Object();
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean proxyOverrideInstalled = new AtomicBoolean(false);
+    private final AtomicReference<WebView> bootstrapWebView = new AtomicReference<>();
     private final WebViewConnectProxy connectProxy;
-    private volatile WebView webView;
+    private final Context context;
     private volatile String initializationError;
-    private volatile CountDownLatch pageReady = new CountDownLatch(0);
-    private volatile String pageOrigin;
-    private volatile String pageError;
 
-    WebViewXhttpDialer(Context context) throws IOException {
-        Objects.requireNonNull(context);
-        connectProxy = new WebViewConnectProxy();
+    WebViewXhttpDialer(
+            VpnService vpnService,
+            Supplier<Network> underlyingNetworkSupplier
+    ) throws IOException {
+        Objects.requireNonNull(vpnService);
+        Objects.requireNonNull(underlyingNetworkSupplier);
+        context = vpnService.getApplicationContext();
+        connectProxy = new WebViewConnectProxy(
+                vpnService::protect,
+                () -> {
+                    Network network = underlyingNetworkSupplier.get();
+                    if (network == null) {
+                        throw new IOException("WebView XHTTP 底层网络不可用");
+                    }
+                    return new WebViewConnectProxy.NetworkRoute() {
+                        @Override
+                        public InetAddress[] resolve(String host) throws IOException {
+                            return network.getAllByName(host);
+                        }
+
+                        @Override
+                        public void bind(Socket socket) throws IOException {
+                            network.bindSocket(socket);
+                        }
+                    };
+                }
+        );
         try {
-            installProxyOverride();
-            Runnable create = () -> createWebView(context.getApplicationContext());
+            Runnable create = this::createBootstrapWebView;
             if (Looper.myLooper() == Looper.getMainLooper()) {
                 create.run();
             } else {
                 mainHandler.post(create);
             }
             await(webViewReady, 15_000L, "System WebView did not initialize");
-            if (webView == null) {
+            if (bootstrapWebView.get() == null) {
                 throw new IOException(initializationError == null
                         ? "System WebView did not initialize"
                         : initializationError);
             }
+            installProxyOverride();
         } catch (IOException | RuntimeException exception) {
             clearProxyOverride();
             connectProxy.close();
+            mainHandler.post(() -> destroyWebView(bootstrapWebView.getAndSet(null)));
             if (exception instanceof IOException ioException) {
                 throw ioException;
             }
@@ -218,20 +250,22 @@ final class WebViewXhttpDialer implements AutoCloseable {
             return errorResult("System WebView XHTTP dialer is closed");
         }
         final JSONObject metadata;
+        final OriginPage page;
         try {
             metadata = new JSONObject(requestJson == null ? "{}" : requestJson);
             String url = metadata.optString("url", "");
             String origin = originOf(url);
-            ensurePageOrigin(origin);
             connectProxy.register(url, metadata.optString("serverAddress", ""));
+            page = ensureOriginPage(origin);
         } catch (JSONException | IOException exception) {
+            Log.w(TAG, "Unable to prepare browser request: " + exception.getMessage());
             return errorResult(exception.getMessage() == null
                     ? "Invalid WebView XHTTP request metadata"
                     : exception.getMessage());
         }
 
         long id = nextId.getAndIncrement();
-        Task task = new Task(id, body == null ? new byte[0] : body.clone());
+        Task task = new Task(id, body == null ? new byte[0] : body.clone(), page);
         tasks.put(id, task);
         try {
             metadata.put("id", id);
@@ -241,7 +275,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
         }
 
         mainHandler.post(() -> {
-            WebView current = webView;
+            WebView current = page.webView;
             if (current == null || closed.get()) {
                 task.fail("System WebView is unavailable");
                 return;
@@ -262,6 +296,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
         }
 
         if (task.error != null) {
+            Log.w(TAG, "Browser request failed: " + task.error);
             tasks.remove(id);
             return errorResult(task.error);
         }
@@ -293,11 +328,12 @@ final class WebViewXhttpDialer implements AutoCloseable {
 
     void closeRequest(long id) {
         Task task = tasks.remove(id);
-        if (task != null) {
-            task.close();
+        if (task == null) {
+            return;
         }
+        task.close();
         mainHandler.post(() -> {
-            WebView current = webView;
+            WebView current = task.page.webView;
             if (current != null) {
                 current.evaluateJavascript("window.androidCyamlCancel(" + id + ");", null);
             }
@@ -312,37 +348,25 @@ final class WebViewXhttpDialer implements AutoCloseable {
         tasks.forEach((id, task) -> task.close());
         tasks.clear();
         clearProxyOverride();
+        connectProxy.close();
         mainHandler.post(() -> {
-            WebView current = webView;
-            webView = null;
-            if (current != null) {
-                current.stopLoading();
-                current.removeJavascriptInterface("AndroidCyamlNative");
-                current.destroy();
+            destroyWebView(bootstrapWebView.getAndSet(null));
+            for (OriginPage page : pages.values()) {
+                destroyWebView(page.webView);
+                page.webView = null;
             }
-            connectProxy.close();
+            pages.clear();
         });
     }
 
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
-    private void createWebView(Context context) {
+    private void createBootstrapWebView() {
         if (closed.get()) {
             initializationError = "System WebView XHTTP was closed during startup";
             webViewReady.countDown();
             return;
         }
         try {
-            WebView created = new WebView(context);
-            WebSettings settings = created.getSettings();
-            settings.setJavaScriptEnabled(true);
-            settings.setDomStorageEnabled(false);
-            settings.setAllowFileAccess(false);
-            settings.setAllowContentAccess(false);
-            settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-            created.addJavascriptInterface(new JavascriptBridge(), "AndroidCyamlNative");
-            created.setWebViewClient(new WebViewClient());
-            webView = created;
+            bootstrapWebView.set(newWebView());
             webViewReady.countDown();
         } catch (RuntimeException exception) {
             initializationError = "Unable to create System WebView XHTTP dialer: "
@@ -354,50 +378,94 @@ final class WebViewXhttpDialer implements AutoCloseable {
         }
     }
 
-    private void ensurePageOrigin(String origin) throws IOException {
-        final CountDownLatch latch;
-        synchronized (pageLock) {
-            if (pageOrigin == null) {
-                pageOrigin = origin;
-                pageError = null;
-                pageReady = new CountDownLatch(1);
-                latch = pageReady;
-                mainHandler.post(() -> {
-                    WebView current = webView;
-                    if (current == null || closed.get()) {
-                        pageError = "System WebView is unavailable";
-                        latch.countDown();
-                        return;
-                    }
-                    try {
-                        current.loadDataWithBaseURL(
-                                origin + "/",
-                                PAGE,
-                                "text/html",
-                                StandardCharsets.UTF_8.name(),
-                                null
-                        );
-                    } catch (RuntimeException exception) {
-                        pageError = "Unable to load System WebView XHTTP origin: "
-                                + (exception.getMessage() == null
-                                ? exception.getClass().getSimpleName()
-                                : exception.getMessage());
-                        latch.countDown();
-                    }
-                });
-            } else if (!pageOrigin.equals(origin)) {
-                throw new IOException(
-                        "System WebView XHTTP runtime is already bound to "
-                                + pageOrigin + "; restart VPN before using " + origin
-                );
-            } else {
-                latch = pageReady;
+    private OriginPage ensureOriginPage(String origin) throws IOException {
+        OriginPage page = pages.computeIfAbsent(origin, OriginPage::new);
+        if (page.initializationStarted.compareAndSet(false, true)) {
+            mainHandler.post(() -> initializeOriginPage(page));
+        }
+        await(page.ready, 15_000L, "System WebView XHTTP page did not initialize");
+        if (page.error != null) {
+            throw new IOException(page.error);
+        }
+        return page;
+    }
+
+    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
+    private WebView newWebView() {
+        WebView created = new WebView(context);
+        WebSettings settings = created.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(false);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        return created;
+    }
+
+    @SuppressLint("AddJavascriptInterface")
+    private void initializeOriginPage(OriginPage page) {
+        if (closed.get()) {
+            page.fail("System WebView is unavailable");
+            return;
+        }
+        try {
+            WebView current = bootstrapWebView.getAndSet(null);
+            if (current == null) {
+                current = newWebView();
             }
+            current.addJavascriptInterface(
+                    new JavascriptBridge(page),
+                    "AndroidCyamlNative"
+            );
+            current.setWebViewClient(new WebViewClient() {
+                @Override
+                public void onReceivedError(
+                        WebView view,
+                        WebResourceRequest request,
+                        WebResourceError error
+                ) {
+                    // Fetch failures are reported with their task id by the
+                    // JavaScript bridge below. Only log a page-load failure
+                    // here; canceled health checks otherwise flood warning
+                    // logs with context-free net::ERR_FAILED entries.
+                    if (request == null || request.isForMainFrame()) {
+                        Log.w(
+                                TAG,
+                                "Chromium page error "
+                                        + (error == null ? "unknown" : error.getErrorCode())
+                                        + ": "
+                                        + (error == null ? "unknown" : error.getDescription())
+                        );
+                    }
+                }
+            });
+            page.webView = current;
+            current.loadDataWithBaseURL(
+                    page.origin + "/",
+                    PAGE,
+                    "text/html",
+                    StandardCharsets.UTF_8.name(),
+                    null
+            );
+        } catch (RuntimeException exception) {
+            page.fail(
+                    "Unable to load System WebView XHTTP origin: "
+                            + (exception.getMessage() == null
+                            ? exception.getClass().getSimpleName()
+                            : exception.getMessage())
+            );
         }
-        await(latch, 15_000L, "System WebView XHTTP page did not initialize");
-        if (pageError != null) {
-            throw new IOException(pageError);
+    }
+
+    private static void destroyWebView(WebView current) {
+        if (current == null) {
+            return;
         }
+        current.stopLoading();
+        current.removeJavascriptInterface("AndroidCyamlNative");
+        current.setWebViewClient(null);
+        current.destroy();
     }
 
     static String originOf(String urlValue) throws IOException {
@@ -427,7 +495,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
             throw new IOException("当前 Android System WebView 不支持进程级代理覆写");
         }
         ProxyConfig proxyConfig = new ProxyConfig.Builder()
-                .addProxyRule("127.0.0.1:" + connectProxy.port())
+                .addProxyRule(connectProxy.authority())
                 .build();
         CountDownLatch applied = new CountDownLatch(1);
         try {
@@ -440,10 +508,11 @@ final class WebViewXhttpDialer implements AutoCloseable {
             throw new IOException("无法配置 System WebView CONNECT 代理", exception);
         }
         await(applied, 10_000L, "System WebView CONNECT 代理应用超时");
+        proxyOverrideInstalled.set(true);
     }
 
     private void clearProxyOverride() {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+        if (!proxyOverrideInstalled.compareAndSet(true, false)) {
             return;
         }
         try {
@@ -476,9 +545,15 @@ final class WebViewXhttpDialer implements AutoCloseable {
     }
 
     private final class JavascriptBridge {
+        private final OriginPage page;
+
+        JavascriptBridge(OriginPage page) {
+            this.page = page;
+        }
+
         @JavascriptInterface
         public void onReady() {
-            pageReady.countDown();
+            page.ready.countDown();
         }
 
         @JavascriptInterface
@@ -533,6 +608,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
         public void onError(long id, String message) {
             Task task = tasks.get(id);
             if (task != null) {
+                Log.w(TAG, "Chromium fetch failed: " + message);
                 task.fail(message == null || message.isBlank()
                         ? "System WebView fetch failed"
                         : message);
@@ -545,6 +621,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
 
         final long id;
         final byte[] requestBody;
+        final OriginPage page;
         final CountDownLatch headersReady = new CountDownLatch(1);
         final LinkedBlockingQueue<Chunk> response = new LinkedBlockingQueue<>();
         final AtomicBoolean closed = new AtomicBoolean(false);
@@ -555,9 +632,10 @@ final class WebViewXhttpDialer implements AutoCloseable {
         private Chunk current;
         private int currentOffset;
 
-        Task(long id, byte[] requestBody) {
+        Task(long id, byte[] requestBody, OriginPage page) {
             this.id = id;
             this.requestBody = requestBody;
+            this.page = page;
         }
 
         void headers(int status, String text, String encodedHeaders) {
@@ -617,6 +695,23 @@ final class WebViewXhttpDialer implements AutoCloseable {
                 response.offer(EOF);
                 headersReady.countDown();
             }
+        }
+    }
+
+    private static final class OriginPage {
+        final String origin;
+        final AtomicBoolean initializationStarted = new AtomicBoolean(false);
+        final CountDownLatch ready = new CountDownLatch(1);
+        volatile WebView webView;
+        volatile String error;
+
+        OriginPage(String origin) {
+            this.origin = origin;
+        }
+
+        void fail(String message) {
+            error = message;
+            ready.countDown();
         }
     }
 

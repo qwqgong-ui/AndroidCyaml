@@ -194,6 +194,9 @@ final class RuntimeCoordinator {
             underlyingNetworkState = networkMonitor.start(
                     state -> executor.execute(() -> onUnderlyingNetworkChanged(state))
             );
+            platformCallbacks.updateUnderlyingNetwork(
+                    underlyingNetworkState.networkHandle()
+            );
             publish(RuntimeState.STARTING, "正在启动同进程 mihomo JNI TUN…");
             String detail = startRuntimeOnExistingService();
             publish(RuntimeState.RUNNING, detail);
@@ -408,6 +411,9 @@ final class RuntimeCoordinator {
             return;
         }
         underlyingNetworkState = state;
+        if (platformCallbacks != null) {
+            platformCallbacks.updateUnderlyingNetwork(state.networkHandle());
+        }
         RuntimeOverrideSettings settings = overrideStore.settings();
         boolean targetTcpConcurrent =
                 settings.adaptiveTcpConcurrent() && state.wifi();

@@ -1,5 +1,6 @@
 package io.github.qwqgong.androidcyaml;
 
+import android.net.Network;
 import android.net.VpnService;
 import android.util.Log;
 
@@ -14,6 +15,7 @@ final class NativePlatformCallbacks implements AutoCloseable {
 
     private final VpnService vpnService;
     private final ConnectionOwnerResolver ownerResolver;
+    private volatile Network underlyingNetwork;
     private WebViewXhttpDialer webViewXhttpDialer;
 
     NativePlatformCallbacks(VpnService vpnService) {
@@ -24,11 +26,25 @@ final class NativePlatformCallbacks implements AutoCloseable {
     synchronized void configureWebViewXhttp(boolean enabled) throws IOException {
         if (enabled) {
             if (webViewXhttpDialer == null) {
-                webViewXhttpDialer = new WebViewXhttpDialer(vpnService);
+                webViewXhttpDialer = new WebViewXhttpDialer(
+                        vpnService,
+                        () -> underlyingNetwork
+                );
             }
             return;
         }
         closeWebViewXhttp();
+    }
+
+    void updateUnderlyingNetwork(long networkHandle) {
+        try {
+            underlyingNetwork = networkHandle == 0L
+                    ? null
+                    : Network.fromNetworkHandle(networkHandle);
+        } catch (IllegalArgumentException exception) {
+            underlyingNetwork = null;
+            Log.w(TAG, "Unable to update WebView XHTTP underlying network", exception);
+        }
     }
 
     @SuppressWarnings("unused")

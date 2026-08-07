@@ -10,9 +10,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -30,23 +34,38 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class WebViewConnectProxy implements AutoCloseable {
     private static final int MAX_LINE_BYTES = 16 * 1024;
     private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
+    private static final byte[] IPV4_LOOPBACK = {127, 0, 0, 1};
 
     private final ServerSocket listener;
     private final ExecutorService workers;
-    private final ConcurrentHashMap<String, InetSocketAddress> targets =
+    private final SocketProtector socketProtector;
+    private final NetworkRouteProvider routeProvider;
+    private final ConcurrentHashMap<String, TargetPool> targets =
             new ConcurrentHashMap<>();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    WebViewConnectProxy() throws IOException {
+    WebViewConnectProxy(
+            SocketProtector socketProtector,
+            NetworkRouteProvider routeProvider
+    ) throws IOException {
+        this.socketProtector = Objects.requireNonNull(socketProtector);
+        this.routeProvider = Objects.requireNonNull(routeProvider);
         listener = new ServerSocket();
-        listener.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 64);
+        // ProxyConfig below uses this listener address verbatim. Do not use
+        // getLoopbackAddress(): Android commonly returns ::1, while a
+        // 127.0.0.1 proxy rule cannot reach an IPv6-only ServerSocket.
+        listener.bind(new InetSocketAddress(InetAddress.getByAddress(IPV4_LOOPBACK), 0), 64);
         workers = Executors.newCachedThreadPool(new ProxyThreadFactory());
         workers.execute(this::acceptLoop);
     }
 
     int port() {
         return listener.getLocalPort();
+    }
+
+    String authority() {
+        return listener.getInetAddress().getHostAddress() + ':' + port();
     }
 
     void register(String urlValue, String serverAddress) throws IOException {
@@ -61,15 +80,13 @@ final class WebViewConnectProxy implements AutoCloseable {
             throw new IOException("WebView XHTTP URL 缺少主机名");
         }
         int port = url.getPort() > 0 ? url.getPort() : 443;
-        InetSocketAddress target = parseSocketAddress(serverAddress, port);
+        HostPort target = parseAuthority(serverAddress, port);
         String key = authorityKey(host, port);
-        InetSocketAddress existing = targets.putIfAbsent(key, target);
-        if (existing != null && !existing.equals(target)) {
-            throw new IOException(
-                    "同一 XHTTP host 不能同时映射到多个 server："
-                            + key + " -> " + existing + " / " + target
-            );
-        }
+        targets.compute(key, (ignored, existing) -> {
+            TargetPool pool = existing == null ? new TargetPool() : existing;
+            pool.add(target);
+            return pool;
+        });
     }
 
     private void acceptLoop() {
@@ -109,18 +126,20 @@ final class WebViewConnectProxy implements AutoCloseable {
             }
 
             HostPort requested = parseAuthority(authority, 443);
-            InetSocketAddress destination = targets.get(
+            TargetPool destinations = targets.get(
                     authorityKey(requested.host(), requested.port())
             );
-            if (destination == null) {
+            if (destinations == null) {
                 writeFailure(output, 403, "Forbidden");
                 return;
             }
 
-            upstream = new Socket();
-            upstream.setTcpNoDelay(true);
-            upstream.connect(destination, CONNECT_TIMEOUT_MILLIS);
-            sockets.add(upstream);
+            try {
+                upstream = connectUpstream(destinations);
+            } catch (SocketProtectionException exception) {
+                writeFailure(output, 502, "VPN Protect Failed");
+                return;
+            }
             output.write("HTTP/1.1 200 Connection Established\r\n\r\n"
                     .getBytes(StandardCharsets.US_ASCII));
             output.flush();
@@ -139,6 +158,55 @@ final class WebViewConnectProxy implements AutoCloseable {
             closeSocket(client);
             closeSocket(upstream);
         }
+    }
+
+    private Socket connectUpstream(TargetPool destinations) throws IOException {
+        NetworkRoute route = routeProvider.current();
+        if (route == null) {
+            throw new IOException("WebView XHTTP 底层网络不可用");
+        }
+
+        IOException lastFailure = null;
+        for (HostPort destination : destinations.candidates()) {
+            final InetAddress[] addresses;
+            try {
+                addresses = route.resolve(destination.host());
+            } catch (IOException exception) {
+                lastFailure = exception;
+                continue;
+            }
+            if (addresses == null || addresses.length == 0) {
+                lastFailure = new IOException("WebView XHTTP 无法解析目标服务器");
+                continue;
+            }
+            for (InetAddress address : addresses) {
+                Socket candidate = new Socket();
+                sockets.add(candidate);
+                try {
+                    // Force creation of the socket FD, bind it to the selected
+                    // non-VPN network, then exempt that exact FD before connect().
+                    candidate.setTcpNoDelay(true);
+                    route.bind(candidate);
+                    if (!protect(candidate)) {
+                        throw new SocketProtectionException();
+                    }
+                    candidate.connect(
+                            new InetSocketAddress(address, destination.port()),
+                            CONNECT_TIMEOUT_MILLIS
+                    );
+                    return candidate;
+                } catch (SocketProtectionException exception) {
+                    closeSocket(candidate);
+                    throw exception;
+                } catch (IOException exception) {
+                    lastFailure = exception;
+                    closeSocket(candidate);
+                }
+            }
+        }
+        throw lastFailure == null
+                ? new IOException("WebView XHTTP 无法连接目标服务器")
+                : lastFailure;
     }
 
     private void copyAndClose(
@@ -200,10 +268,12 @@ final class WebViewConnectProxy implements AutoCloseable {
         output.flush();
     }
 
-    private static InetSocketAddress parseSocketAddress(String value, int fallbackPort)
-            throws IOException {
-        HostPort parsed = parseAuthority(value, fallbackPort);
-        return new InetSocketAddress(parsed.host(), parsed.port());
+    private boolean protect(Socket socket) {
+        try {
+            return socketProtector.protect(socket);
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     private static HostPort parseAuthority(String value, int fallbackPort) throws IOException {
@@ -299,6 +369,47 @@ final class WebViewConnectProxy implements AutoCloseable {
     }
 
     private record HostPort(String host, int port) {}
+
+    private static final class TargetPool {
+        private final CopyOnWriteArrayList<HostPort> endpoints =
+                new CopyOnWriteArrayList<>();
+        private final AtomicInteger nextEndpoint = new AtomicInteger();
+
+        void add(HostPort endpoint) {
+            endpoints.addIfAbsent(endpoint);
+        }
+
+        List<HostPort> candidates() {
+            List<HostPort> snapshot = List.copyOf(endpoints);
+            if (snapshot.size() < 2) {
+                return snapshot;
+            }
+            int start = Math.floorMod(nextEndpoint.getAndIncrement(), snapshot.size());
+            List<HostPort> ordered = new ArrayList<>(snapshot.size());
+            for (int offset = 0; offset < snapshot.size(); offset++) {
+                ordered.add(snapshot.get((start + offset) % snapshot.size()));
+            }
+            return ordered;
+        }
+    }
+
+    @FunctionalInterface
+    interface SocketProtector {
+        boolean protect(Socket socket);
+    }
+
+    @FunctionalInterface
+    interface NetworkRouteProvider {
+        NetworkRoute current() throws IOException;
+    }
+
+    interface NetworkRoute {
+        InetAddress[] resolve(String host) throws IOException;
+
+        void bind(Socket socket) throws IOException;
+    }
+
+    private static final class SocketProtectionException extends IOException {}
 
     private static final class ProxyThreadFactory implements ThreadFactory {
         private final AtomicInteger nextId = new AtomicInteger();

@@ -66,12 +66,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/metacubex/http"
+	"github.com/metacubex/http/httptrace"
 	"github.com/metacubex/mihomo/transport/xhttp"
 )
 
@@ -184,6 +186,24 @@ func (t *androidBrowserTransport) RoundTrip(request *http.Request) (*http.Respon
 	if len(body) != 0 {
 		bodyPointer = unsafe.Pointer(&body[0])
 	}
+	// XHTTP packet-up starts the download request before it returns the
+	// logical tunnel to its caller. A CDN is allowed to hold that download's
+	// response headers until the first upload packet arrives, so waiting for
+	// WebView response headers before reporting GotConn deadlocks both sides:
+	// mihomo cannot produce the upload until DialPacketUp returns. WebView owns
+	// the physical connection and startRequest below accepts/schedules the
+	// browser operation synchronously, so release the logical dial immediately
+	// before entering that potentially header-blocked call. Any later browser
+	// failure is still delivered through RoundTrip and the response body.
+	if trace := httptrace.ContextClientTrace(request.Context()); trace != nil && trace.GotConn != nil {
+		// mihomo composes this trace with an address collector that expects a
+		// non-nil Conn. A pipe supplies stable synthetic addresses without
+		// exposing or impersonating WebView's protected physical socket.
+		traceConn, tracePeer := net.Pipe()
+		trace.GotConn(httptrace.GotConnInfo{Conn: traceConn})
+		_ = traceConn.Close()
+		_ = tracePeer.Close()
+	}
 	encoded := C.androidcyaml_call_browser_start(
 		startCallback,
 		metadataValue,
@@ -209,7 +229,6 @@ func (t *androidBrowserTransport) RoundTrip(request *http.Request) (*http.Respon
 		closeBrowserRequest(result.ID)
 		return nil, errors.New("Android WebView XHTTP returned an invalid HTTP status")
 	}
-
 	status := strconv.Itoa(result.StatusCode)
 	if result.StatusText != "" {
 		status += " " + result.StatusText
