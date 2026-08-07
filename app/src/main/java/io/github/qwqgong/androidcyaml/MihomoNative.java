@@ -46,19 +46,30 @@ final class MihomoNative {
             int tunFileDescriptor,
             NativePlatformCallbacks callbacks
     ) throws IOException {
-        JSONObject payload = requireSuccess(nativeStart(
-                paths.home().getAbsolutePath(),
-                paths.config().getAbsolutePath(),
-                paths.ui().getAbsolutePath(),
-                controller.listenerAddress(),
-                settings.tunStack().wireValue(),
-                settings.logLevel().wireValue(),
-                tunFileDescriptor,
-                ipv6Enabled,
-                settings.processMatching(),
-                settings.lanWebUiPublic(),
-                callbacks
-        ));
+        requireSuccess(nativeSetWebViewXhttpEnabled(settings.webViewXhttp()));
+        final JSONObject payload;
+        try {
+            payload = requireSuccess(nativeStart(
+                    paths.home().getAbsolutePath(),
+                    paths.config().getAbsolutePath(),
+                    paths.ui().getAbsolutePath(),
+                    controller.listenerAddress(),
+                    settings.tunStack().wireValue(),
+                    settings.logLevel().wireValue(),
+                    tunFileDescriptor,
+                    ipv6Enabled,
+                    settings.processMatching(),
+                    settings.lanWebUiPublic(),
+                    callbacks
+            ));
+        } catch (IOException startFailure) {
+            try {
+                requireSuccess(nativeSetWebViewXhttpEnabled(false));
+            } catch (IOException disableFailure) {
+                startFailure.addSuppressed(disableFailure);
+            }
+            throw startFailure;
+        }
         if (payload == null || !payload.has("controllerSecret")) {
             throw new IOException("mihomo 未返回控制器鉴权信息");
         }
@@ -110,6 +121,8 @@ final class MihomoNative {
             boolean ipv6Enabled,
             boolean processMatching
     );
+
+    private static native String nativeSetWebViewXhttpEnabled(boolean enabled);
 
     private static native String nativeStart(
             String home,
