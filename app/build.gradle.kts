@@ -125,6 +125,7 @@ android {
 
 dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    implementation("androidx.webkit:webkit:1.16.0")
     testImplementation("junit:junit:4.13.2")
 }
 
