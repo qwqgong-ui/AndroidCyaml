@@ -38,7 +38,9 @@ final class MihomoRuntime implements AutoCloseable {
     String start() throws IOException, InterruptedException {
         MihomoPaths paths = fileStore.ensureReady();
         controller = MihomoController.reserve(settings.lanWebUiPublic());
-        TunOptions tunOptions = MihomoNative.prepareTun(paths, settings, ipv6Enabled);
+        platformCallbacks.configureWebViewXhttp(settings.webViewXhttp());
+        TunOptions tunOptions = MihomoNative.prepareTun(paths, settings, ipv6Enabled)
+                .withBypassOwnPackage(settings.webViewXhttp());
         ParcelFileDescriptor tunnel = tunManager.open(tunOptions);
         ParcelFileDescriptor duplicate = ParcelFileDescriptor.dup(tunnel.getFileDescriptor());
         int nativeFd = duplicate.detachFd();
@@ -64,6 +66,7 @@ final class MihomoRuntime implements AutoCloseable {
                     + (settings.processMatching() ? " · 进程匹配" : " · 不匹配进程")
                     + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
                     + (tcpConcurrentEnabled ? " · TCP 并发" : " · TCP 并发关闭")
+                    + (settings.webViewXhttp() ? " · XHTTP WebView" : " · XHTTP 原生")
                     + " · 日志 " + settings.logLevel().wireValue()
                     + " · WebUI " + controller.listenerAddress()
                     + " · zashboard " + fileStore.dashboardVersion();
