@@ -7,6 +7,7 @@ record TunOptions(
         List<String> inet4Address,
         List<String> inet6Address,
         boolean autoRoute,
+        boolean bypassOwnPackage,
         List<String> inet4RouteAddress,
         List<String> inet6RouteAddress,
         List<String> inet4RouteExcludeAddress,
@@ -27,11 +28,32 @@ record TunOptions(
         excludePackage = immutable(excludePackage);
     }
 
+    TunOptions withBypassOwnPackage(boolean bypass) {
+        if (bypassOwnPackage == bypass) {
+            return this;
+        }
+        return new TunOptions(
+                mtu,
+                inet4Address,
+                inet6Address,
+                autoRoute,
+                bypass,
+                inet4RouteAddress,
+                inet6RouteAddress,
+                inet4RouteExcludeAddress,
+                inet6RouteExcludeAddress,
+                dnsServerAddress,
+                includePackage,
+                excludePackage
+        );
+    }
+
     String summary() {
         return "mtu=" + mtu
                 + " ipv4=" + inet4Address
                 + " ipv6=" + inet6Address
-                + " autoRoute=" + autoRoute;
+                + " autoRoute=" + autoRoute
+                + " bypassSelf=" + bypassOwnPackage;
     }
 
     private static List<String> immutable(List<String> values) {
