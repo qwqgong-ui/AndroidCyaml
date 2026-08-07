@@ -22,6 +22,7 @@ final class TunOptionsCodec {
                     strings(object.optJSONArray("inet4Address")),
                     strings(object.optJSONArray("inet6Address")),
                     object.optBoolean("autoRoute", true),
+                    false,
                     strings(object.optJSONArray("inet4RouteAddress")),
                     strings(object.optJSONArray("inet6RouteAddress")),
                     strings(object.optJSONArray("inet4RouteExcludeAddress")),
