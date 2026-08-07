@@ -75,6 +75,8 @@ import (
 	"github.com/metacubex/mihomo/transport/xhttp"
 )
 
+const maxBrowserRequestBody = 8 << 20
+
 type browserRequest struct {
 	Method        string              `json:"method"`
 	URL           string              `json:"url"`
@@ -143,14 +145,20 @@ func (t *androidBrowserTransport) RoundTrip(request *http.Request) (*http.Respon
 	if request.URL.Scheme != "https" {
 		return nil, fmt.Errorf("WebView XHTTP only supports https, got %q", request.URL.Scheme)
 	}
+	if request.Header.Get("Cookie") != "" || len(request.Cookies()) != 0 {
+		return nil, errors.New("WebView XHTTP does not support cookie placement or custom Cookie headers")
+	}
 
 	var body []byte
 	var err error
 	if request.Body != nil {
-		body, err = io.ReadAll(request.Body)
+		body, err = io.ReadAll(io.LimitReader(request.Body, maxBrowserRequestBody+1))
 		_ = request.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("read XHTTP request body: %w", err)
+		}
+		if len(body) > maxBrowserRequestBody {
+			return nil, fmt.Errorf("WebView XHTTP request body exceeds %d bytes", maxBrowserRequestBody)
 		}
 	}
 
