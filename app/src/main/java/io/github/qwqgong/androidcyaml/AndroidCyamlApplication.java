@@ -1,7 +1,6 @@
 package io.github.qwqgong.androidcyaml;
 
 import android.app.Application;
-import android.webkit.WebView;
 
 public final class AndroidCyamlApplication extends Application {
     @SuppressWarnings("FieldCanBeLocal")
@@ -11,8 +10,9 @@ public final class AndroidCyamlApplication extends Application {
     public void onCreate() {
         super.onCreate();
         if (isServiceProcess()) {
-            // The service process never renders UI. Keep WebView entirely in :ui.
-            WebView.disableWebView();
+            // WebView is not created unless the XHTTP WebView override is
+            // enabled. Do not call WebView.disableWebView(): that API is
+            // irreversible for the lifetime of this VPN process.
             fairMemoryManager = FairMemoryManager.start(this);
         }
         // Run in both processes so a reclaimed :ui process can record its own
