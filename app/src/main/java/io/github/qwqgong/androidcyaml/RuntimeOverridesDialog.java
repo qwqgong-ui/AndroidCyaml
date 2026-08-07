@@ -26,6 +26,7 @@ final class RuntimeOverridesDialog {
             boolean ipv6Effective,
             RuntimeLogLevel currentLogLevel,
             boolean currentAdaptiveTcpConcurrent,
+            boolean currentWebViewXhttp,
             boolean currentLanWebUiPublic,
             int controllerPort,
             Listener listener
@@ -96,6 +97,17 @@ final class RuntimeOverridesDialog {
                 context.getString(R.string.override_adaptive_tcp_concurrent_summary)
         ), matchWidth());
 
+        Switch webViewXhttp = switchView(
+                context,
+                R.string.override_webview_xhttp,
+                currentWebViewXhttp
+        );
+        content.addView(webViewXhttp, topSpaced(context));
+        content.addView(summary(
+                context,
+                context.getString(R.string.override_webview_xhttp_summary)
+        ), matchWidth());
+
         Switch lanWebUi = switchView(
                 context,
                 R.string.override_lan_webui_public,
@@ -135,6 +147,7 @@ final class RuntimeOverridesDialog {
                                     ? logLevels[logLevelIndex]
                                     : RuntimeLogLevel.WARNING,
                             adaptiveTcpConcurrent.isChecked(),
+                            webViewXhttp.isChecked(),
                             lanWebUi.isChecked()
                     ));
                 })
