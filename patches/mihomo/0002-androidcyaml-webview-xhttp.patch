@@ -6,14 +6,22 @@ Subject: [PATCH] xhttp: add injectable browser transport
 Allow AndroidCyaml to replace the standard XHTTP HTTP transport at runtime
 without changing the user's proxy YAML. Browser mode deliberately resolves to
 packet-up because Fetch does not expose a full-duplex stream-one response while
-the request body remains open. The normal transport remains untouched when no
-factory is installed.
+the request body remains open. Cookie placements and custom Cookie headers are
+rejected because browser JavaScript cannot set them faithfully. The normal
+transport remains untouched when no factory is installed.
 ---
+ adapter/outbound/vless.go                 | 25 +++++++
+ transport/xhttp/browser_transport.go      | 88 ++++++++++++++++++++++
+ transport/xhttp/browser_transport_test.go | 91 +++++++++++++++++++++++
+ 3 files changed, 204 insertions(+)
+ create mode 100644 transport/xhttp/browser_transport.go
+ create mode 100644 transport/xhttp/browser_transport_test.go
 
 diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
+index 0b41ed8..d5aa698 100644
 --- a/adapter/outbound/vless.go
 +++ b/adapter/outbound/vless.go
-@@ -25,5 +25,32 @@
+@@ -25,6 +25,31 @@
  			ReuseConfig:          reuseCfg,
  		}
  
@@ -31,11 +39,9 @@ diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
 +			if option.XHTTPOpts.DownloadSettings != nil {
 +				return nil, errors.New("xhttp WebView transport does not support download-settings yet")
 +			}
-+			// Fetch request streaming is half-duplex. Keep the imported YAML
-+			// unchanged and select packet-up only in this in-memory client copy.
-+			cfg.Mode = "packet-up"
-+			// Browser connection reuse is controlled by Chromium, not XMUX.
-+			cfg.ReuseConfig = nil
++			if err := xhttp.PrepareBrowserConfig(cfg); err != nil {
++				return nil, err
++			}
 +		}
 +
  		makeTransport := func() http.RoundTripper {
@@ -46,17 +52,19 @@ diff --git a/adapter/outbound/vless.go b/adapter/outbound/vless.go
 +				})()
 +			}
  			return xhttp.NewTransport(
+ 				func(ctx context.Context) (net.Conn, error) {
 
 diff --git a/transport/xhttp/browser_transport.go b/transport/xhttp/browser_transport.go
 new file mode 100644
-index 0000000..1111111
+index 0000000..6451941
 --- /dev/null
 +++ b/transport/xhttp/browser_transport.go
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,88 @@
 +package xhttp
 +
 +import (
 +	"errors"
++	"strings"
 +	"sync"
 +
 +	"github.com/metacubex/http"
@@ -120,13 +128,33 @@ index 0000000..1111111
 +		return transport
 +	}
 +}
++
++func PrepareBrowserConfig(config *Config) error {
++	if config == nil {
++		return errors.New("xhttp browser transport received nil config")
++	}
++	if config.GetNormalizedSessionPlacement() == PlacementCookie ||
++		config.GetNormalizedSeqPlacement() == PlacementCookie ||
++		config.XPaddingPlacement == PlacementCookie ||
++		config.GetNormalizedUplinkDataPlacement() == PlacementCookie {
++		return errors.New("xhttp WebView transport does not support cookie placement")
++	}
++	for name := range config.Headers {
++		if strings.EqualFold(name, "Cookie") {
++			return errors.New("xhttp WebView transport does not support custom Cookie headers")
++		}
++	}
++	config.Mode = "packet-up"
++	config.ReuseConfig = nil
++	return nil
++}
 
 diff --git a/transport/xhttp/browser_transport_test.go b/transport/xhttp/browser_transport_test.go
 new file mode 100644
-index 0000000..1111111
+index 0000000..6d8f323
 --- /dev/null
 +++ b/transport/xhttp/browser_transport_test.go
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,91 @@
 +package xhttp
 +
 +import (
@@ -177,6 +205,45 @@ index 0000000..1111111
 +	}
 +	if _, err = transport.RoundTrip(request); !errors.Is(err, wantErr) {
 +		t.Fatalf("RoundTrip error = %v, want %v", err, wantErr)
++	}
++}
++
++func TestPrepareBrowserConfig(t *testing.T) {
++	config := &Config{
++		Mode:              "stream-one",
++		SessionPlacement:  PlacementQuery,
++		SeqPlacement:      PlacementQuery,
++		XPaddingPlacement: PlacementQueryInHeader,
++		ReuseConfig:       &ReuseConfig{},
++	}
++	if err := PrepareBrowserConfig(config); err != nil {
++		t.Fatal(err)
++	}
++	if config.Mode != "packet-up" {
++		t.Fatalf("mode = %q, want packet-up", config.Mode)
++	}
++	if config.ReuseConfig != nil {
++		t.Fatal("browser config retained XMUX reuse settings")
++	}
++
++	for name, mutate := range map[string]func(*Config){
++		"session":     func(c *Config) { c.SessionPlacement = PlacementCookie },
++		"seq":         func(c *Config) { c.SeqPlacement = PlacementCookie },
++		"padding":     func(c *Config) { c.XPaddingPlacement = PlacementCookie },
++		"uplink-data": func(c *Config) { c.UplinkDataPlacement = PlacementCookie },
++		"header":      func(c *Config) { c.Headers = map[string]string{"Cookie": "x=y"} },
++	} {
++		t.Run(name, func(t *testing.T) {
++			candidate := &Config{
++				SessionPlacement:  PlacementQuery,
++				SeqPlacement:      PlacementQuery,
++				XPaddingPlacement: PlacementQueryInHeader,
++			}
++			mutate(candidate)
++			if err := PrepareBrowserConfig(candidate); err == nil {
++				t.Fatal("cookie-based config unexpectedly accepted")
++			}
++		})
 +	}
 +}
 -- 
