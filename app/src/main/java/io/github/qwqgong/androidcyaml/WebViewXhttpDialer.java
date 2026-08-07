@@ -360,8 +360,8 @@ final class WebViewXhttpDialer implements AutoCloseable {
         CountDownLatch applied = new CountDownLatch(1);
         try {
             ProxyController.getInstance().setProxyOverride(
-                    Runnable::run,
                     proxyConfig,
+                    Runnable::run,
                     applied::countDown
             );
         } catch (IllegalArgumentException | UnsupportedOperationException exception) {
