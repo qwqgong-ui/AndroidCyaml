@@ -25,6 +25,7 @@ final class RuntimeControlClient {
                 boolean ipv6Effective,
                 String logLevel,
                 boolean adaptiveTcpConcurrent,
+                boolean webViewXhttp,
                 boolean lanWebUiPublic
         );
 
@@ -57,6 +58,7 @@ final class RuntimeControlClient {
                 boolean ipv6Effective,
                 String logLevel,
                 boolean adaptiveTcpConcurrent,
+                boolean webViewXhttp,
                 boolean lanWebUiPublic
         ) {
             mainHandler.post(() -> listener.onRuntimeSnapshot(
@@ -72,6 +74,7 @@ final class RuntimeControlClient {
                     ipv6Effective,
                     logLevel,
                     adaptiveTcpConcurrent,
+                    webViewXhttp,
                     lanWebUiPublic
             ));
         }
@@ -183,6 +186,7 @@ final class RuntimeControlClient {
             boolean ipv6Enabled,
             RuntimeLogLevel logLevel,
             boolean adaptiveTcpConcurrent,
+            boolean webViewXhttp,
             boolean lanWebUiPublic,
             ResultCallback result
     ) {
@@ -200,6 +204,7 @@ final class RuntimeControlClient {
                     ipv6Enabled,
                     level.wireValue(),
                     adaptiveTcpConcurrent,
+                    webViewXhttp,
                     lanWebUiPublic,
                     operationCallback(result)
             );
