@@ -1,5 +1,8 @@
 package io.github.qwqgong.androidcyaml;
 
+import android.os.Process;
+import android.util.Log;
+
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,13 +13,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
+import java.security.MessageDigest;
+import java.util.Base64;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
@@ -32,6 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * authorities are rejected; this is not an open proxy.
  */
 final class WebViewConnectProxy implements AutoCloseable {
+    private static final String TAG = "AndroidCyaml/WebViewProxy";
     private static final int MAX_LINE_BYTES = 16 * 1024;
     private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
     private static final byte[] IPV4_LOOPBACK = {127, 0, 0, 1};
@@ -40,10 +44,14 @@ final class WebViewConnectProxy implements AutoCloseable {
     private final ExecutorService workers;
     private final SocketProtector socketProtector;
     private final NetworkRouteProvider routeProvider;
-    private final ConcurrentHashMap<String, TargetPool> targets =
+    private final ConcurrentHashMap<String, TargetBinding> bindingsByKey =
             new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, TargetBinding> bindingsByUsername =
+            new ConcurrentHashMap<>();
+    private final Set<String> authorities = ConcurrentHashMap.newKeySet();
     private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final String authenticationRealm = "AndroidCyaml-XHTTP-" + UUID.randomUUID();
 
     WebViewConnectProxy(
             SocketProtector socketProtector,
@@ -68,7 +76,7 @@ final class WebViewConnectProxy implements AutoCloseable {
         return listener.getInetAddress().getHostAddress() + ':' + port();
     }
 
-    void register(String urlValue, String serverAddress) throws IOException {
+    TargetBinding register(String urlValue, String serverAddress) throws IOException {
         final URI url;
         try {
             url = URI.create(urlValue);
@@ -81,12 +89,19 @@ final class WebViewConnectProxy implements AutoCloseable {
         }
         int port = url.getPort() > 0 ? url.getPort() : 443;
         HostPort target = parseAuthority(serverAddress, port);
-        String key = authorityKey(host, port);
-        targets.compute(key, (ignored, existing) -> {
-            TargetPool pool = existing == null ? new TargetPool() : existing;
-            pool.add(target);
-            return pool;
-        });
+        String authority = authorityKey(host, port);
+        String bindingKey = authority + '\n' + authorityKey(target.host(), target.port());
+        TargetBinding binding = bindingsByKey.computeIfAbsent(
+                bindingKey,
+                ignored -> new TargetBinding(bindingKey, authority, target)
+        );
+        bindingsByUsername.putIfAbsent(binding.username(), binding);
+        authorities.add(authority);
+        return binding;
+    }
+
+    boolean isAuthenticationRealm(String realm) {
+        return authenticationRealm.equals(realm);
     }
 
     private void acceptLoop() {
@@ -118,24 +133,43 @@ final class WebViewConnectProxy implements AutoCloseable {
                 return;
             }
             String authority = parts[1];
+            String proxyAuthorization = null;
             while (true) {
                 String line = readAsciiLine(input);
                 if (line == null || line.isEmpty()) {
                     break;
                 }
+                int separator = line.indexOf(':');
+                if (separator > 0
+                        && "Proxy-Authorization".equalsIgnoreCase(line.substring(0, separator))) {
+                    proxyAuthorization = line.substring(separator + 1).trim();
+                }
             }
 
             HostPort requested = parseAuthority(authority, 443);
-            TargetPool destinations = targets.get(
-                    authorityKey(requested.host(), requested.port())
-            );
-            if (destinations == null) {
+            String requestedAuthority = authorityKey(requested.host(), requested.port());
+            if (!authorities.contains(requestedAuthority)) {
                 writeFailure(output, 403, "Forbidden");
+                return;
+            }
+            TargetBinding binding = authenticatedBinding(
+                    requestedAuthority,
+                    proxyAuthorization
+            );
+            if (binding == null) {
+                writeAuthenticationRequired(output);
                 return;
             }
 
             try {
-                upstream = connectUpstream(destinations);
+                upstream = connectUpstream(binding.target());
+                if (binding.connectionLogged.compareAndSet(false, true)) {
+                    try {
+                        Log.i(TAG, "Exact CONNECT target active: " + binding.targetDescription());
+                    } catch (RuntimeException ignored) {
+                        // Local JVM tests do not provide android.util.Log.
+                    }
+                }
             } catch (SocketProtectionException exception) {
                 writeFailure(output, 502, "VPN Protect Failed");
                 return;
@@ -160,48 +194,44 @@ final class WebViewConnectProxy implements AutoCloseable {
         }
     }
 
-    private Socket connectUpstream(TargetPool destinations) throws IOException {
+    private Socket connectUpstream(HostPort destination) throws IOException {
         NetworkRoute route = routeProvider.current();
         if (route == null) {
             throw new IOException("WebView XHTTP 底层网络不可用");
         }
 
         IOException lastFailure = null;
-        for (HostPort destination : destinations.candidates()) {
-            final InetAddress[] addresses;
+        final InetAddress[] addresses;
+        try {
+            addresses = route.resolve(destination.host());
+        } catch (IOException exception) {
+            throw exception;
+        }
+        if (addresses == null || addresses.length == 0) {
+            throw new IOException("WebView XHTTP 无法解析目标服务器");
+        }
+        for (InetAddress address : addresses) {
+            Socket candidate = new Socket();
+            sockets.add(candidate);
             try {
-                addresses = route.resolve(destination.host());
+                // Force creation of the socket FD, bind it to the selected
+                // non-VPN network, then exempt that exact FD before connect().
+                candidate.setTcpNoDelay(true);
+                route.bind(candidate);
+                if (!protect(candidate)) {
+                    throw new SocketProtectionException();
+                }
+                candidate.connect(
+                        new InetSocketAddress(address, destination.port()),
+                        CONNECT_TIMEOUT_MILLIS
+                );
+                return candidate;
+            } catch (SocketProtectionException exception) {
+                closeSocket(candidate);
+                throw exception;
             } catch (IOException exception) {
                 lastFailure = exception;
-                continue;
-            }
-            if (addresses == null || addresses.length == 0) {
-                lastFailure = new IOException("WebView XHTTP 无法解析目标服务器");
-                continue;
-            }
-            for (InetAddress address : addresses) {
-                Socket candidate = new Socket();
-                sockets.add(candidate);
-                try {
-                    // Force creation of the socket FD, bind it to the selected
-                    // non-VPN network, then exempt that exact FD before connect().
-                    candidate.setTcpNoDelay(true);
-                    route.bind(candidate);
-                    if (!protect(candidate)) {
-                        throw new SocketProtectionException();
-                    }
-                    candidate.connect(
-                            new InetSocketAddress(address, destination.port()),
-                            CONNECT_TIMEOUT_MILLIS
-                    );
-                    return candidate;
-                } catch (SocketProtectionException exception) {
-                    closeSocket(candidate);
-                    throw exception;
-                } catch (IOException exception) {
-                    lastFailure = exception;
-                    closeSocket(candidate);
-                }
+                closeSocket(candidate);
             }
         }
         throw lastFailure == null
@@ -266,6 +296,52 @@ final class WebViewConnectProxy implements AutoCloseable {
                 + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
                 .getBytes(StandardCharsets.US_ASCII));
         output.flush();
+    }
+
+    private void writeAuthenticationRequired(OutputStream output) throws IOException {
+        output.write(("HTTP/1.1 407 Proxy Authentication Required\r\n"
+                + "Proxy-Authenticate: Basic realm=\"" + authenticationRealm + "\"\r\n"
+                + "Proxy-Connection: close\r\n"
+                + "Connection: close\r\n"
+                + "Content-Length: 0\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+        output.flush();
+    }
+
+    private TargetBinding authenticatedBinding(
+            String requestedAuthority,
+            String authorization
+    ) {
+        if (authorization == null || !authorization.regionMatches(
+                true,
+                0,
+                "Basic ",
+                0,
+                6
+        )) {
+            return null;
+        }
+        final String credentials;
+        try {
+            credentials = new String(
+                    Base64.getDecoder().decode(authorization.substring(6).trim()),
+                    StandardCharsets.UTF_8
+            );
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+        int separator = credentials.indexOf(':');
+        if (separator <= 0) {
+            return null;
+        }
+        TargetBinding binding = bindingsByUsername.get(credentials.substring(0, separator));
+        if (binding == null || !binding.authority().equals(requestedAuthority)) {
+            return null;
+        }
+        byte[] supplied = credentials.substring(separator + 1)
+                .getBytes(StandardCharsets.UTF_8);
+        byte[] expected = binding.password().getBytes(StandardCharsets.UTF_8);
+        return MessageDigest.isEqual(supplied, expected) ? binding : null;
     }
 
     private boolean protect(Socket socket) {
@@ -365,31 +441,64 @@ final class WebViewConnectProxy implements AutoCloseable {
             closeSocket(socket);
         }
         workers.shutdownNow();
-        targets.clear();
+        bindingsByKey.clear();
+        bindingsByUsername.clear();
+        authorities.clear();
     }
 
     private record HostPort(String host, int port) {}
 
-    private static final class TargetPool {
-        private final CopyOnWriteArrayList<HostPort> endpoints =
-                new CopyOnWriteArrayList<>();
-        private final AtomicInteger nextEndpoint = new AtomicInteger();
+    static final class TargetBinding {
+        private final String key;
+        private final String authority;
+        private final HostPort target;
+        private final String profileName;
+        private final String username = UUID.randomUUID().toString();
+        private final String password = UUID.randomUUID().toString();
+        private final AtomicBoolean connectionLogged = new AtomicBoolean(false);
 
-        void add(HostPort endpoint) {
-            endpoints.addIfAbsent(endpoint);
+        TargetBinding(String key, String authority, HostPort target) {
+            this.key = key;
+            this.authority = authority;
+            this.target = target;
+            profileName = "androidcyaml-xhttp-" + UUID.nameUUIDFromBytes(
+                    key.getBytes(StandardCharsets.UTF_8)
+            );
         }
 
-        List<HostPort> candidates() {
-            List<HostPort> snapshot = List.copyOf(endpoints);
-            if (snapshot.size() < 2) {
-                return snapshot;
-            }
-            int start = Math.floorMod(nextEndpoint.getAndIncrement(), snapshot.size());
-            List<HostPort> ordered = new ArrayList<>(snapshot.size());
-            for (int offset = 0; offset < snapshot.size(); offset++) {
-                ordered.add(snapshot.get((start + offset) % snapshot.size()));
-            }
-            return ordered;
+        String key() {
+            return key;
+        }
+
+        String authority() {
+            return authority;
+        }
+
+        HostPort target() {
+            return target;
+        }
+
+        String targetDescription() {
+            String host = target.host();
+            return (host.indexOf(':') >= 0 ? '[' + host + ']' : host) + ':' + target.port();
+        }
+
+        String profileName() {
+            return profileName;
+        }
+
+        String username() {
+            return username;
+        }
+
+        String password() {
+            return password;
+        }
+
+        String authorizationHeader() {
+            return "Basic " + Base64.getEncoder().encodeToString(
+                    (username + ':' + password).getBytes(StandardCharsets.UTF_8)
+            );
         }
     }
 
@@ -417,7 +526,14 @@ final class WebViewConnectProxy implements AutoCloseable {
         @Override
         public Thread newThread(Runnable runnable) {
             Thread thread = new Thread(
-                    runnable,
+                    () -> {
+                        try {
+                            Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY);
+                        } catch (RuntimeException ignored) {
+                            // Local JVM tests do not provide android.os.Process.
+                        }
+                        runnable.run();
+                    },
                     "AndroidCyaml-WebViewProxy-" + nextId.incrementAndGet()
             );
             thread.setDaemon(true);

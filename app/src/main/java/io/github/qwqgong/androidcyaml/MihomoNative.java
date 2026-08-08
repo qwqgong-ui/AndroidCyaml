@@ -46,7 +46,10 @@ final class MihomoNative {
             int tunFileDescriptor,
             NativePlatformCallbacks callbacks
     ) throws IOException {
-        requireSuccess(nativeSetWebViewXhttpEnabled(settings.webViewXhttp()));
+        requireSuccess(nativeSetWebViewXhttpEnabled(
+                settings.webViewXhttp(),
+                settings.webViewXhttp() && callbacks.supportsWebViewXhttpStreamUp()
+        ));
         final JSONObject payload;
         try {
             payload = requireSuccess(nativeStart(
@@ -64,7 +67,7 @@ final class MihomoNative {
             ));
         } catch (IOException startFailure) {
             try {
-                requireSuccess(nativeSetWebViewXhttpEnabled(false));
+                requireSuccess(nativeSetWebViewXhttpEnabled(false, false));
             } catch (IOException disableFailure) {
                 startFailure.addSuppressed(disableFailure);
             }
@@ -96,6 +99,28 @@ final class MihomoNative {
         return nativeTrimMemory();
     }
 
+    static int readBrowserRequestBody(long bodyId, byte[] destination) {
+        return nativeReadBrowserRequestBody(bodyId, destination);
+    }
+
+    static void closeBrowserRequestBody(long bodyId) {
+        if (bodyId > 0L) {
+            nativeCloseBrowserRequestBody(bodyId);
+        }
+    }
+
+    static boolean pushBrowserResponseChunk(long requestId, byte[] chunk) {
+        return requestId > 0L
+                && chunk != null
+                && chunk.length > 0
+                && nativePushBrowserResponseChunk(requestId, chunk);
+    }
+
+    static boolean finishBrowserResponse(long requestId, String error) {
+        return requestId > 0L
+                && nativeFinishBrowserResponse(requestId, error == null ? "" : error);
+    }
+
     private static JSONObject requireSuccess(String raw) throws IOException {
         if (raw == null || raw.isBlank()) {
             throw new IOException("JNI 核心返回空结果");
@@ -122,7 +147,18 @@ final class MihomoNative {
             boolean processMatching
     );
 
-    private static native String nativeSetWebViewXhttpEnabled(boolean enabled);
+    private static native String nativeSetWebViewXhttpEnabled(
+            boolean enabled,
+            boolean requestStreamsSupported
+    );
+
+    private static native int nativeReadBrowserRequestBody(long bodyId, byte[] destination);
+
+    private static native void nativeCloseBrowserRequestBody(long bodyId);
+
+    private static native boolean nativePushBrowserResponseChunk(long requestId, byte[] chunk);
+
+    private static native boolean nativeFinishBrowserResponse(long requestId, String error);
 
     private static native String nativeStart(
             String home,

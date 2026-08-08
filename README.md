@@ -100,6 +100,7 @@ Go RawConn FD → NativePlatformCallbacks.protectSocket(fd)
 - IPv6 用户意愿；
 - 日志级别：`silent`、`error`、`warning`、`info`、`debug`；
 - 自适应 `tcp-concurrent`；
+- XHTTP System WebView 传输；
 - 向局域网公开 WebUI。
 
 TUN 栈不再可覆写，旧版本保存的 `tun_stack` / `tun_stack_mode` 会被清理，运行时始终使用 system。
@@ -112,6 +113,18 @@ TUN 栈不再可覆写，旧版本保存的 `tun_stack` / `tun_stack_mode` 会�
 - 关闭：强制 `find-process-mode: off`。
 
 核心、JNI 和 VPN 服务位于同一进程，查询不经过 JSON 或 Unix Socket 往返。
+
+### XHTTP System WebView
+
+开启 XHTTP WebView 后，TLS、HTTP/2 请求头、连接复用和网络侧浏览器特征由默认 VPN 进程中的隐藏
+System WebView 产生，mihomo 继续负责 XHTTP 帧、session 和模式选择。启动时会实际检测
+`ReadableStream` 请求体与 Fetch `duplex: "half"`；支持时保留显式 `stream-up`，通过独立 download
+GET 与流式 upload 请求运行。上传正文使用异步 pull/回调桥接，等待 Go 流数据时不会阻塞 WebView 的
+JavaScript 执行环境。`stream-one` 仍降级为 `packet-up`，显式 `stream-up` 在能力检测失败时也
+自动降级，避免把完整隧道正文缓存在内存中。
+
+当前 WebView 路径仍不支持 `download-settings`、cookie placement、自定义 `Cookie`、Reality 或强制
+HTTP/3。关闭该开关时，上述限制不影响 mihomo 原生 XHTTP 传输。
 
 ### IPv6
 
@@ -169,6 +182,9 @@ IP 时，连接面板显示 IP 属于正常结果。
 - `GeoIP.dat`：从 MetaCubeX `meta-rules-dat` 的 `geoip-lite.dat` release 资产获取；
 - Zashboard：无字体构建。
 
+`GeoIP.dat` 与 `geodata.version` 由构建任务按上游 release 生成，不纳入版本控制；
+全新 checkout 的首次构建因此需要联网。
+
 **GeoSite 不再随 APK 打包。** 使用 GeoSite 规则的配置需要自行提供对应数据或改用 rule-provider/MRS。
 
 ## 系统 VPN
@@ -180,8 +196,12 @@ IP 时，连接面板显示 IP 属于正常结果。
 
 ## Android 17 内存限制
 
-VPN、TUN 和 mihomo 保留在默认前台服务进程，WebView 只存在于可回收的 `:ui` 进程。UI 进入后台后
-解除绑定、销毁 WebView 并结束独立 UI 进程；再次打开时冷启动 Dashboard，不影响 VPN。
+VPN、TUN 和 mihomo 保留在默认前台服务进程。可见的 Dashboard WebView 位于可回收的 `:ui` 进程；
+UI 进入后台后解除绑定、销毁该 WebView 并结束独立 UI 进程，再次打开时冷启动 Dashboard，不影响
+VPN。开启 XHTTP WebView 时，默认 VPN 进程还会持有按精确端点隔离的隐藏传输 WebView，空闲时最多
+保留四个；它们跟随 `AndroidVpnService` / mihomo 生命周期，并使用进程级 `ProxyController`
+override，不会影响 `:ui` 进程中的 Dashboard WebView。关闭 XHTTP WebView 时不会创建这套隐藏
+WebView。
 
 应用会响应 Android/厂商内存压力回调，释放可重建缓存并记录相关退出信息。验收应以设备的
 `am memory-limiter status`、进程 PSS/RSS、退出记录和 VPN 连通性为准，而不是只观察 Java 堆。

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "generated/libmihomo.h"
 
@@ -15,6 +16,7 @@ jobject g_callback = nullptr;
 jmethodID g_protect_method = nullptr;
 jmethodID g_resolve_method = nullptr;
 jmethodID g_browser_start_method = nullptr;
+jmethodID g_browser_headers_method = nullptr;
 jmethodID g_browser_read_method = nullptr;
 jmethodID g_browser_close_method = nullptr;
 
@@ -101,6 +103,7 @@ void clearCallback(JNIEnv* env) {
     g_protect_method = nullptr;
     g_resolve_method = nullptr;
     g_browser_start_method = nullptr;
+    g_browser_headers_method = nullptr;
     g_browser_read_method = nullptr;
     g_browser_close_method = nullptr;
 }
@@ -126,6 +129,11 @@ bool installCallback(JNIEnv* env, jobject callback) {
             "startBrowserRequest",
             "(Ljava/lang/String;[B)Ljava/lang/String;"
     );
+    jmethodID browser_headers = env->GetMethodID(
+            callback_class,
+            "awaitBrowserResponse",
+            "(J)Ljava/lang/String;"
+    );
     jmethodID browser_read = env->GetMethodID(
             callback_class,
             "readBrowserResponse",
@@ -140,6 +148,7 @@ bool installCallback(JNIEnv* env, jobject callback) {
     if (protect == nullptr
             || resolve == nullptr
             || browser_start == nullptr
+            || browser_headers == nullptr
             || browser_read == nullptr
             || browser_close == nullptr
             || env->ExceptionCheck()) {
@@ -155,6 +164,7 @@ bool installCallback(JNIEnv* env, jobject callback) {
     g_protect_method = protect;
     g_resolve_method = resolve;
     g_browser_start_method = browser_start;
+    g_browser_headers_method = browser_headers;
     g_browser_read_method = browser_read;
     g_browser_close_method = browser_close;
     return true;
@@ -165,6 +175,7 @@ jobject localCallback(
         jmethodID* protect,
         jmethodID* resolve,
         jmethodID* browser_start,
+        jmethodID* browser_headers,
         jmethodID* browser_read,
         jmethodID* browser_close
 ) {
@@ -180,6 +191,9 @@ jobject localCallback(
     }
     if (browser_start != nullptr) {
         *browser_start = g_browser_start_method;
+    }
+    if (browser_headers != nullptr) {
+        *browser_headers = g_browser_headers_method;
     }
     if (browser_read != nullptr) {
         *browser_read = g_browser_read_method;
@@ -197,7 +211,7 @@ int protectSocketCallback(int fd) {
         return 0;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, &method, nullptr, nullptr, nullptr, nullptr);
+    jobject callback = localCallback(env, &method, nullptr, nullptr, nullptr, nullptr, nullptr);
     if (callback == nullptr || method == nullptr) {
         return 0;
     }
@@ -223,7 +237,7 @@ char* resolveProcessCallback(
         return nullptr;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, nullptr, &method, nullptr, nullptr, nullptr);
+    jobject callback = localCallback(env, nullptr, &method, nullptr, nullptr, nullptr, nullptr);
     if (callback == nullptr || method == nullptr) {
         return nullptr;
     }
@@ -269,7 +283,7 @@ char* browserStartCallback(
         return nullptr;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, nullptr, nullptr, &method, nullptr, nullptr);
+    jobject callback = localCallback(env, nullptr, nullptr, &method, nullptr, nullptr, nullptr);
     if (callback == nullptr || method == nullptr) {
         return nullptr;
     }
@@ -310,6 +324,41 @@ char* browserStartCallback(
     return copy;
 }
 
+char* browserHeadersCallback(int64_t request_id) {
+    AttachedEnv attached;
+    JNIEnv* env = attached.get();
+    if (env == nullptr || request_id <= 0) {
+        return nullptr;
+    }
+    jmethodID method = nullptr;
+    jobject callback = localCallback(
+            env,
+            nullptr,
+            nullptr,
+            nullptr,
+            &method,
+            nullptr,
+            nullptr
+    );
+    if (callback == nullptr || method == nullptr) {
+        return nullptr;
+    }
+    auto result = static_cast<jstring>(env->CallObjectMethod(
+            callback,
+            method,
+            static_cast<jlong>(request_id)
+    ));
+    env->DeleteLocalRef(callback);
+    if (env->ExceptionCheck()) {
+        clearJavaException(env);
+        if (result != nullptr) env->DeleteLocalRef(result);
+        return nullptr;
+    }
+    char* copy = copyJavaString(env, result);
+    if (result != nullptr) env->DeleteLocalRef(result);
+    return copy;
+}
+
 int browserReadCallback(int64_t request_id, void* buffer, int capacity) {
     AttachedEnv attached;
     JNIEnv* env = attached.get();
@@ -317,7 +366,7 @@ int browserReadCallback(int64_t request_id, void* buffer, int capacity) {
         return -1;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, nullptr, nullptr, nullptr, &method, nullptr);
+    jobject callback = localCallback(env, nullptr, nullptr, nullptr, nullptr, &method, nullptr);
     if (callback == nullptr || method == nullptr) {
         return -1;
     }
@@ -357,7 +406,7 @@ void browserCloseCallback(int64_t request_id) {
         return;
     }
     jmethodID method = nullptr;
-    jobject callback = localCallback(env, nullptr, nullptr, nullptr, nullptr, &method);
+    jobject callback = localCallback(env, nullptr, nullptr, nullptr, nullptr, nullptr, &method);
     if (callback == nullptr || method == nullptr) {
         return;
     }
@@ -375,6 +424,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     );
     AndroidCyamlInstallBrowserCallbacks(
             reinterpret_cast<void*>(&browserStartCallback),
+            reinterpret_cast<void*>(&browserHeadersCallback),
             reinterpret_cast<void*>(&browserReadCallback),
             reinterpret_cast<void*>(&browserCloseCallback)
     );
@@ -382,7 +432,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
 }
 
 extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void*) {
-    AndroidCyamlInstallBrowserCallbacks(nullptr, nullptr, nullptr);
+    AndroidCyamlInstallBrowserCallbacks(nullptr, nullptr, nullptr, nullptr);
     AndroidCyamlInstallCallbacks(nullptr, nullptr);
     JNIEnv* env = nullptr;
     if (vm != nullptr && vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) == JNI_OK) {
@@ -432,11 +482,111 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetWebViewXhttpEnabled(
         JNIEnv* env,
         jclass,
-        jboolean enabled
+        jboolean enabled,
+        jboolean request_streams_supported
 ) {
     return stringFromNative(env, AndroidCyamlSetBrowserDialerEnabled(
-            enabled == JNI_TRUE ? 1 : 0
+            enabled == JNI_TRUE ? 1 : 0,
+            request_streams_supported == JNI_TRUE ? 1 : 0
     ));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeReadBrowserRequestBody(
+        JNIEnv* env,
+        jclass,
+        jlong body_id,
+        jbyteArray destination
+) {
+    if (destination == nullptr || body_id <= 0) {
+        return -1;
+    }
+    const jsize capacity = env->GetArrayLength(destination);
+    if (capacity <= 0 || env->ExceptionCheck()) {
+        clearJavaException(env);
+        return -1;
+    }
+    std::vector<jbyte> buffer(static_cast<size_t>(capacity));
+    int count = AndroidCyamlReadBrowserRequestBody(
+            static_cast<int64_t>(body_id),
+            buffer.data(),
+            static_cast<int>(capacity)
+    );
+    if (count > 0 && count <= capacity) {
+        env->SetByteArrayRegion(destination, 0, count, buffer.data());
+    }
+    if (env->ExceptionCheck() || count > capacity) {
+        clearJavaException(env);
+        return -1;
+    }
+    return static_cast<jint>(count);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeCloseBrowserRequestBody(
+        JNIEnv*,
+        jclass,
+        jlong body_id
+) {
+    if (body_id > 0) {
+        AndroidCyamlCloseBrowserRequestBody(static_cast<int64_t>(body_id));
+    }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePushBrowserResponseChunk(
+        JNIEnv* env,
+        jclass,
+        jlong request_id,
+        jbyteArray chunk
+) {
+    if (request_id <= 0 || chunk == nullptr) {
+        return JNI_FALSE;
+    }
+    const jsize length = env->GetArrayLength(chunk);
+    if (length <= 0 || env->ExceptionCheck()) {
+        clearJavaException(env);
+        return JNI_FALSE;
+    }
+    jbyte* bytes = env->GetByteArrayElements(chunk, nullptr);
+    if (bytes == nullptr || env->ExceptionCheck()) {
+        clearJavaException(env);
+        return JNI_FALSE;
+    }
+    int accepted = AndroidCyamlPushBrowserResponseChunk(
+            static_cast<int64_t>(request_id),
+            bytes,
+            static_cast<int>(length)
+    );
+    env->ReleaseByteArrayElements(chunk, bytes, JNI_ABORT);
+    return accepted != 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeFinishBrowserResponse(
+        JNIEnv* env,
+        jclass,
+        jlong request_id,
+        jstring error
+) {
+    if (request_id <= 0) {
+        return JNI_FALSE;
+    }
+    const char* error_value = error == nullptr
+            ? nullptr
+            : env->GetStringUTFChars(error, nullptr);
+    if (error != nullptr && (error_value == nullptr || env->ExceptionCheck())) {
+        clearJavaException(env);
+        return JNI_FALSE;
+    }
+    int accepted = AndroidCyamlFinishBrowserResponse(
+            static_cast<int64_t>(request_id),
+            const_cast<char*>(error_value)
+    );
+    if (error_value != nullptr) {
+        env->ReleaseStringUTFChars(error, error_value);
+    }
+    return accepted != 0 ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -497,7 +647,7 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop(
         jclass
 ) {
     jstring result = stringFromNative(env, AndroidCyamlStop());
-    char* disable_result = AndroidCyamlSetBrowserDialerEnabled(0);
+    char* disable_result = AndroidCyamlSetBrowserDialerEnabled(0, 0);
     AndroidCyamlFree(disable_result);
     clearCallback(env);
     return result;

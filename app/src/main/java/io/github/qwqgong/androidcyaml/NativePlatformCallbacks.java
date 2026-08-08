@@ -100,6 +100,23 @@ final class NativePlatformCallbacks implements AutoCloseable {
     }
 
     @SuppressWarnings("unused")
+    public String awaitBrowserResponse(long requestId) {
+        WebViewXhttpDialer dialer;
+        synchronized (this) {
+            dialer = webViewXhttpDialer;
+        }
+        if (dialer == null) {
+            return browserError("System WebView XHTTP is disabled");
+        }
+        try {
+            return dialer.awaitResponse(requestId);
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to await System WebView XHTTP response", exception);
+            return browserError(exception.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unused")
     public int readBrowserResponse(long requestId, byte[] destination) {
         WebViewXhttpDialer dialer;
         synchronized (this) {
@@ -125,6 +142,10 @@ final class NativePlatformCallbacks implements AutoCloseable {
         if (dialer != null) {
             dialer.closeRequest(requestId);
         }
+    }
+
+    synchronized boolean supportsWebViewXhttpStreamUp() {
+        return webViewXhttpDialer != null && webViewXhttpDialer.supportsRequestStreaming();
     }
 
     @Override

@@ -10,6 +10,8 @@ local.properties
 app/.cxx/
 app/src/main/cpp/generated/
 app/src/main/jniLibs/arm64-v8a/libmihomo.so
+app/src/main/assets/geodata/
+app/src/main/assets/geodata.version
 *.apk
 *.aab
 *.jks

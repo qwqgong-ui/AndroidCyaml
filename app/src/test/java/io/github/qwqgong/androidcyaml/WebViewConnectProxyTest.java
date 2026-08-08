@@ -2,6 +2,7 @@ package io.github.qwqgong.androidcyaml;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -71,7 +72,7 @@ public final class WebViewConnectProxyTest {
                     () -> route
                  );
                  Socket client = new Socket()) {
-                proxy.register(
+                WebViewConnectProxy.TargetBinding binding = proxy.register(
                         "https://unresolvable.invalid/xhttp",
                         "endpoint.invalid:" + target.getLocalPort()
                 );
@@ -82,7 +83,9 @@ public final class WebViewConnectProxyTest {
                 assertTrue(proxy.authority().startsWith("127.0.0.1:"));
                 OutputStream output = client.getOutputStream();
                 output.write(("CONNECT unresolvable.invalid:443 HTTP/1.1\r\n"
-                        + "Host: unresolvable.invalid:443\r\n\r\n")
+                        + "Host: unresolvable.invalid:443\r\n"
+                        + "Proxy-Authorization: " + binding.authorizationHeader()
+                        + "\r\n\r\n")
                         .getBytes(StandardCharsets.US_ASCII));
                 output.flush();
 
@@ -125,16 +128,37 @@ public final class WebViewConnectProxyTest {
     }
 
     @Test
-    public void sameAuthorityAcceptsRegisteredEndpointPool() throws Exception {
-        try (WebViewConnectProxy proxy = directProxy(socket -> true)) {
-            proxy.register("https://same.invalid/xhttp", "127.0.0.1:1443");
-            proxy.register("https://same.invalid/other", "127.0.0.1:1443");
-            proxy.register("https://same.invalid/xhttp", "127.0.0.1:2443");
+    public void knownAuthorityRequiresCredentials() throws Exception {
+        try (WebViewConnectProxy proxy = directProxy(socket -> true);
+             Socket client = new Socket()) {
+            proxy.register("https://known.invalid/xhttp", "127.0.0.1:1443");
+            client.connect(new InetSocketAddress(ipv4Loopback(), proxy.port()));
+            client.getOutputStream().write(("CONNECT known.invalid:443 HTTP/1.1\r\n"
+                    + "Host: known.invalid:443\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            client.getOutputStream().flush();
+            assertTrue(readHeaders(client.getInputStream()).startsWith("HTTP/1.1 407"));
         }
     }
 
     @Test
-    public void sameAuthorityFallsBackToAnotherRegisteredEndpoint() throws Exception {
+    public void sameAuthorityGetsIsolatedTargetBindings() throws Exception {
+        try (WebViewConnectProxy proxy = directProxy(socket -> true)) {
+            WebViewConnectProxy.TargetBinding first =
+                    proxy.register("https://same.invalid/xhttp", "127.0.0.1:1443");
+            WebViewConnectProxy.TargetBinding duplicate =
+                    proxy.register("https://same.invalid/other", "127.0.0.1:1443");
+            WebViewConnectProxy.TargetBinding second =
+                    proxy.register("https://same.invalid/xhttp", "127.0.0.1:2443");
+
+            assertTrue(first == duplicate);
+            assertNotEquals(first.profileName(), second.profileName());
+            assertNotEquals(first.authorizationHeader(), second.authorizationHeader());
+        }
+    }
+
+    @Test
+    public void sameAuthorityCredentialSelectsExactEndpoint() throws Exception {
         int unavailablePort;
         try (ServerSocket reservation = new ServerSocket()) {
             reservation.bind(new InetSocketAddress(ipv4Loopback(), 0));
@@ -160,13 +184,15 @@ public final class WebViewConnectProxyTest {
                         "https://pool.invalid/xhttp",
                         "127.0.0.1:" + unavailablePort
                 );
-                proxy.register(
+                WebViewConnectProxy.TargetBinding binding = proxy.register(
                         "https://pool.invalid/xhttp",
                         "127.0.0.1:" + target.getLocalPort()
                 );
                 client.connect(new InetSocketAddress(ipv4Loopback(), proxy.port()));
                 client.getOutputStream().write(("CONNECT pool.invalid:443 HTTP/1.1\r\n"
-                        + "Host: pool.invalid:443\r\n\r\n")
+                        + "Host: pool.invalid:443\r\n"
+                        + "Proxy-Authorization: " + binding.authorizationHeader()
+                        + "\r\n\r\n")
                         .getBytes(StandardCharsets.US_ASCII));
                 client.getOutputStream().flush();
 
@@ -187,7 +213,7 @@ public final class WebViewConnectProxyTest {
                      return false;
                  });
                  Socket client = new Socket()) {
-                proxy.register(
+                WebViewConnectProxy.TargetBinding binding = proxy.register(
                         "https://protected.invalid/xhttp",
                         "127.0.0.1:" + target.getLocalPort()
                 );
@@ -196,7 +222,9 @@ public final class WebViewConnectProxyTest {
                         proxy.port()
                 ));
                 client.getOutputStream().write(("CONNECT protected.invalid:443 HTTP/1.1\r\n"
-                        + "Host: protected.invalid:443\r\n\r\n")
+                        + "Host: protected.invalid:443\r\n"
+                        + "Proxy-Authorization: " + binding.authorizationHeader()
+                        + "\r\n\r\n")
                         .getBytes(StandardCharsets.US_ASCII));
                 client.getOutputStream().flush();
 

@@ -4,16 +4,17 @@ Date: Fri, 7 Aug 2026 18:00:00 +0900
 Subject: [PATCH] xhttp: add injectable browser transport
 
 Allow AndroidCyaml to replace the standard XHTTP HTTP transport at runtime
-without changing the user's proxy YAML. Browser mode deliberately resolves to
-packet-up because Fetch does not expose a full-duplex stream-one response while
-the request body remains open. Cookie placements and custom Cookie headers are
-rejected because browser JavaScript cannot set them faithfully. The normal
-transport remains untouched when no factory is installed.
+without changing the user's proxy YAML. Browser mode preserves stream-up when
+the embedding WebView supports streaming request bodies, while stream-one and
+unsupported stream-up configurations fall back to packet-up. Cookie placements
+and custom Cookie headers are rejected because browser JavaScript cannot set
+them faithfully. The normal transport remains untouched when no factory is
+installed.
 ---
  adapter/outbound/vless.go                 | 25 +++++++
- transport/xhttp/browser_transport.go      | 88 ++++++++++++++++++++++
- transport/xhttp/browser_transport_test.go | 91 +++++++++++++++++++++++
- 3 files changed, 204 insertions(+)
+ transport/xhttp/browser_transport.go      | 108 +++++++++++++++++++++
+ transport/xhttp/browser_transport_test.go | 122 ++++++++++++++++++++++++
+ 3 files changed, 255 insertions(+)
  create mode 100644 transport/xhttp/browser_transport.go
  create mode 100644 transport/xhttp/browser_transport_test.go
 
@@ -56,10 +57,10 @@ index 0b41ed8..d5aa698 100644
 
 diff --git a/transport/xhttp/browser_transport.go b/transport/xhttp/browser_transport.go
 new file mode 100644
-index 0000000..6451941
+index 0000000..a50ff7b
 --- /dev/null
 +++ b/transport/xhttp/browser_transport.go
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,108 @@
 +package xhttp
 +
 +import (
@@ -78,19 +79,30 @@ index 0000000..6451941
 +	Host          string
 +}
 +
++// BrowserTransportCapabilities describes browser features that affect the
++// XHTTP mode selected before a transport instance is created.
++type BrowserTransportCapabilities struct {
++	StreamUp bool
++}
++
 +// BrowserTransportFactory is installed by an embedding application. Returning
 +// a RoundTripper keeps the XHTTP framing/session implementation inside mihomo
 +// while moving TLS and HTTP request generation into the platform browser.
 +type BrowserTransportFactory func(BrowserTransportOptions) (http.RoundTripper, error)
 +
 +var (
-+	browserTransportMu      sync.RWMutex
-+	browserTransportFactory BrowserTransportFactory
++	browserTransportMu           sync.RWMutex
++	browserTransportFactory      BrowserTransportFactory
++	browserTransportCapabilities BrowserTransportCapabilities
 +)
 +
-+func SetBrowserTransportFactory(factory BrowserTransportFactory) {
++func SetBrowserTransportFactory(factory BrowserTransportFactory, capabilities BrowserTransportCapabilities) {
 +	browserTransportMu.Lock()
 +	browserTransportFactory = factory
++	if factory == nil {
++		capabilities = BrowserTransportCapabilities{}
++	}
++	browserTransportCapabilities = capabilities
 +	browserTransportMu.Unlock()
 +}
 +
@@ -99,6 +111,13 @@ index 0000000..6451941
 +	enabled := browserTransportFactory != nil
 +	browserTransportMu.RUnlock()
 +	return enabled
++}
++
++func BrowserTransportSupportsStreamUp() bool {
++	browserTransportMu.RLock()
++	supported := browserTransportFactory != nil && browserTransportCapabilities.StreamUp
++	browserTransportMu.RUnlock()
++	return supported
 +}
 +
 +func NewBrowserTransport(options BrowserTransportOptions) (http.RoundTripper, error) {
@@ -144,17 +163,19 @@ index 0000000..6451941
 +			return errors.New("xhttp WebView transport does not support custom Cookie headers")
 +		}
 +	}
-+	config.Mode = "packet-up"
-+	config.ReuseConfig = nil
++	if config.NormalizedMode() != "stream-up" || !BrowserTransportSupportsStreamUp() {
++		config.Mode = "packet-up"
++		config.ReuseConfig = nil
++	}
 +	return nil
 +}
 
 diff --git a/transport/xhttp/browser_transport_test.go b/transport/xhttp/browser_transport_test.go
 new file mode 100644
-index 0000000..6d8f323
+index 0000000..aa38c1f
 --- /dev/null
 +++ b/transport/xhttp/browser_transport_test.go
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,122 @@
 +package xhttp
 +
 +import (
@@ -171,11 +192,14 @@ index 0000000..6d8f323
 +}
 +
 +func TestBrowserTransportFactory(t *testing.T) {
-+	SetBrowserTransportFactory(nil)
-+	t.Cleanup(func() { SetBrowserTransportFactory(nil) })
++	SetBrowserTransportFactory(nil, BrowserTransportCapabilities{StreamUp: true})
++	t.Cleanup(func() { SetBrowserTransportFactory(nil, BrowserTransportCapabilities{}) })
 +
 +	if BrowserTransportEnabled() {
 +		t.Fatal("browser transport unexpectedly enabled")
++	}
++	if BrowserTransportSupportsStreamUp() {
++		t.Fatal("browser stream-up capability unexpectedly enabled")
 +	}
 +	if _, err := NewBrowserTransport(BrowserTransportOptions{}); err == nil {
 +		t.Fatal("NewBrowserTransport succeeded without a factory")
@@ -193,10 +217,13 @@ index 0000000..6d8f323
 +		return roundTripFunc(func(*http.Request) (*http.Response, error) {
 +			return nil, wantErr
 +		}), nil
-+	})
++	}, BrowserTransportCapabilities{StreamUp: true})
 +
 +	if !BrowserTransportEnabled() {
 +		t.Fatal("browser transport not enabled after factory install")
++	}
++	if !BrowserTransportSupportsStreamUp() {
++		t.Fatal("browser stream-up capability not retained after factory install")
 +	}
 +	transport := BrowserTransportMaker(wantOptions)()
 +	request, err := http.NewRequest(http.MethodGet, "https://example.com/test", nil)
@@ -209,21 +236,46 @@ index 0000000..6d8f323
 +}
 +
 +func TestPrepareBrowserConfig(t *testing.T) {
-+	config := &Config{
-+		Mode:              "stream-one",
-+		SessionPlacement:  PlacementQuery,
-+		SeqPlacement:      PlacementQuery,
-+		XPaddingPlacement: PlacementQueryInHeader,
-+		ReuseConfig:       &ReuseConfig{},
-+	}
-+	if err := PrepareBrowserConfig(config); err != nil {
-+		t.Fatal(err)
-+	}
-+	if config.Mode != "packet-up" {
-+		t.Fatalf("mode = %q, want packet-up", config.Mode)
-+	}
-+	if config.ReuseConfig != nil {
-+		t.Fatal("browser config retained XMUX reuse settings")
++	SetBrowserTransportFactory(
++		func(BrowserTransportOptions) (http.RoundTripper, error) { return nil, nil },
++		BrowserTransportCapabilities{StreamUp: true},
++	)
++	t.Cleanup(func() { SetBrowserTransportFactory(nil, BrowserTransportCapabilities{}) })
++
++	for _, testCase := range []struct {
++		name              string
++		mode              string
++		streamUpSupported bool
++		wantMode          string
++		wantReuse         bool
++	}{
++		{name: "stream-up", mode: "stream-up", streamUpSupported: true, wantMode: "stream-up", wantReuse: true},
++		{name: "stream-up fallback", mode: "stream-up", wantMode: "packet-up"},
++		{name: "stream-one fallback", mode: "stream-one", streamUpSupported: true, wantMode: "packet-up"},
++		{name: "auto fallback", mode: "auto", streamUpSupported: true, wantMode: "packet-up"},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			SetBrowserTransportFactory(
++				func(BrowserTransportOptions) (http.RoundTripper, error) { return nil, nil },
++				BrowserTransportCapabilities{StreamUp: testCase.streamUpSupported},
++			)
++			config := &Config{
++				Mode:              testCase.mode,
++				SessionPlacement:  PlacementQuery,
++				SeqPlacement:      PlacementQuery,
++				XPaddingPlacement: PlacementQueryInHeader,
++				ReuseConfig:       &ReuseConfig{},
++			}
++			if err := PrepareBrowserConfig(config); err != nil {
++				t.Fatal(err)
++			}
++			if config.Mode != testCase.wantMode {
++				t.Fatalf("mode = %q, want %q", config.Mode, testCase.wantMode)
++			}
++			if (config.ReuseConfig != nil) != testCase.wantReuse {
++				t.Fatalf("reuse retained = %v, want %v", config.ReuseConfig != nil, testCase.wantReuse)
++			}
++		})
 +	}
 +
 +	for name, mutate := range map[string]func(*Config){
