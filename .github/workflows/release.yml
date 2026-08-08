@@ -202,34 +202,32 @@ jobs:
             | tee SHA256SUMS
 
           cat > RELEASE_NOTES.md <<'EOF'
-          ## 关键修复
+          ## 关键更新
 
-          - 修复 WebView XHTTP 开启后整个 VPN 无网络的问题：AndroidCyaml 不再绕过整包 VPN 路由，WebView 的实际出口 socket 会逐个 `protect()`，并绑定到当前 Wi-Fi 或蜂窝底层网络。
-          - 修复 XHTTP 请求超时：CONNECT 监听固定使用 IPv4 回环；`packet-up` 下载请求在等待响应头前即释放逻辑连接，避免 CDN 等待首个上传包时形成死锁。
-          - 支持同一运行周期内的多个 HTTPS origin，以及同一 authority 的多个配置端点轮询与失败回退。
-          - 保留预发布版已有的 WebView 同源页面、JNI/R8 ABI 检查与固定 `server:port` CONNECT 映射。
+          - WebView XHTTP 现已支持真正的 `stream-up`：Chromium 使用 `ReadableStream` 请求体与 `duplex: "half"` 持续上传，mihomo 使用独立 GET 保持下行。
+          - 请求控制、上传分块、响应头与下行分块改用二进制 WebMessage/JNI 桥接，不再预读完整长期上传流，也移除了下行 Java 队列与 Base64 热路径。
+          - 修复同一 TLS authority 下多个节点串线：每个 `host + server:port` 使用独立 WebView profile 和带认证的精确 CONNECT 绑定。
+          - 空闲传输 WebView 最多保留四个；多余 renderer 会进入 Android 可回收缓存，避免健康检查长期占用所有端点页面。
 
           ## WebView XHTTP 行为
 
           - 关闭覆写：完整使用 mihomo 原生 XHTTP/TLS 行为。
-          - 开启覆写：用户 YAML 不改写；XHTTP framing、session、sequence 和 packet-up 分包仍由 mihomo 处理，TLS 与 HTTP 请求由 Android System WebView 发出。
-          - 配置中的固定 `server:port` 仍由回环 CONNECT 映射使用；URL、SNI 和证书验证保持 `host/servername`。
-          - 下行通过 WebView `ReadableStream` 持续回传；上行使用 mihomo `packet-up` 分批 POST，不是单个 Fetch 全双工上传流。
-          - `stream-one` 只在运行时内存对象中转换为 `packet-up`，配置文件本身保持原样。
+          - 开启覆写：用户 YAML 不改写；显式 `stream-up` 在能力检测通过时原样保留，不支持时自动回退 `packet-up`。
+          - `stream-one` 与 `auto` 继续在运行时降级为 `packet-up`；配置文件本身保持原样。
+          - URL、SNI 和证书验证保持 `host/servername`，CONNECT 则严格拨到该节点配置的 `server:port`。
 
           ## 当前限制
 
           - 仅支持标准 TLS XHTTP；REALITY、ShadowTLS、Restls、JLS、H3-only、Cookie placement 和 `download-settings` 会明确拒绝。
           - 当前回环 HTTP CONNECT 架构无法向 Chromium 提供目标 HTTPS DNS 元数据，因此没有实际 ECH；即使出现 ECH GREASE，也不代表 SNI 已加密。
-          - 同一 TLS authority 配置多个固定 IP 时可轮询和回退，但 Chromium 的 HTTP/2 连接复用不保证每个逻辑节点严格固定到各自 IP。
-          - 服务端必须接受 `packet-up` 或自动模式；只允许 `stream-one` 的服务端无法使用当前 WebView Fetch 数据面。
+          - 浏览器 Fetch 不提供同一请求的全双工响应，因此 WebView 路径不实现 `stream-one`。
 
           ## 验证范围
 
           - Debug 单元测试、Release R8、Android Lint、JNI/CGO arm64 构建。
           - mihomo `transport/xhttp` 与 `adapter/outbound` 测试。
           - JNI 导出、DEX 回调名称、SONAME、DT_NEEDED、16 KiB LOAD 对齐、APK 签名和 zipalign。
-          - Android 16 真机验证直连与 WebView XHTTP；日本与美国 XHTTP 节点均完成实际联网测试。
+          - Android 16 真机验证同域名多节点严格落到各自配置 IP；冷连接与复用连接均通过 Google 204 连通性和延迟测试。
 
           本页面下方 Assets 包含签名 APK、SHA-256、R8 mapping、native symbols、mihomo 补丁、构建日志和对应提交号。
           EOF
