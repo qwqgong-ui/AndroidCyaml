@@ -61,7 +61,7 @@
     <string name="override_adaptive_tcp_concurrent">按网络自动 TCP 并发</string>
     <string name="override_adaptive_tcp_concurrent_summary">开启后仅 Wi‑Fi 强制使用 tcp-concurrent: true，手机流量及其他网络强制使用 false；关闭后所有网络均强制使用 false。</string>
     <string name="override_webview_xhttp">XHTTP 使用系统 WebView</string>
-    <string name="override_webview_xhttp_summary">开启后，标准 TLS XHTTP 的远程 TLS/HTTP 请求由 Android System WebView 发出；用户 YAML 不改写，stream-one 仅在内存中切换为 packet-up。REALITY、H3-only 和 download-settings 会明确拒绝。关闭后恢复 mihomo 原生 XHTTP。</string>
+    <string name="override_webview_xhttp_summary">开启后，标准 TLS XHTTP 的远程 TLS/HTTP 请求由 Android System WebView 发出；用户 YAML 不改写，WebView 支持流式请求体时 stream-one 仅在内存中切换为 stream-up，否则回退 packet-up。REALITY、H3-only 和 download-settings 会明确拒绝。关闭后恢复 mihomo 原生 XHTTP。</string>
     <string name="override_lan_webui_public">向局域网公开 WebUI</string>
     <string name="override_lan_webui_local_running">当前监听 127.0.0.1:%1$d，仅本机可访问；鉴权使用 config.yaml 中的 secret。</string>
     <string name="override_lan_webui_local_pending">应用后监听 127.0.0.1，仅本机可访问；鉴权使用 config.yaml 中的 secret。</string>
