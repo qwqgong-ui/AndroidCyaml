@@ -80,6 +80,11 @@ final class WebViewXhttpDialer implements AutoCloseable {
               const textDecoder = new TextDecoder();
               let nextBodyReadId = 1;
               let bridgePort = null;
+              const downlinkFramingHeader = "X-AndroidCyaml-XHTTP-Framing";
+              const downlinkFramingValue = "v1";
+              const downlinkDataFrame = 0;
+              const downlinkHeartbeatFrame = 1;
+              const maxDownlinkFrameBytes = 16 * 1024 * 1024;
               const forbidden = new Set([
                 "host", "content-length", "transfer-encoding", "connection",
                 "upgrade", "proxy-connection", "proxy-authorization",
@@ -342,6 +347,9 @@ final class WebViewXhttpDialer implements AutoCloseable {
                     try { headers.append(name, value); } catch (_) {}
                   }
                 }
+                if (meta.method === "GET") {
+                  headers.set(downlinkFramingHeader, downlinkFramingValue);
+                }
                 init.headers = headers;
                 if (referrer) {
                   try {
@@ -365,10 +373,66 @@ final class WebViewXhttpDialer implements AutoCloseable {
                 return init;
               }
 
+              async function streamResponseBody(id, response, framed) {
+                const reader = response.body.getReader();
+                if (!framed) {
+                  while (true) {
+                    const result = await reader.read();
+                    if (result.value && result.value.byteLength) {
+                      postResponseChunk(id, result.value);
+                    }
+                    if (result.done) return;
+                  }
+                }
+
+                let pending = new Uint8Array(0);
+                while (true) {
+                  const result = await reader.read();
+                  if (result.value && result.value.byteLength) {
+                    const combined = new Uint8Array(pending.byteLength + result.value.byteLength);
+                    combined.set(pending);
+                    combined.set(result.value, pending.byteLength);
+                    pending = combined;
+                  }
+
+                  let offset = 0;
+                  while (pending.byteLength - offset >= 5) {
+                    const view = new DataView(
+                      pending.buffer,
+                      pending.byteOffset + offset,
+                      pending.byteLength - offset
+                    );
+                    const type = view.getUint8(0);
+                    const length = view.getUint32(1, false);
+                    if (length > maxDownlinkFrameBytes) {
+                      throw new Error("XHTTP downlink frame is too large");
+                    }
+                    if (pending.byteLength - offset < 5 + length) break;
+                    if (type === downlinkDataFrame) {
+                      if (length) {
+                        postResponseChunk(id, pending.slice(offset + 5, offset + 5 + length));
+                      }
+                    } else if (type !== downlinkHeartbeatFrame || length !== 0) {
+                      throw new Error("Invalid XHTTP downlink frame");
+                    }
+                    offset += 5 + length;
+                  }
+                  if (offset) pending = pending.slice(offset);
+                  if (result.done) {
+                    if (pending.byteLength) {
+                      throw new Error("Truncated XHTTP downlink frame");
+                    }
+                    return;
+                  }
+                }
+              }
+
               window.androidCyamlStart = async encoded => {
                 const meta = JSON.parse(encoded);
                 const controller = new AbortController();
-                controllers.set(meta.id, { controller, bodyId: Number(meta.bodyId) || 0 });
+                const bodyId = Number(meta.bodyId) || 0;
+                const active = { controller, bodyId };
+                controllers.set(meta.id, active);
                 try {
                   const init = prepare(meta);
                   init.signal = controller.signal;
@@ -385,14 +449,9 @@ final class WebViewXhttpDialer implements AutoCloseable {
                     postResponseTerminal(meta.id, "");
                     return;
                   }
-                  const reader = response.body.getReader();
-                  while (true) {
-                    const result = await reader.read();
-                    if (result.value && result.value.byteLength) {
-                      postResponseChunk(meta.id, result.value);
-                    }
-                    if (result.done) break;
-                  }
+                  const framed = meta.method === "GET" &&
+                    response.headers.get(downlinkFramingHeader) === downlinkFramingValue;
+                  await streamResponseBody(meta.id, response, framed);
                   postResponseTerminal(meta.id, "");
                 } catch (error) {
                   postResponseTerminal(
@@ -400,6 +459,10 @@ final class WebViewXhttpDialer implements AutoCloseable {
                     String(error && error.message ? error.message : error)
                   );
                 } finally {
+                  if (bodyId > 0) {
+                    cancelPendingBodyReads(bodyId);
+                    AndroidCyamlNative.closeRequestBody(bodyId);
+                  }
                   controllers.delete(meta.id);
                 }
               };
@@ -441,6 +504,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
     private final HandlerThread messageHandlerThread;
     private final Handler messageHandler;
     private final ConcurrentHashMap<Long, Task> tasks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Task> tasksByRequestBody = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, OriginPage> pages = new ConcurrentHashMap<>();
     private final CountDownLatch webViewReady = new CountDownLatch(1);
     private final AtomicBoolean closed = new AtomicBoolean(false);
@@ -575,11 +639,19 @@ final class WebViewXhttpDialer implements AutoCloseable {
                 body == null ? new byte[0] : body.clone(),
                 bodyId,
                 page,
-                () -> releaseOriginPage(page)
+                () -> {
+                    if (bodyId > 0L) {
+                        tasksByRequestBody.remove(bodyId);
+                    }
+                    releaseOriginPage(page);
+                }
         );
         if (tasks.putIfAbsent(id, task) != null) {
             task.discard();
             return errorResult("System WebView received a duplicate request id");
+        }
+        if (bodyId > 0L) {
+            tasksByRequestBody.put(bodyId, task);
         }
 
         dispatchRequestStart(page, task, metadata.toString());
@@ -646,13 +718,13 @@ final class WebViewXhttpDialer implements AutoCloseable {
         if (task == null) {
             return;
         }
-        task.close();
         mainHandler.post(() -> {
             WebView current = task.page.webView;
             if (current != null) {
                 current.evaluateJavascript("window.androidCyamlCancel(" + id + ");", null);
             }
         });
+        task.close();
     }
 
     @Override
@@ -662,6 +734,7 @@ final class WebViewXhttpDialer implements AutoCloseable {
         }
         tasks.forEach((id, task) -> task.close());
         tasks.clear();
+        tasksByRequestBody.clear();
         requestBodyExecutor.shutdownNow();
         stopMessageHandlerThread();
         clearProxyOverride();
@@ -984,6 +1057,17 @@ final class WebViewXhttpDialer implements AutoCloseable {
     }
 
     private void dispatchRequestStart(OriginPage page, Task task, String metadataJson) {
+        mainHandler.post(() -> dispatchRequestStartOnMain(page, task, metadataJson));
+    }
+
+    private void dispatchRequestStartOnMain(
+            OriginPage page,
+            Task task,
+            String metadataJson
+    ) {
+        if (closed.get() || tasks.get(task.id) != task || task.closed.get()) {
+            return;
+        }
         WebMessagePortCompat port = page.messagePort.get();
         if (page.binaryBridge.get() && port != null) {
             try {
@@ -1001,17 +1085,15 @@ final class WebViewXhttpDialer implements AutoCloseable {
                 }
             }
         }
-        mainHandler.post(() -> {
-            WebView current = page.webView;
-            if (current == null || closed.get()) {
-                task.fail("System WebView is unavailable");
-                return;
-            }
-            current.evaluateJavascript(
-                    "window.androidCyamlStart(" + JSONObject.quote(metadataJson) + ");",
-                    null
-            );
-        });
+        WebView current = page.webView;
+        if (current == null || closed.get()) {
+            task.fail("System WebView is unavailable");
+            return;
+        }
+        current.evaluateJavascript(
+                "window.androidCyamlStart(" + JSONObject.quote(metadataJson) + ");",
+                null
+        );
     }
 
     private static boolean supportsBinaryWebMessages() {
@@ -1136,14 +1218,42 @@ final class WebViewXhttpDialer implements AutoCloseable {
 
     private void dispatchRequestBodyChunk(
             OriginPage page,
+            Task task,
             long bodyId,
             long readId,
             int status,
             byte[] chunk,
             int count
     ) {
-        WebMessagePortCompat port = page == null ? null : page.messagePort.get();
-        if (page != null && page.binaryBridge.get() && port != null) {
+        mainHandler.post(() -> dispatchRequestBodyChunkOnMain(
+                page,
+                task,
+                bodyId,
+                readId,
+                status,
+                chunk,
+                count
+        ));
+    }
+
+    private void dispatchRequestBodyChunkOnMain(
+            OriginPage page,
+            Task task,
+            long bodyId,
+            long readId,
+            int status,
+            byte[] chunk,
+            int count
+    ) {
+        if (closed.get() || page == null || page.webView == null) {
+            return;
+        }
+        if (task != null && (tasksByRequestBody.get(bodyId) != task
+                || task.requestBodyClosed.get())) {
+            return;
+        }
+        WebMessagePortCompat port = page.messagePort.get();
+        if (page.binaryBridge.get() && port != null) {
             try {
                 port.postMessage(new WebMessageCompat(
                         WebViewBinaryBridge.encodeRequestBodyChunk(
@@ -1165,21 +1275,15 @@ final class WebViewXhttpDialer implements AutoCloseable {
         String encoded = status > 0 && chunk != null && count > 0
                 ? Base64.encodeToString(chunk, 0, count, Base64.NO_WRAP)
                 : "";
-        mainHandler.post(() -> {
-            WebView current = page == null ? null : page.webView;
-            if (current == null || closed.get()) {
-                return;
-            }
-            current.evaluateJavascript(
-                    "window.androidCyamlBodyChunk("
-                            + bodyId + ","
-                            + readId + ","
-                            + status + ","
-                            + JSONObject.quote(encoded == null ? "" : encoded)
-                            + ");",
-                    null
-            );
-        });
+        page.webView.evaluateJavascript(
+                "window.androidCyamlBodyChunk("
+                        + bodyId + ","
+                        + readId + ","
+                        + status + ","
+                        + JSONObject.quote(encoded == null ? "" : encoded)
+                        + ");",
+                null
+        );
     }
 
     private final class JavascriptBridge {
@@ -1243,8 +1347,10 @@ final class WebViewXhttpDialer implements AutoCloseable {
 
         @JavascriptInterface
         public void readRequestBodyChunk(long bodyId, long readId, int maximum) {
-            if (page == null || bodyId <= 0L || readId <= 0L || closed.get()) {
-                dispatchRequestBodyChunk(page, bodyId, readId, -1, null, 0);
+            Task task = tasksByRequestBody.get(bodyId);
+            if (page == null || bodyId <= 0L || readId <= 0L || closed.get()
+                    || task == null || task.page != page || task.requestBodyClosed.get()) {
+                dispatchRequestBodyChunk(page, null, bodyId, readId, -1, null, 0);
                 return;
             }
             int capacity = Math.min(Math.max(maximum, 1), BODY_CHUNK_BYTES);
@@ -1253,13 +1359,19 @@ final class WebViewXhttpDialer implements AutoCloseable {
                     try {
                         byte[] chunk = new byte[capacity];
                         int count = MihomoNative.readBrowserRequestBody(bodyId, chunk);
+                        if (tasksByRequestBody.get(bodyId) != task
+                                || task.requestBodyClosed.get()
+                                || closed.get()) {
+                            return;
+                        }
                         if (count < 0 || count > capacity) {
-                            dispatchRequestBodyChunk(page, bodyId, readId, -1, null, 0);
+                            dispatchRequestBodyChunk(page, task, bodyId, readId, -1, null, 0);
                         } else if (count == 0) {
-                            dispatchRequestBodyChunk(page, bodyId, readId, 0, null, 0);
+                            dispatchRequestBodyChunk(page, task, bodyId, readId, 0, null, 0);
                         } else {
                             dispatchRequestBodyChunk(
                                     page,
+                                    task,
                                     bodyId,
                                     readId,
                                     1,
@@ -1269,11 +1381,11 @@ final class WebViewXhttpDialer implements AutoCloseable {
                         }
                     } catch (RuntimeException exception) {
                         Log.w(TAG, "Unable to read WebView request body", exception);
-                        dispatchRequestBodyChunk(page, bodyId, readId, -1, null, 0);
+                        dispatchRequestBodyChunk(page, task, bodyId, readId, -1, null, 0);
                     }
                 });
             } catch (RejectedExecutionException exception) {
-                dispatchRequestBodyChunk(page, bodyId, readId, -1, null, 0);
+                dispatchRequestBodyChunk(page, task, bodyId, readId, -1, null, 0);
             }
         }
 
