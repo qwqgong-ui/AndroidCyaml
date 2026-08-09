@@ -593,6 +593,7 @@ func currentResolveProcessCallback() unsafe.Pointer {
 func stopLocked() {
 	if active {
 		executor.Shutdown()
+		resetTunListenerForRestart()
 		route.ReCreateServer(&route.Config{})
 	}
 	clearPlatformHooks()

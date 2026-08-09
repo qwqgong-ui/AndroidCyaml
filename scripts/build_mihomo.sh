@@ -163,6 +163,19 @@ mkdir -p "${MODULE_DIR}" "${TEMP_DIR}"
 cp "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" "${MODULE_DIR}/"
 printf '\nreplace github.com/metacubex/mihomo => ../mihomo-src\n' >> "${MODULE_DIR}/go.mod"
 
+# The wrapper's host-safe lifecycle tests exercise state that would otherwise
+# only fail after a second in-process Android TUN startup.
+(
+    cd "${MODULE_DIR}"
+    env \
+        GOWORK=off \
+        GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        go test \
+        -mod=mod \
+        -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku" \
+        .
+)
+
 readonly BUILD_TIME="$(git -C "${SOURCE_DIR}" show -s --format=%cI "${MIHOMO_COMMIT}")"
 readonly VERSION="androidcyaml-${MIHOMO_COMMIT:0:8}-p${PATCH_DIGEST:0:8}"
 readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME} -w -buildid="
