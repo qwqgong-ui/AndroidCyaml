@@ -204,30 +204,30 @@ jobs:
           cat > RELEASE_NOTES.md <<'EOF'
           ## 关键更新
 
-          - WebView XHTTP 现已支持真正的 `stream-up`：Chromium 使用 `ReadableStream` 请求体与 `duplex: "half"` 持续上传，mihomo 使用独立 GET 保持下行。
-          - 请求控制、上传分块、响应头与下行分块改用二进制 WebMessage/JNI 桥接，不再预读完整长期上传流，也移除了下行 Java 队列与 Base64 热路径。
-          - 修复同一 TLS authority 下多个节点串线：每个 `host + server:port` 使用独立 WebView profile 和带认证的精确 CONNECT 绑定。
-          - 空闲传输 WebView 最多保留四个；多余 renderer 会进入 Android 可回收缓存，避免健康检查长期占用所有端点页面。
+          - 修复导入配置、应用运行时覆写、重启 mihomo 或重新开启 VPN 后，TUN 偶发仍显示已连接却无流量的问题。内嵌核心关闭时现在会同步清除 mihomo 保留的 TUN 配置，避免相同配置和相同文件描述符误判为无需重建监听器。
+          - 新增 TUN 生命周期回归测试，并在每次 mihomo JNI 构建前执行，覆盖第二次进程内启动这一失效路径。
+          - WebView XHTTP 下行支持协商式数据帧和 30 秒心跳，防止 Chromium 无法发送 HTTP/2 PING 时长期 GET 被空闲回收；不支持该扩展的服务端仍保持原始字节流兼容。
+          - WebView 支持流式请求体时，`stream-one` 在内存中切换为 `stream-up`；否则继续回退 `packet-up`。用户 YAML 不改写。
+          - 内置 Zashboard 更新至 v3.18.0。
 
-          ## WebView XHTTP 行为
+          ## TUN 修复范围
 
-          - 关闭覆写：完整使用 mihomo 原生 XHTTP/TLS 行为。
-          - 开启覆写：用户 YAML 不改写；显式 `stream-up` 在能力检测通过时原样保留，不支持时自动回退 `packet-up`。
-          - `stream-one` 与 `auto` 继续在运行时降级为 `packet-up`；配置文件本身保持原样。
-          - URL、SNI 和证书验证保持 `host/servername`，CONNECT 则严格拨到该节点配置的 `server:port`。
+          - 配置文件上传与切换。
+          - 运行时覆写重新应用。
+          - mihomo 核心停止后启动，以及 VPN 关闭后重新开启。
+          - Android 原生 TUN 文件描述符数值被系统复用的场景。
 
           ## 当前限制
 
           - 仅支持标准 TLS XHTTP；REALITY、ShadowTLS、Restls、JLS、H3-only、Cookie placement 和 `download-settings` 会明确拒绝。
           - 当前回环 HTTP CONNECT 架构无法向 Chromium 提供目标 HTTPS DNS 元数据，因此没有实际 ECH；即使出现 ECH GREASE，也不代表 SNI 已加密。
-          - 浏览器 Fetch 不提供同一请求的全双工响应，因此 WebView 路径不实现 `stream-one`。
+          - 浏览器 Fetch 不提供同一请求的全双工响应，因此 WebView 路径会将 `stream-one` 拆分为 `stream-up` 上传与独立 GET 下行。
 
           ## 验证范围
 
-          - Debug 单元测试、Release R8、Android Lint、JNI/CGO arm64 构建。
-          - mihomo `transport/xhttp` 与 `adapter/outbound` 测试。
+          - Go TUN 生命周期回归测试、Debug 单元测试、Release R8、Android Lint、JNI/CGO arm64 构建。
           - JNI 导出、DEX 回调名称、SONAME、DT_NEEDED、16 KiB LOAD 对齐、APK 签名和 zipalign。
-          - Android 16 真机验证同域名多节点严格落到各自配置 IP；冷连接与复用连接均通过 Google 204 连通性和延迟测试。
+          - Android 16 真机覆盖连续 5 次核心重启、运行时覆写、停止/启动和配置导入；即使系统复用同一 TUN 文件描述符，网络流量仍能恢复。
 
           本页面下方 Assets 包含签名 APK、SHA-256、R8 mapping、native symbols、mihomo 补丁、构建日志和对应提交号。
           EOF
