@@ -5,7 +5,8 @@ import android.content.SharedPreferences;
 
 final class RuntimeOverrideStore {
     private static final String PREFERENCES = "androidcyaml_runtime_overrides";
-    private static final String PROCESS_MATCHING = "process_matching";
+    private static final String PROCESS_MATCHING_MODE = "process_matching_mode";
+    private static final String LEGACY_PROCESS_MATCHING = "process_matching";
     private static final String IPV6_ENABLED = "ipv6_enabled";
     private static final String LOG_LEVEL = "log_level";
     private static final String ADAPTIVE_TCP_CONCURRENT = "adaptive_tcp_concurrent";
@@ -30,9 +31,27 @@ final class RuntimeOverrideStore {
         } catch (IllegalArgumentException ignored) {
             logLevel = RuntimeLogLevel.WARNING;
         }
+        ProcessMatchingMode processMatchingMode;
+        if (preferences.contains(PROCESS_MATCHING_MODE)) {
+            try {
+                processMatchingMode = ProcessMatchingMode.fromWireValue(
+                        preferences.getString(PROCESS_MATCHING_MODE, "always")
+                );
+            } catch (ClassCastException | IllegalArgumentException ignored) {
+                processMatchingMode = ProcessMatchingMode.ALWAYS;
+            }
+        } else {
+            try {
+                processMatchingMode = preferences.getBoolean(LEGACY_PROCESS_MATCHING, true)
+                        ? ProcessMatchingMode.ALWAYS
+                        : ProcessMatchingMode.OFF;
+            } catch (ClassCastException ignored) {
+                processMatchingMode = ProcessMatchingMode.ALWAYS;
+            }
+        }
         return new RuntimeOverrideSettings(
                 TunStackMode.SYSTEM,
-                preferences.getBoolean(PROCESS_MATCHING, true),
+                processMatchingMode,
                 preferences.getBoolean(IPV6_ENABLED, true),
                 logLevel,
                 preferences.getBoolean(ADAPTIVE_TCP_CONCURRENT, false),
@@ -46,13 +65,14 @@ final class RuntimeOverrideStore {
                 ? RuntimeOverrideSettings.defaults()
                 : settings;
         boolean persisted = preferences.edit()
-                .putBoolean(PROCESS_MATCHING, value.processMatching())
+                .putString(PROCESS_MATCHING_MODE, value.processMatchingMode().wireValue())
                 .putBoolean(IPV6_ENABLED, value.ipv6Enabled())
                 .putString(LOG_LEVEL, value.logLevel().wireValue())
                 .putBoolean(ADAPTIVE_TCP_CONCURRENT, value.adaptiveTcpConcurrent())
                 .putBoolean(WEBVIEW_XHTTP, value.webViewXhttp())
                 .putBoolean(LAN_WEB_UI_PUBLIC, value.lanWebUiPublic())
                 .remove("tun_stack_mode")
+                .remove(LEGACY_PROCESS_MATCHING)
                 .remove("tun_stack")
                 .commit();
         if (!persisted) {

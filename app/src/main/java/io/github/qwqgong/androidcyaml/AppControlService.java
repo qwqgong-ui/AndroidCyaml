@@ -53,7 +53,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
         @Override
         public void setRuntimeOverrides(
                 String tunStack,
-                boolean processMatching,
+                String processMatchingMode,
                 boolean ipv6Enabled,
                 String logLevel,
                 boolean adaptiveTcpConcurrent,
@@ -64,7 +64,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
             enforceSameAppCaller();
             coordinator.setRuntimeOverrides(
                     tunStack,
-                    processMatching,
+                    processMatchingMode,
                     ipv6Enabled,
                     logLevel,
                     adaptiveTcpConcurrent,
@@ -125,7 +125,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     current.state() == RuntimeState.RUNNING ? current.dashboardUrl() : "",
                     current.state() == RuntimeState.RUNNING ? current.controllerPort() : 0,
                     overrides.tunStack().wireValue(),
-                    overrides.processMatching(),
+                    overrides.processMatchingMode().wireValue(),
                     overrides.ipv6Enabled(),
                     coordinator.effectiveIpv6Enabled(),
                     overrides.logLevel().wireValue(),

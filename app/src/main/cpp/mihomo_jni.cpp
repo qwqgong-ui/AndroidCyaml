@@ -464,17 +464,18 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun(
         jstring config_path,
         jstring stack,
         jboolean ipv6_enabled,
-        jboolean process_matching
+        jstring process_matching_mode
 ) {
     std::string home_value = stringFromJava(env, home);
     std::string config_value = stringFromJava(env, config_path);
     std::string stack_value = stringFromJava(env, stack);
+    std::string process_matching_mode_value = stringFromJava(env, process_matching_mode);
     return stringFromNative(env, AndroidCyamlPrepareTun(
             const_cast<char*>(home_value.c_str()),
             const_cast<char*>(config_value.c_str()),
             const_cast<char*>(stack_value.c_str()),
-            ipv6_enabled == JNI_TRUE ? 1 : 0,
-            process_matching == JNI_TRUE ? 1 : 0
+            const_cast<char*>(process_matching_mode_value.c_str()),
+            ipv6_enabled == JNI_TRUE ? 1 : 0
     ));
 }
 
@@ -601,7 +602,7 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
         jstring log_level,
         jint tun_file_descriptor,
         jboolean ipv6_enabled,
-        jboolean process_matching,
+        jstring process_matching_mode,
         jboolean lan_web_ui_public,
         jobject callbacks
 ) {
@@ -616,6 +617,7 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
     std::string controller_value = stringFromJava(env, controller_address);
     std::string stack_value = stringFromJava(env, stack);
     std::string log_level_value = stringFromJava(env, log_level);
+    std::string process_matching_mode_value = stringFromJava(env, process_matching_mode);
     return stringFromNative(env, AndroidCyamlStart(
             const_cast<char*>(home_value.c_str()),
             const_cast<char*>(config_value.c_str()),
@@ -623,9 +625,9 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
             const_cast<char*>(controller_value.c_str()),
             const_cast<char*>(stack_value.c_str()),
             const_cast<char*>(log_level_value.c_str()),
+            const_cast<char*>(process_matching_mode_value.c_str()),
             static_cast<int>(tun_file_descriptor),
             ipv6_enabled == JNI_TRUE ? 1 : 0,
-            process_matching == JNI_TRUE ? 1 : 0,
             lan_web_ui_public == JNI_TRUE ? 1 : 0
     ));
 }

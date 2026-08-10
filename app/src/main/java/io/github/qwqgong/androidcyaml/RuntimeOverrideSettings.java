@@ -2,7 +2,7 @@ package io.github.qwqgong.androidcyaml;
 
 record RuntimeOverrideSettings(
         TunStackMode tunStack,
-        boolean processMatching,
+        ProcessMatchingMode processMatchingMode,
         boolean ipv6Enabled,
         RuntimeLogLevel logLevel,
         boolean adaptiveTcpConcurrent,
@@ -11,12 +11,15 @@ record RuntimeOverrideSettings(
 ) {
     RuntimeOverrideSettings {
         tunStack = TunStackMode.SYSTEM;
+        processMatchingMode = processMatchingMode == null
+                ? ProcessMatchingMode.ALWAYS
+                : processMatchingMode;
         logLevel = logLevel == null ? RuntimeLogLevel.WARNING : logLevel;
     }
 
     RuntimeOverrideSettings(
             TunStackMode tunStack,
-            boolean processMatching,
+            ProcessMatchingMode processMatchingMode,
             boolean ipv6Enabled,
             RuntimeLogLevel logLevel,
             boolean adaptiveTcpConcurrent,
@@ -24,7 +27,7 @@ record RuntimeOverrideSettings(
     ) {
         this(
                 tunStack,
-                processMatching,
+                processMatchingMode,
                 ipv6Enabled,
                 logLevel,
                 adaptiveTcpConcurrent,
@@ -36,7 +39,7 @@ record RuntimeOverrideSettings(
     static RuntimeOverrideSettings defaults() {
         return new RuntimeOverrideSettings(
                 TunStackMode.SYSTEM,
-                true,
+                ProcessMatchingMode.ALWAYS,
                 true,
                 RuntimeLogLevel.WARNING,
                 false,

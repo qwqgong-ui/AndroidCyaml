@@ -11,7 +11,7 @@ interface IAppControl {
     void importConfig(in Uri source, IOperationCallback callback);
     void setRuntimeOverrides(
             String tunStack,
-            boolean processMatching,
+            String processMatchingMode,
             boolean ipv6Enabled,
             String logLevel,
             boolean adaptiveTcpConcurrent,

@@ -89,7 +89,7 @@ type embeddedOptions struct {
 	FileDescriptor  int
 	Stack           string
 	IPv6Enabled     bool
-	ProcessMatching bool
+	ProcessMatching string
 }
 
 type startPayload struct {
@@ -157,8 +157,8 @@ func AndroidCyamlPrepareTun(
 	homeValue,
 	configValue,
 	stackValue *C.char,
-	ipv6Value,
-	processMatchingValue C.int,
+	processMatchingValue *C.char,
+	ipv6Value C.int,
 ) *C.char {
 	home := C.GoString(homeValue)
 	configPath := C.GoString(configValue)
@@ -177,7 +177,7 @@ func AndroidCyamlPrepareTun(
 		FileDescriptor:  -1,
 		Stack:           C.GoString(stackValue),
 		IPv6Enabled:     ipv6Value != 0,
-		ProcessMatching: processMatchingValue != 0,
+		ProcessMatching: C.GoString(processMatchingValue),
 	})
 	return respond(payload, err)
 }
@@ -189,10 +189,10 @@ func AndroidCyamlStart(
 	uiValue,
 	controllerValue,
 	stackValue,
-	logLevelValue *C.char,
+	logLevelValue,
+	processMatchingValue *C.char,
 	fileDescriptor,
 	ipv6Value,
-	processMatchingValue,
 	lanWebUiPublicValue C.int,
 ) *C.char {
 	runtimeMu.Lock()
@@ -237,7 +237,7 @@ func AndroidCyamlStart(
 		FileDescriptor:  int(fileDescriptor),
 		Stack:           C.GoString(stackValue),
 		IPv6Enabled:     ipv6Value != 0,
-		ProcessMatching: processMatchingValue != 0,
+		ProcessMatching: C.GoString(processMatchingValue),
 	})
 	if err != nil {
 		return respond(nil, err)
@@ -362,11 +362,14 @@ func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte,
 		cfg.DNS.IPv6 = cfg.DNS.IPv6 && options.IPv6Enabled
 	}
 
-	if options.ProcessMatching {
-		cfg.General.FindProcessMode = process.FindProcessAlways
-	} else {
-		cfg.General.FindProcessMode = process.FindProcessOff
+	var findProcessMode process.FindProcessMode
+	if err := findProcessMode.Set(options.ProcessMatching); err != nil {
+		return nil, fmt.Errorf(
+			"unsupported mihomo find-process-mode: %s",
+			options.ProcessMatching,
+		)
 	}
+	cfg.General.FindProcessMode = findProcessMode
 
 	tunConfig.AutoRoute = originalAutoRoute
 	dnsEnabled := cfg.DNS != nil && cfg.DNS.Enable

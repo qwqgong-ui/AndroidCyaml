@@ -62,7 +62,7 @@ final class MihomoRuntime implements AutoCloseable {
             return "mihomo " + shortCommit()
                     + " · JNI/CGO"
                     + " · " + stackDetail(settings.tunStack())
-                    + (settings.processMatching() ? " · 进程匹配" : " · 不匹配进程")
+                    + " · 进程匹配 " + settings.processMatchingMode().wireValue()
                     + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
                     + (tcpConcurrentEnabled ? " · TCP 并发" : " · TCP 并发关闭")
                     + (settings.webViewXhttp() ? " · XHTTP WebView" : " · XHTTP 原生")
