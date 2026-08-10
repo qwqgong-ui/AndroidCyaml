@@ -40,7 +40,7 @@ public final class MainActivity extends Activity implements
     private RuntimeState runtimeState = RuntimeState.STOPPED;
     private String runtimeDetail = "VPN 未连接";
     private TunStackMode tunStack = TunStackMode.SYSTEM;
-    private boolean processMatching = true;
+    private ProcessMatchingMode processMatchingMode = ProcessMatchingMode.ALWAYS;
     private boolean ipv6Enabled = true;
     private boolean ipv6Effective = true;
     private RuntimeLogLevel logLevel = RuntimeLogLevel.WARNING;
@@ -168,7 +168,7 @@ public final class MainActivity extends Activity implements
             String dashboardUrl,
             int controllerPort,
             String newTunStack,
-            boolean newProcessMatching,
+            String newProcessMatchingMode,
             boolean newIpv6Enabled,
             boolean newIpv6Effective,
             String newLogLevel,
@@ -190,7 +190,11 @@ public final class MainActivity extends Activity implements
         } catch (IllegalArgumentException ignored) {
             logLevel = RuntimeLogLevel.WARNING;
         }
-        processMatching = newProcessMatching;
+        try {
+            processMatchingMode = ProcessMatchingMode.fromWireValue(newProcessMatchingMode);
+        } catch (IllegalArgumentException ignored) {
+            processMatchingMode = ProcessMatchingMode.ALWAYS;
+        }
         ipv6Enabled = newIpv6Enabled;
         ipv6Effective = newIpv6Effective;
         adaptiveTcpConcurrent = newAdaptiveTcpConcurrent;
@@ -229,7 +233,7 @@ public final class MainActivity extends Activity implements
         RuntimeOverridesDialog.show(
                 this,
                 tunStack,
-                processMatching,
+                processMatchingMode,
                 ipv6Enabled,
                 ipv6Effective,
                 logLevel,
@@ -385,7 +389,7 @@ public final class MainActivity extends Activity implements
         pendingRuntimeOverrides = null;
         controlClient.setRuntimeOverrides(
                 requested.tunStack(),
-                requested.processMatching(),
+                requested.processMatchingMode(),
                 requested.ipv6Enabled(),
                 requested.logLevel(),
                 requested.adaptiveTcpConcurrent(),

@@ -3,13 +3,19 @@ package io.github.qwqgong.androidcyaml;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Typeface;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
+
+import java.util.HashMap;
+import java.util.Map;
 
 final class RuntimeOverridesDialog {
     interface Listener {
@@ -21,7 +27,7 @@ final class RuntimeOverridesDialog {
     static void show(
             Context context,
             TunStackMode currentStack,
-            boolean processMatching,
+            ProcessMatchingMode currentProcessMatchingMode,
             boolean ipv6Enabled,
             boolean ipv6Effective,
             RuntimeLogLevel currentLogLevel,
@@ -65,12 +71,39 @@ final class RuntimeOverridesDialog {
                 context.getString(R.string.override_log_level_summary)
         ), matchWidth());
 
-        Switch process = switchView(
-                context,
-                R.string.override_process_matching,
-                processMatching
+        content.addView(
+                sectionTitle(context, R.string.override_process_matching),
+                topSpaced(context)
         );
-        content.addView(process, topSpaced(context));
+        RadioGroup processGroup = new RadioGroup(context);
+        processGroup.setOrientation(RadioGroup.VERTICAL);
+        Map<Integer, ProcessMatchingMode> processModeById = new HashMap<>();
+        addProcessOption(
+                context,
+                processGroup,
+                processModeById,
+                ProcessMatchingMode.STRICT,
+                R.string.override_process_strict,
+                currentProcessMatchingMode == ProcessMatchingMode.STRICT
+        );
+        addProcessOption(
+                context,
+                processGroup,
+                processModeById,
+                ProcessMatchingMode.ALWAYS,
+                R.string.override_process_always,
+                currentProcessMatchingMode == null
+                        || currentProcessMatchingMode == ProcessMatchingMode.ALWAYS
+        );
+        addProcessOption(
+                context,
+                processGroup,
+                processModeById,
+                ProcessMatchingMode.OFF,
+                R.string.override_process_off,
+                currentProcessMatchingMode == ProcessMatchingMode.OFF
+        );
+        content.addView(processGroup, matchWidth());
         content.addView(summary(
                 context,
                 context.getString(R.string.override_process_matching_summary)
@@ -138,10 +171,15 @@ final class RuntimeOverridesDialog {
                 .setView(scroll)
                 .setNegativeButton(R.string.cancel, null)
                 .setPositiveButton(R.string.apply, (dialog, which) -> {
+                    ProcessMatchingMode selectedProcessMode = processModeById.get(
+                            processGroup.getCheckedRadioButtonId()
+                    );
                     int logLevelIndex = logLevel.getSelectedItemPosition();
                     listener.onOverridesSelected(new RuntimeOverrideSettings(
                             TunStackMode.SYSTEM,
-                            process.isChecked(),
+                            selectedProcessMode == null
+                                    ? ProcessMatchingMode.ALWAYS
+                                    : selectedProcessMode,
                             ipv6.isChecked(),
                             logLevelIndex >= 0 && logLevelIndex < logLevels.length
                                     ? logLevels[logLevelIndex]
@@ -152,6 +190,25 @@ final class RuntimeOverridesDialog {
                     ));
                 })
                 .show();
+    }
+
+    private static void addProcessOption(
+            Context context,
+            RadioGroup group,
+            Map<Integer, ProcessMatchingMode> processModeById,
+            ProcessMatchingMode mode,
+            int label,
+            boolean checked
+    ) {
+        RadioButton button = new RadioButton(context);
+        int id = View.generateViewId();
+        button.setId(id);
+        button.setText(label);
+        button.setTextSize(15);
+        button.setMinHeight(dp(context, 44));
+        button.setChecked(checked);
+        processModeById.put(id, mode);
+        group.addView(button, matchWidth());
     }
 
     private static TextView sectionTitle(Context context, int text) {

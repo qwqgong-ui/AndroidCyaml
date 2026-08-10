@@ -20,7 +20,7 @@ final class RuntimeControlClient {
                 String dashboardUrl,
                 int controllerPort,
                 String tunStack,
-                boolean processMatching,
+                String processMatchingMode,
                 boolean ipv6Enabled,
                 boolean ipv6Effective,
                 String logLevel,
@@ -53,7 +53,7 @@ final class RuntimeControlClient {
                 String dashboardUrl,
                 int controllerPort,
                 String tunStack,
-                boolean processMatching,
+                String processMatchingMode,
                 boolean ipv6Enabled,
                 boolean ipv6Effective,
                 String logLevel,
@@ -69,7 +69,7 @@ final class RuntimeControlClient {
                     dashboardUrl,
                     controllerPort,
                     tunStack,
-                    processMatching,
+                    processMatchingMode,
                     ipv6Enabled,
                     ipv6Effective,
                     logLevel,
@@ -182,7 +182,7 @@ final class RuntimeControlClient {
 
     void setRuntimeOverrides(
             TunStackMode tunStack,
-            boolean processMatching,
+            ProcessMatchingMode processMatchingMode,
             boolean ipv6Enabled,
             RuntimeLogLevel logLevel,
             boolean adaptiveTcpConcurrent,
@@ -197,10 +197,13 @@ final class RuntimeControlClient {
         }
         TunStackMode stack = tunStack == null ? TunStackMode.SYSTEM : tunStack;
         RuntimeLogLevel level = logLevel == null ? RuntimeLogLevel.WARNING : logLevel;
+        ProcessMatchingMode mode = processMatchingMode == null
+                ? ProcessMatchingMode.ALWAYS
+                : processMatchingMode;
         try {
             current.setRuntimeOverrides(
                     stack.wireValue(),
-                    processMatching,
+                    mode.wireValue(),
                     ipv6Enabled,
                     level.wireValue(),
                     adaptiveTcpConcurrent,

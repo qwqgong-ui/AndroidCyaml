@@ -144,7 +144,7 @@ final class RuntimeCoordinator {
 
     void setRuntimeOverrides(
             String stackValue,
-            boolean processMatching,
+            String processMatchingModeValue,
             boolean ipv6Enabled,
             String logLevelValue,
             boolean adaptiveTcpConcurrent,
@@ -154,9 +154,11 @@ final class RuntimeCoordinator {
     ) {
         final TunStackMode stack;
         final RuntimeLogLevel logLevel;
+        final ProcessMatchingMode processMatchingMode;
         try {
             stack = TunStackMode.fromWireValue(stackValue);
             logLevel = RuntimeLogLevel.fromWireValue(logLevelValue);
+            processMatchingMode = ProcessMatchingMode.fromWireValue(processMatchingModeValue);
         } catch (IllegalArgumentException exception) {
             postOperation(callback, false, usefulMessage(exception));
             return;
@@ -164,7 +166,7 @@ final class RuntimeCoordinator {
         executor.execute(() -> setRuntimeOverridesInternal(
                 new RuntimeOverrideSettings(
                         stack,
-                        processMatching,
+                        processMatchingMode,
                         ipv6Enabled,
                         logLevel,
                         adaptiveTcpConcurrent,
@@ -215,7 +217,7 @@ final class RuntimeCoordinator {
         if (localNetworkFallback) {
             settings = new RuntimeOverrideSettings(
                     settings.tunStack(),
-                    settings.processMatching(),
+                    settings.processMatchingMode(),
                     settings.ipv6Enabled(),
                     settings.logLevel(),
                     settings.adaptiveTcpConcurrent(),
@@ -604,7 +606,7 @@ final class RuntimeCoordinator {
             case GVISOR -> "gVisor 全栈";
             case MIXED -> "mixed（TCP system / UDP gVisor）";
         };
-        String process = settings.processMatching() ? "进程匹配已开启" : "进程匹配已关闭";
+        String process = "进程匹配 " + settings.processMatchingMode().wireValue();
         String ipv6;
         if (!settings.ipv6Enabled()) {
             ipv6 = "IPv6 已关闭";

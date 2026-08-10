@@ -30,7 +30,7 @@ final class MihomoNative {
                 paths.config().getAbsolutePath(),
                 settings.tunStack().wireValue(),
                 ipv6Enabled,
-                settings.processMatching()
+                settings.processMatchingMode().wireValue()
         ));
         if (payload == null) {
             throw new IOException("mihomo 未返回 Android TUN 参数");
@@ -61,7 +61,7 @@ final class MihomoNative {
                     settings.logLevel().wireValue(),
                     tunFileDescriptor,
                     ipv6Enabled,
-                    settings.processMatching(),
+                    settings.processMatchingMode().wireValue(),
                     settings.lanWebUiPublic(),
                     callbacks
             ));
@@ -144,7 +144,7 @@ final class MihomoNative {
             String configPath,
             String stack,
             boolean ipv6Enabled,
-            boolean processMatching
+            String processMatchingMode
     );
 
     private static native String nativeSetWebViewXhttpEnabled(
@@ -169,7 +169,7 @@ final class MihomoNative {
             String logLevel,
             int tunFileDescriptor,
             boolean ipv6Enabled,
-            boolean processMatching,
+            String processMatchingMode,
             boolean lanWebUiPublic,
             NativePlatformCallbacks callbacks
     );
