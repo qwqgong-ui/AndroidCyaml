@@ -4,6 +4,7 @@ import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 final class MihomoRuntime implements AutoCloseable {
@@ -15,6 +16,7 @@ final class MihomoRuntime implements AutoCloseable {
     private final RuntimeOverrideSettings settings;
     private final boolean ipv6Enabled;
     private final boolean tcpConcurrentEnabled;
+    private final List<String> systemDnsServers;
 
     private MihomoController controller;
     private boolean started;
@@ -25,7 +27,8 @@ final class MihomoRuntime implements AutoCloseable {
             NativePlatformCallbacks platformCallbacks,
             RuntimeOverrideSettings settings,
             boolean ipv6Enabled,
-            boolean tcpConcurrentEnabled
+            boolean tcpConcurrentEnabled,
+            List<String> systemDnsServers
     ) {
         this.fileStore = fileStore;
         this.tunManager = tunManager;
@@ -33,6 +36,9 @@ final class MihomoRuntime implements AutoCloseable {
         this.settings = settings == null ? RuntimeOverrideSettings.defaults() : settings;
         this.ipv6Enabled = ipv6Enabled;
         this.tcpConcurrentEnabled = tcpConcurrentEnabled;
+        this.systemDnsServers = systemDnsServers == null
+                ? List.of()
+                : List.copyOf(systemDnsServers);
     }
 
     String start() throws IOException, InterruptedException {
@@ -45,6 +51,7 @@ final class MihomoRuntime implements AutoCloseable {
         int nativeFd = duplicate.detachFd();
         boolean nativeAcceptedDescriptor = false;
         try {
+            MihomoNative.updateSystemDns(systemDnsServers);
             String controllerSecret = MihomoNative.start(
                     paths,
                     controller,
@@ -104,8 +111,9 @@ final class MihomoRuntime implements AutoCloseable {
         }
     }
 
-    void onUnderlyingNetworkChanged() throws IOException {
+    void onUnderlyingNetworkChanged(List<String> dnsServers) throws IOException {
         if (started && MihomoNative.isRunning()) {
+            MihomoNative.updateSystemDns(dnsServers);
             MihomoNative.notifyNetworkChanged();
         }
     }

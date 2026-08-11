@@ -34,20 +34,23 @@ final class Ipv6EnvironmentMonitor {
             long networkHandle,
             String linkSignature,
             boolean ipv6Usable,
-            boolean wifi
+            boolean wifi,
+            List<String> dnsServers
     ) {
         State {
             if (networkHandle == 0L) {
                 linkSignature = "";
                 ipv6Usable = false;
                 wifi = false;
+                dnsServers = List.of();
             } else {
                 linkSignature = linkSignature == null ? "" : linkSignature;
+                dnsServers = dnsServers == null ? List.of() : List.copyOf(dnsServers);
             }
         }
 
         static State unavailable() {
-            return new State(0L, "", false, false);
+            return new State(0L, "", false, false, List.of());
         }
 
         boolean available() {
@@ -317,8 +320,20 @@ final class Ipv6EnvironmentMonitor {
                 snapshot.network().getNetworkHandle(),
                 linkSignature(properties),
                 ipv6Usable,
-                snapshot.capabilities().hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                snapshot.capabilities().hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+                dnsServers(properties)
         );
+    }
+
+    private static List<String> dnsServers(LinkProperties properties) {
+        List<String> servers = new ArrayList<>();
+        for (InetAddress dnsServer : properties.getDnsServers()) {
+            String address = dnsServer.getHostAddress();
+            if (address != null && !address.isBlank()) {
+                servers.add(address);
+            }
+        }
+        return List.copyOf(servers);
     }
 
     private static String linkSignature(LinkProperties properties) {

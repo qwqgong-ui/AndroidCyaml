@@ -65,6 +65,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/config"
 	MC "github.com/metacubex/mihomo/constant"
+	MDNS "github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/hub"
 	"github.com/metacubex/mihomo/hub/executor"
 	"github.com/metacubex/mihomo/hub/route"
@@ -288,6 +289,23 @@ func AndroidCyamlNotifyNetworkChanged() *C.char {
 			_ = connection.Close()
 			return true
 		})
+	}
+	return respond(nil, nil)
+}
+
+//export AndroidCyamlUpdateSystemDNS
+func AndroidCyamlUpdateSystemDNS(serversValue *C.char) *C.char {
+	runtimeMu.Lock()
+	defer runtimeMu.Unlock()
+
+	var servers []string
+	if err := json.Unmarshal([]byte(C.GoString(serversValue)), &servers); err != nil {
+		return respond(nil, fmt.Errorf("decode Android system DNS: %w", err))
+	}
+	MDNS.UpdateSystemDNS(servers)
+	if active {
+		resolver.ClearCache()
+		resolver.ResetConnection()
 	}
 	return respond(nil, nil)
 }
@@ -600,6 +618,7 @@ func stopLocked() {
 		route.ReCreateServer(&route.Config{})
 	}
 	clearPlatformHooks()
+	MDNS.UpdateSystemDNS(nil)
 	active = false
 	releaseRebuildableMemory(false)
 }

@@ -87,10 +87,15 @@ AndroidCyaml 为 mihomo 的真实拨号安装 `dialer.DefaultSocketHook`：
 ```text
 Go RawConn FD → NativePlatformCallbacks.protectSocket(fd)
               → AndroidVpnService.protect(fd)
+              → underlying Network.bindSocket(fd)
 ```
 
 保护失败会终止该次拨号，而不是允许出站重新进入 VPN 形成路由循环。system 栈内部 listener 不属于
 真实代理出站，不会被该 hook 排除。
+
+`Ipv6EnvironmentMonitor` 同时从当前最佳非 VPN `LinkProperties` 取得 DNS，通过 JNI
+更新 mihomo 非 CMFA Android 路径的 `UpdateSystemDNS`。因此配置中的 `system://` 始终表示
+当前 Wi-Fi/移动网络提供的 DNS，查询 socket 自身经 protect 并绑定该底层 Network。
 
 ## 运行时覆写
 

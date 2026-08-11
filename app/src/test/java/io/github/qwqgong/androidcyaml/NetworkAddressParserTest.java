@@ -8,6 +8,7 @@ import static org.junit.Assert.assertTrue;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.List;
 
 public final class NetworkAddressParserTest {
     @Test
@@ -43,13 +44,13 @@ public final class NetworkAddressParserTest {
     @Test
     public void underlyingStateSeparatesPathIpv6AndTransportChanges() {
         Ipv6EnvironmentMonitor.State wifiIpv4 =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0", false, true);
+                new Ipv6EnvironmentMonitor.State(100L, "wlan0", false, true, List.of("192.168.1.1"));
         Ipv6EnvironmentMonitor.State wifiIpv6 =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0", true, true);
+                new Ipv6EnvironmentMonitor.State(100L, "wlan0", true, true, List.of("192.168.1.1"));
         Ipv6EnvironmentMonitor.State mobileIpv6 =
-                new Ipv6EnvironmentMonitor.State(200L, "rmnet_data0", true, false);
+                new Ipv6EnvironmentMonitor.State(200L, "rmnet_data0", true, false, List.of("10.0.0.1"));
         Ipv6EnvironmentMonitor.State wifiDnsChanged =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0-new-dns", true, true);
+                new Ipv6EnvironmentMonitor.State(100L, "wlan0-new-dns", true, true, List.of("1.1.1.1"));
 
         assertFalse(wifiIpv6.pathChangedFrom(wifiIpv4));
         assertTrue(wifiDnsChanged.pathChangedFrom(wifiIpv6));
@@ -57,6 +58,7 @@ public final class NetworkAddressParserTest {
         assertTrue(Ipv6EnvironmentMonitor.State.unavailable().pathChangedFrom(wifiIpv6));
         assertTrue(wifiIpv4.available());
         assertTrue(wifiIpv6.wifi());
+        assertEquals(List.of("192.168.1.1"), wifiIpv6.dnsServers());
         assertFalse(mobileIpv6.wifi());
         assertFalse(Ipv6EnvironmentMonitor.State.unavailable().available());
     }

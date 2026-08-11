@@ -120,7 +120,8 @@ TUN 栈不再属于运行时覆写，也不采用 YAML 中的 `stack`。旧版�
 2. Go 调用已注册的 C function pointer；
 3. C++ 在需要时把 Go thread attach 到 JVM；
 4. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`；
-5. protect 被拒绝时直接让拨号失败。
+5. 已 protect 的 socket 再经当前 underlying `Network.bindSocket(fd)` 锁定物理网络；
+6. protect/bind 被拒绝时直接让拨号失败。
 
 system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处于 TUN 数据路径中。
 
@@ -166,6 +167,9 @@ system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处�
 网络切换若不改变有效协议族，`RuntimeCoordinator` 不替换 TUN，而是刷新接口/DNS 缓存、重置持久
 resolver transport 并关闭现有 mihomo 连接。新建且已 protect 的 socket 随 Android 新物理默认网络
 出去，从而避免 Wi-Fi/移动网络切换导致不必要的 VPN 重建。
+
+同一网络快照中的 `LinkProperties.getDnsServers()` 会在 core 启动前以及 handover 时经
+Java → JNI → Go 传给 `dns.UpdateSystemDNS`。Android 不再从 `/etc/resolv.conf` 推断系统 DNS。
 
 ## Config transaction
 

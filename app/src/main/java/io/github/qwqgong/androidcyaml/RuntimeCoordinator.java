@@ -277,7 +277,8 @@ final class RuntimeCoordinator {
                 platformCallbacks,
                 settings,
                 ipv6Enabled,
-                tcpConcurrentEnabled
+                tcpConcurrentEnabled,
+                underlyingNetworkState.dnsServers()
         );
         runtime = candidate;
         try {
@@ -508,7 +509,7 @@ final class RuntimeCoordinator {
             return;
         }
         try {
-            currentRuntime.onUnderlyingNetworkChanged();
+            currentRuntime.onUnderlyingNetworkChanged(currentState.dnsServers());
             Log.i(
                     TAG,
                     "Refreshed mihomo after underlying network change: "

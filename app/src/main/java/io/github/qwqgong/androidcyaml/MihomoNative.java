@@ -1,10 +1,12 @@
 package io.github.qwqgong.androidcyaml;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 
 final class MihomoNative {
     static {
@@ -89,6 +91,12 @@ final class MihomoNative {
 
     static void notifyNetworkChanged() throws IOException {
         requireSuccess(nativeNotifyNetworkChanged());
+    }
+
+    static void updateSystemDns(List<String> servers) throws IOException {
+        requireSuccess(nativeUpdateSystemDns(
+                new JSONArray(servers == null ? List.of() : servers).toString()
+        ));
     }
 
     static boolean isRunning() {
@@ -179,6 +187,8 @@ final class MihomoNative {
     private static native String nativeStop();
 
     private static native String nativeNotifyNetworkChanged();
+
+    private static native String nativeUpdateSystemDns(String serversJson);
 
     private static native boolean nativeIsRunning();
 

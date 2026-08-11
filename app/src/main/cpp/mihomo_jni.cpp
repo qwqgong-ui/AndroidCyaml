@@ -663,6 +663,18 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged(
     return stringFromNative(env, AndroidCyamlNotifyNetworkChanged());
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateSystemDns(
+        JNIEnv* env,
+        jclass,
+        jstring servers_json
+) {
+    std::string servers_value = stringFromJava(env, servers_json);
+    return stringFromNative(env, AndroidCyamlUpdateSystemDNS(
+            const_cast<char*>(servers_value.c_str())
+    ));
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning(
         JNIEnv*,

@@ -2,6 +2,7 @@ package io.github.qwqgong.androidcyaml;
 
 import android.net.Network;
 import android.net.VpnService;
+import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
 import org.json.JSONException;
@@ -53,9 +54,18 @@ final class NativePlatformCallbacks implements AutoCloseable {
             return false;
         }
         try {
-            return vpnService.protect(fileDescriptor);
-        } catch (RuntimeException exception) {
-            Log.w(TAG, "VpnService.protect failed for fd=" + fileDescriptor, exception);
+            if (!vpnService.protect(fileDescriptor)) {
+                return false;
+            }
+            Network network = underlyingNetwork;
+            if (network != null) {
+                try (ParcelFileDescriptor duplicate = ParcelFileDescriptor.fromFd(fileDescriptor)) {
+                    network.bindSocket(duplicate.getFileDescriptor());
+                }
+            }
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            Log.w(TAG, "Unable to protect/bind socket fd=" + fileDescriptor, exception);
             return false;
         }
     }

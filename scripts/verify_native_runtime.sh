@@ -135,6 +135,7 @@ for symbol in \
     AndroidCyamlSetTcpConcurrent \
     AndroidCyamlStop \
     AndroidCyamlNotifyNetworkChanged \
+    AndroidCyamlUpdateSystemDNS \
     AndroidCyamlIsRunning \
     AndroidCyamlTrimMemory; do
     grep -q "GLOBAL.*${symbol}$" "${CORE_SYMBOLS}" || {
