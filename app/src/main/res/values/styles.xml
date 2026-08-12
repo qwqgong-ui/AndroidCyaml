@@ -8,5 +8,11 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:colorAccent">@color/primary</item>
         <item name="android:windowBackground">@color/surface</item>
+        <item name="android:popupMenuStyle">@style/Widget.AndroidCyaml.PopupMenu</item>
+    </style>
+
+    <style name="Widget.AndroidCyaml.PopupMenu" parent="@android:style/Widget.Material.PopupMenu">
+        <item name="android:popupBackground">@drawable/popup_menu_background</item>
+        <item name="android:popupElevation">18dp</item>
     </style>
 </resources>

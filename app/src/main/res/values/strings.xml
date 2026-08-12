@@ -32,6 +32,8 @@
     <string name="hide_from_recents">隐藏后台标签页</string>
     <string name="more_actions">更多操作</string>
     <string name="more_actions_symbol">⋮</string>
+    <string name="runtime_info">运行信息</string>
+    <string name="runtime_info_app">AndroidCyaml %1$s</string>
     <string name="vpn_switch">VPN</string>
     <string name="vpn_system_settings">VPN 系统设置</string>
     <string name="auto_start_vpn">打开应用时自动开启 VPN</string>

@@ -11,7 +11,7 @@ import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.ProgressBar;
+import android.widget.PopupMenu;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -32,8 +32,6 @@ public final class MainActivity extends Activity implements
     private TaskVisibilityController taskVisibility;
     private VpnUiController vpnController;
 
-    private ProgressBar coreProgress;
-    private TextView coreStatus;
     private TextView vpnStatus;
     private Switch vpnToggle;
 
@@ -61,10 +59,9 @@ public final class MainActivity extends Activity implements
         setContentView(R.layout.activity_main);
         EdgeToEdgeController.apply(this, findViewById(R.id.root));
 
-        coreProgress = findViewById(R.id.core_progress);
-        coreStatus = findViewById(R.id.core_status);
         vpnStatus = findViewById(R.id.vpn_status);
         vpnToggle = findViewById(R.id.vpn_toggle);
+        TextView appTitle = findViewById(R.id.app_title);
         Button moreActions = findViewById(R.id.more_actions);
         FrameLayout dashboardContainer = findViewById(R.id.dashboard_container);
 
@@ -75,6 +72,7 @@ public final class MainActivity extends Activity implements
         vpnController = new VpnUiController(this, REQUEST_VPN_PERMISSION, this);
 
         taskVisibility.setHiddenFromRecents(preferences.hideFromRecents());
+        appTitle.setOnClickListener(this::showRuntimeInfo);
         moreActions.setOnClickListener(this::showActions);
         vpnToggle.setOnCheckedChangeListener((button, checked) -> onVpnToggleChanged(checked));
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -210,8 +208,6 @@ public final class MainActivity extends Activity implements
 
     @Override
     public void onControlDisconnected() {
-        coreProgress.setVisibility(View.GONE);
-        coreStatus.setText(R.string.control_service_disconnected);
         controllerPort = 0;
         dashboard.release();
     }
@@ -295,11 +291,8 @@ public final class MainActivity extends Activity implements
         runtimeDetail = snapshot.detail() == null || snapshot.detail().isBlank()
                 ? getString(R.string.core_stopped)
                 : snapshot.detail();
-        coreStatus.setText(runtimeDetail);
-
         boolean transitional = runtimeState == RuntimeState.STARTING
                 || runtimeState == RuntimeState.STOPPING;
-        coreProgress.setVisibility(transitional ? View.VISIBLE : View.GONE);
         switch (runtimeState) {
             case RUNNING -> vpnStatus.setText(lockdown
                     ? R.string.vpn_connected_lockdown
@@ -348,6 +341,20 @@ public final class MainActivity extends Activity implements
         );
     }
 
+    private void showRuntimeInfo(View anchor) {
+        PopupMenu popup = new PopupMenu(this, anchor);
+        popup.getMenu().add(getString(
+                R.string.runtime_info_app,
+                BuildConfig.VERSION_NAME
+        )).setEnabled(false);
+        for (String detail : runtimeDetail.split("\\s+·\\s+")) {
+            if (!detail.isBlank()) {
+                popup.getMenu().add(detail).setEnabled(false);
+            }
+        }
+        popup.show();
+    }
+
     private void chooseConfig() {
         try {
             ConfigPicker.open(this, REQUEST_CONFIG_FILE);
@@ -357,13 +364,7 @@ public final class MainActivity extends Activity implements
     }
 
     private void importConfig(Uri source) {
-        coreStatus.setText(R.string.config_validating);
-        coreProgress.setVisibility(View.VISIBLE);
         controlClient.importConfig(source, (success, detail) -> {
-            coreStatus.setText(runtimeDetail);
-            boolean transitional = runtimeState == RuntimeState.STARTING
-                    || runtimeState == RuntimeState.STOPPING;
-            coreProgress.setVisibility(transitional ? View.VISIBLE : View.GONE);
             showToast(success
                     ? getString(R.string.config_imported)
                     : getString(R.string.config_import_failed, detail));
