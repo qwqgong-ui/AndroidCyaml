@@ -3,6 +3,8 @@
     <color name="primary">#AFC6FF</color>
     <color name="top_bar_background">#000000</color>
     <color name="on_top_bar">#B3B3B3</color>
+    <color name="vpn_bar_background">#000000</color>
+    <color name="on_vpn_bar">#B3B3B3</color>
     <color name="popup_menu_background">#202124</color>
     <color name="surface">#111318</color>
     <color name="surface_variant">#242832</color>
