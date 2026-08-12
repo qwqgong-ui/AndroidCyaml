@@ -110,6 +110,13 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
           cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
+      - name: Restore Gradle configuration cache
+        id: gradle-config-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .gradle/configuration-cache
+          key: ${{ runner.os }}-gradle-config-v1-${{ steps.build.outputs.release }}-${{ hashFiles('.github/workflows/android.yml', 'settings.gradle.kts', 'build.gradle.kts', 'app/build.gradle.kts', 'gradle.properties', 'gradle/wrapper/gradle-wrapper.properties') }}
+
       - name: Build and verify APK
         shell: bash
         env:
@@ -152,6 +159,13 @@ jobs:
             done < <(find app/build -type f -name 'lint-results-*.txt' -print | sort)
           fi
           exit "${status}"
+
+      - name: Save Gradle configuration cache
+        if: success() && github.ref == 'refs/heads/main' && steps.gradle-config-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .gradle/configuration-cache
+          key: ${{ steps.gradle-config-cache.outputs.cache-primary-key }}
 
       - name: Save pinned mihomo JNI output
         if: success() && github.ref == 'refs/heads/main' && steps.native-cache.outputs.cache-hit != 'true'
