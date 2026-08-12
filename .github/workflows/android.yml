@@ -83,18 +83,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mihomo-go-work-go1.26-ndk29-
 
-      - name: Restore legacy combined cache for migration
-        if: steps.native-cache.outputs.cache-hit != 'true' && steps.go-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-            app/src/main/jniLibs/arm64-v8a/libmihomo.so
-            app/src/main/cpp/generated/libmihomo.h
-            .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
-
       - uses: android-actions/setup-android@v4
 
       - name: Install Android 17 SDK and NDK
