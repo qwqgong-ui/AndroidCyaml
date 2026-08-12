@@ -22,9 +22,8 @@
 
         <TextView
             android:id="@+id/app_title"
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="48dp"
-            android:layout_weight="1"
             android:background="?android:attr/selectableItemBackground"
             android:clickable="true"
             android:contentDescription="@string/runtime_info"
@@ -39,8 +38,9 @@
 
         <TextView
             android:id="@+id/vpn_status"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="48dp"
+            android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:ellipsize="end"
             android:gravity="center_vertical|end"

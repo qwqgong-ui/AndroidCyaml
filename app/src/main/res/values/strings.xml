@@ -18,11 +18,11 @@
     <string name="dashboard_load_failed">面板加载失败：%1$s</string>
     <string name="stop_vpn">停止 VPN</string>
     <string name="vpn_stopped">VPN 未连接</string>
-    <string name="vpn_starting">正在启动 mihomo JNI TUN…</string>
+    <string name="vpn_starting">VPN 连接中…</string>
     <string name="vpn_stopping">正在停止 VPN…</string>
     <string name="vpn_failed">VPN 不可用</string>
-    <string name="vpn_connected_native_tun">VPN 已连接 · mihomo JNI TUN</string>
-    <string name="vpn_connected_lockdown">VPN 已连接 · mihomo JNI TUN · 锁定模式</string>
+    <string name="vpn_connected_native_tun">VPN 已连接</string>
+    <string name="vpn_connected_lockdown">VPN 已连接 · 锁定</string>
     <string name="vpn_permission_denied">未授予 VPN 权限</string>
     <string name="vpn_permission_failed">无法打开系统 VPN 授权界面</string>
     <string name="vpn_start_failed">VPN 启动失败：%1$s</string>
