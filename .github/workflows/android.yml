@@ -10,7 +10,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   build:
@@ -19,6 +23,33 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve build mode and cache generation
+        id: build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version="$(sed -nE 's/^[[:space:]]*versionName = "([0-9]+\.[0-9]+\.[0-9]+)"/\1/p' app/build.gradle.kts | head -n 1)"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v${version}"
+
+          release=false
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]] \
+              && [[ "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]] \
+              && ! gh release view "${tag}" >/dev/null 2>&1 \
+              && ! git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            release=true
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "release=${release}" >> "${GITHUB_OUTPUT}"
+          echo "go-cache-generation=$(date -u +%G-%V)" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-java@v5
         with:
@@ -30,8 +61,31 @@ jobs:
           go-version: "1.26.x"
           cache: false
 
-      - name: Cache Go modules and pinned mihomo JNI output
-        uses: actions/cache@v5
+      - name: Restore pinned mihomo JNI output
+        id: native-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            app/src/main/jniLibs/arm64-v8a/libmihomo.so
+            app/src/main/cpp/generated/libmihomo.h
+            .third_party/mihomo.commit
+          key: ${{ runner.os }}-mihomo-native-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
+
+      - name: Restore weekly Go build cache
+        id: go-cache
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-mihomo-go-work-go1.26-ndk29-${{ steps.build.outputs.go-cache-generation }}
+          restore-keys: |
+            ${{ runner.os }}-mihomo-go-work-go1.26-ndk29-
+
+      - name: Restore legacy combined cache for migration
+        if: steps.native-cache.outputs.cache-hit != 'true' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cache/go-build
@@ -40,8 +94,6 @@ jobs:
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
           key: ${{ runner.os }}-mihomo-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
-          restore-keys: |
-            ${{ runner.os }}-mihomo-go1.26-ndk29-
 
       - uses: android-actions/setup-android@v4
 
@@ -66,26 +118,40 @@ jobs:
             "ndk;29.0.14206865"
 
       - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
-      - name: Build and verify optimized APK
+      - name: Build and verify APK
         shell: bash
+        env:
+          RELEASE_BUILD: ${{ steps.build.outputs.release }}
         run: |
           set -o pipefail
           status=0
+          if [[ "${RELEASE_BUILD}" == "true" ]]; then
+            variant=Release
+            variant_path=release
+            apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          else
+            variant=Optimized
+            variant_path=optimized
+            apk="app/build/outputs/apk/optimized/app-optimized.apk"
+          fi
+
           ./gradlew \
             :app:testDebugUnitTest \
-            :app:assembleOptimized \
-            :app:lintOptimized \
+            ":app:assemble${variant}" \
+            ":app:lint${variant}" \
             --stacktrace 2>&1 | tee build.log || status=$?
           if (( status == 0 )); then
-            bash scripts/verify_native_runtime.sh \
-              app/build/outputs/apk/optimized/app-optimized.apk \
+            bash scripts/verify_native_runtime.sh "${apk}" \
               2>&1 | tee -a build.log || status=$?
           fi
           if (( status == 0 )); then
             bash scripts/verify_art_optimization.sh \
-              app/build/outputs/apk/optimized/app-optimized.apk \
-              app/build/outputs/mapping/optimized/mapping.txt \
+              "${apk}" \
+              "app/build/outputs/mapping/${variant_path}/mapping.txt" \
               2>&1 | tee -a build.log || status=$?
           fi
           if (( status != 0 )); then
@@ -99,16 +165,112 @@ jobs:
           fi
           exit "${status}"
 
-      - name: Upload build log
-        if: always()
+      - name: Save pinned mihomo JNI output
+        if: success() && github.ref == 'refs/heads/main' && steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            app/src/main/jniLibs/arm64-v8a/libmihomo.so
+            app/src/main/cpp/generated/libmihomo.h
+            .third_party/mihomo.commit
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Save weekly Go build cache
+        if: success() && github.ref == 'refs/heads/main' && steps.native-cache.outputs.cache-hit != 'true' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
+
+      - name: Upload failed build log
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: AndroidCyaml-build-log
+          name: AndroidCyaml-build-log-${{ github.run_id }}
           path: build.log
           if-no-files-found: error
+          retention-days: 7
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload test APK
+        if: success() && steps.build.outputs.release != 'true' && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v7
         with:
           name: AndroidCyaml-optimized-test
           path: app/build/outputs/apk/optimized/app-optimized.apk
           if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload release diagnostics
+        if: success() && steps.build.outputs.release == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: AndroidCyaml-v${{ steps.build.outputs.version }}-diagnostics
+          path: |
+            app/build/outputs/mapping/release/mapping.txt
+            app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Restore release signing key
+        if: success() && steps.build.outputs.release == 'true'
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          [[ -n "${KEYSTORE_BASE64}" ]]
+          [[ -n "${STORE_PASSWORD}" ]]
+          [[ -n "${KEY_ALIAS}" ]]
+          [[ -n "${KEY_PASSWORD}" ]]
+          keystore="${RUNNER_TEMP}/androidcyaml-release.p12"
+          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          chmod 600 "${keystore}"
+          echo "ANDROID_SIGNING_STORE_FILE=${keystore}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SIGNING_STORE_PASSWORD=${STORE_PASSWORD}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SIGNING_KEY_ALIAS=${KEY_ALIAS}" >> "${GITHUB_ENV}"
+          echo "ANDROID_SIGNING_KEY_PASSWORD=${KEY_PASSWORD}" >> "${GITHUB_ENV}"
+
+      - name: Sign and verify release APK
+        if: success() && steps.build.outputs.release == 'true'
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          source_apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          aligned_apk="${RUNNER_TEMP}/app-release-aligned.apk"
+          release_apk="AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk"
+          build_tools="${ANDROID_SDK_ROOT}/build-tools/37.0.0"
+
+          "${build_tools}/zipalign" -P 16 -f -v 4 "${source_apk}" "${aligned_apk}"
+          "${build_tools}/apksigner" sign \
+            --ks "${ANDROID_SIGNING_STORE_FILE}" \
+            --ks-pass env:ANDROID_SIGNING_STORE_PASSWORD \
+            --ks-key-alias "${ANDROID_SIGNING_KEY_ALIAS}" \
+            --key-pass env:ANDROID_SIGNING_KEY_PASSWORD \
+            --out "${release_apk}" \
+            "${aligned_apk}"
+          "${build_tools}/apksigner" verify --verbose --print-certs "${release_apk}"
+          "${build_tools}/zipalign" -c -P 16 -v 4 "${release_apk}"
+          sha256sum "${release_apk}" > SHA256SUMS
+
+      - name: Publish GitHub release
+        if: success() && steps.build.outputs.release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.build.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "${RELEASE_TAG}" \
+            "AndroidCyaml-v${RELEASE_VERSION}-arm64-v8a.apk" \
+            "SHA256SUMS" \
+            --target "${GITHUB_SHA}" \
+            --title "AndroidCyaml v${RELEASE_VERSION}" \
+            --generate-notes

@@ -15,17 +15,6 @@ val mihomoWrapperSources = fileTree(rootProject.file("native/mihomo")) {
 }
 val androidNdkVersion = "29.0.14206865"
 
-val releaseStoreFile = System.getenv("ANDROID_SIGNING_STORE_FILE")
-val releaseStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD")
-val releaseKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
-val releaseKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD")
-val releaseSigningConfigured = listOf(
-    releaseStoreFile,
-    releaseStorePassword,
-    releaseKeyAlias,
-    releaseKeyPassword,
-).all { !it.isNullOrBlank() }
-
 android {
     namespace = "io.github.qwqgong.androidcyaml"
     compileSdk = 37
@@ -35,8 +24,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 237
-        versionName = "0.7.124"
+        versionCode = 238
+        versionName = "0.7.125"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -70,17 +59,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    signingConfigs {
-        if (releaseSigningConfigured) {
-            create("release") {
-                storeFile = rootProject.file(releaseStoreFile!!)
-                storePassword = releaseStorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeyPassword
-            }
-        }
-    }
-
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -91,7 +69,6 @@ android {
             ndk {
                 debugSymbolLevel = "SYMBOL_TABLE"
             }
-            signingConfigs.findByName("release")?.let { signingConfig = it }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -127,16 +104,6 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.webkit:webkit:1.16.0")
     testImplementation("junit:junit:4.13.2")
-}
-
-val verifyReleaseSigning by tasks.registering {
-    doLast {
-        check(releaseSigningConfigured) {
-            "Release signing requires ANDROID_SIGNING_STORE_FILE, " +
-                "ANDROID_SIGNING_STORE_PASSWORD, ANDROID_SIGNING_KEY_ALIAS, and " +
-                "ANDROID_SIGNING_KEY_PASSWORD"
-        }
-    }
 }
 
 val fetchGeodata by tasks.registering(Exec::class) {
@@ -177,9 +144,6 @@ val buildMihomo by tasks.registering(Exec::class) {
 }
 
 tasks.configureEach {
-    if (name == "packageRelease") {
-        dependsOn(verifyReleaseSigning)
-    }
     if (name.startsWith("configureCMake")
             || name.startsWith("buildCMake")
             || name.contains("ExternalNativeBuild")) {

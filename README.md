@@ -266,11 +266,13 @@ DEX 布局优化；`androidx.profileinstaller` 负责侧载安装后的 Profile 
 ./gradlew :app:assembleOptimized :app:bundleOptimized :app:lintOptimized
 bash scripts/verify_art_optimization.sh \
   app/build/outputs/apk/optimized/app-optimized.apk \
-  app/build/outputs/bundle/optimized/app-optimized.aab
+  app/build/outputs/mapping/optimized/mapping.txt
 ```
 
 验证脚本检查两个原生库的架构、符号、SONAME/依赖关系、循环引用和至少 16 KiB 的 LOAD 对齐。
-正式发行还需要配置四个 `ANDROID_SIGNING_*` 环境变量，并运行 release 构建与验证任务。
+正式发行在 GitHub Actions 中先构建未签名 Release APK，再从四个
+`ANDROID_RELEASE_*` secrets 恢复密钥并独立执行 zipalign、签名和验证；Gradle 配置缓存因此
+不会序列化签名密码。
 
 ## 固定依赖
 
