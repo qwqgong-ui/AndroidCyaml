@@ -14,5 +14,11 @@
     <style name="Widget.AndroidCyaml.PopupMenu" parent="@android:style/Widget.Material.PopupMenu">
         <item name="android:popupBackground">@drawable/popup_menu_background</item>
         <item name="android:popupElevation">18dp</item>
+        <item name="android:popupAnimationStyle">@style/Animation.AndroidCyaml.PopupMenu</item>
+    </style>
+
+    <style name="Animation.AndroidCyaml.PopupMenu" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/popup_fade_in</item>
+        <item name="android:windowExitAnimation">@anim/popup_fade_out</item>
     </style>
 </resources>

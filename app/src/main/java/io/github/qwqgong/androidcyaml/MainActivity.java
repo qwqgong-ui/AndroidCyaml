@@ -9,7 +9,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.PopupMenu;
 import android.widget.Switch;
@@ -68,7 +67,7 @@ public final class MainActivity extends Activity implements
         vpnStatus = findViewById(R.id.vpn_status);
         vpnToggle = findViewById(R.id.vpn_toggle);
         TextView appTitle = findViewById(R.id.app_title);
-        Button moreActions = findViewById(R.id.more_actions);
+        TextView moreActions = findViewById(R.id.more_actions);
         FrameLayout dashboardContainer = findViewById(R.id.dashboard_container);
 
         preferences = new UiPreferences(this);

@@ -37,50 +37,42 @@
             android:textSize="20sp"
             android:textStyle="bold" />
 
-        <Button
-            android:id="@+id/more_actions"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/more_actions"
-            android:minWidth="0dp"
-            android:padding="0dp"
-            android:text="@string/more_actions_symbol"
-            android:textAllCaps="false"
-            android:textColor="@color/on_top_bar"
-            android:textSize="24sp" />
-
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:background="@color/vpn_bar_background"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="16dp"
-        android:paddingEnd="8dp">
-
         <TextView
             android:id="@+id/vpn_status"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginStart="8dp"
             android:ellipsize="end"
+            android:gravity="center_vertical|end"
             android:maxLines="1"
+            android:maxWidth="132dp"
             android:text="@string/vpn_stopped"
-            android:textColor="@color/on_vpn_bar"
-            android:textSize="14sp" />
+            android:textColor="@color/on_top_bar"
+            android:textSize="12sp" />
 
         <Switch
             android:id="@+id/vpn_toggle"
             android:layout_width="wrap_content"
             android:layout_height="48dp"
+            android:contentDescription="@string/vpn_switch"
             android:minWidth="0dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="8dp"
-            android:text="@string/vpn_switch"
-            android:textColor="@color/on_vpn_bar" />
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp" />
+
+        <TextView
+            android:id="@+id/more_actions"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/more_actions_background"
+            android:clickable="true"
+            android:contentDescription="@string/more_actions"
+            android:focusable="true"
+            android:gravity="center"
+            android:padding="0dp"
+            android:text="@string/more_actions_symbol"
+            android:textColor="@color/on_top_bar"
+            android:textSize="24sp" />
+
     </LinearLayout>
 
     <FrameLayout
