@@ -10,6 +10,8 @@ import android.os.Looper;
 import android.util.Log;
 
 import java.io.IOException;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -22,6 +24,7 @@ final class RuntimeCoordinator {
     private static final String TAG = "AndroidCyaml/Coordinator";
     private static final int ANDROID_17_API = 37;
     private static final long IPV6_REBUILD_STABILIZATION_MILLIS = 750L;
+    private static final long SELECTION_RESTORE_STABILIZATION_MILLIS = 1_000L;
     private static volatile RuntimeCoordinator instance;
 
     private final Context context;
@@ -29,10 +32,13 @@ final class RuntimeCoordinator {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final Runnable ipv6Reconciliation =
             () -> executor.execute(this::reconcileIpv6State);
+    private final Runnable selectionRestoration =
+            () -> executor.execute(this::restoreOrRememberSelections);
     private final RuntimeStateBus stateBus = new RuntimeStateBus();
     private final MihomoFileStore fileStore;
     private final ConfigInstaller configInstaller;
     private final RuntimeOverrideStore overrideStore;
+    private final NetworkSelectionStore selectionStore;
     private final Ipv6EnvironmentMonitor networkMonitor;
 
     private AndroidVpnService service;
@@ -42,12 +48,15 @@ final class RuntimeCoordinator {
     private volatile Ipv6EnvironmentMonitor.State underlyingNetworkState;
     private volatile boolean effectiveIpv6Enabled;
     private volatile boolean effectiveTcpConcurrent;
+    private String activeSelectionIdentity = "";
+    private boolean activeSelectionReady;
 
     private RuntimeCoordinator(Context context) {
         this.context = context.getApplicationContext();
         fileStore = new MihomoFileStore(this.context);
         configInstaller = new ConfigInstaller(this.context, fileStore);
         overrideStore = new RuntimeOverrideStore(this.context);
+        selectionStore = new NetworkSelectionStore(this.context);
         networkMonitor = new Ipv6EnvironmentMonitor(this.context);
         RuntimeOverrideSettings settings = overrideStore.settings();
         underlyingNetworkState = networkMonitor.currentState();
@@ -288,6 +297,7 @@ final class RuntimeCoordinator {
             }
             effectiveIpv6Enabled = ipv6Enabled;
             effectiveTcpConcurrent = tcpConcurrentEnabled;
+            beginSelectionTracking(candidate);
             return runningDetail;
         } catch (IOException | InterruptedException exception) {
             candidate.close();
@@ -413,6 +423,16 @@ final class RuntimeCoordinator {
         if (state.equals(previous)) {
             return;
         }
+        boolean selectionIdentityChanged = !Objects.equals(
+                activeSelectionIdentity,
+                state.selectionIdentity()
+        );
+        if (selectionIdentityChanged) {
+            mainHandler.removeCallbacks(selectionRestoration);
+            checkpointSelections();
+            activeSelectionIdentity = state.selectionIdentity();
+            activeSelectionReady = false;
+        }
         underlyingNetworkState = state;
         if (platformCallbacks != null) {
             platformCallbacks.updateUnderlyingNetwork(state.networkHandle());
@@ -430,6 +450,12 @@ final class RuntimeCoordinator {
         applyTcpConcurrentForNetwork(targetTcpConcurrent);
         boolean pathChanged = state.pathChangedFrom(previous);
         refreshRuntimeForNetworkChange(previous, state, pathChanged);
+        if (selectionIdentityChanged && state.available()) {
+            mainHandler.postDelayed(
+                    selectionRestoration,
+                    SELECTION_RESTORE_STABILIZATION_MILLIS
+            );
+        }
         if (!state.available()) {
             mainHandler.removeCallbacks(ipv6Reconciliation);
             stateBus.publish(stateBus.snapshot());
@@ -540,6 +566,67 @@ final class RuntimeCoordinator {
                 == PackageManager.PERMISSION_GRANTED;
     }
 
+    private void beginSelectionTracking(MihomoRuntime current) {
+        mainHandler.removeCallbacks(selectionRestoration);
+        activeSelectionIdentity = underlyingNetworkState == null
+                ? ""
+                : underlyingNetworkState.selectionIdentity();
+        activeSelectionReady = false;
+        restoreOrRememberSelections(current);
+    }
+
+    private void checkpointSelections() {
+        MihomoRuntime current = runtime;
+        String identity = activeSelectionIdentity;
+        if (!activeSelectionReady
+                || current == null || identity == null || identity.isBlank()) {
+            return;
+        }
+        saveSelections(current, identity);
+    }
+
+    private void saveSelections(MihomoRuntime current, String identity) {
+        try {
+            Map<String, String> selections = current.selectorSelections();
+            selectionStore.save(identity, selections);
+        } catch (IOException exception) {
+            Log.w(TAG, "Unable to remember selector choices", exception);
+        }
+    }
+
+    private void restoreOrRememberSelections() {
+        restoreOrRememberSelections(runtime);
+    }
+
+    private void restoreOrRememberSelections(MihomoRuntime current) {
+        String identity = activeSelectionIdentity;
+        if (current == null || identity == null || identity.isBlank()) {
+            return;
+        }
+        Map<String, String> remembered = selectionStore.selections(identity);
+        if (remembered.isEmpty()) {
+            saveSelections(current, identity);
+            activeSelectionReady = true;
+            return;
+        }
+        try {
+            MihomoController.SelectionRestoreResult result =
+                    current.restoreSelectorSelections(remembered);
+            Log.i(
+                    TAG,
+                    "Restored network selector choices: restored=" + result.restored()
+                            + ", automaticFallback=" + result.fallback()
+                            + ", skipped=" + result.skipped()
+                            + ", failed=" + result.failed()
+            );
+        } catch (IOException exception) {
+            // A memory restore timeout must leave the core's current choices intact.
+            Log.w(TAG, "Unable to restore selector choices for this network", exception);
+        } finally {
+            activeSelectionReady = true;
+        }
+    }
+
     private void failActiveService(String message) {
         AndroidVpnService failedService = service;
         cleanupAll();
@@ -552,6 +639,7 @@ final class RuntimeCoordinator {
 
     private void cleanupAll() {
         mainHandler.removeCallbacks(ipv6Reconciliation);
+        mainHandler.removeCallbacks(selectionRestoration);
         networkMonitor.stop();
         closeRuntime();
         if (tunManager != null) {
@@ -571,6 +659,8 @@ final class RuntimeCoordinator {
             runtime.close();
             runtime = null;
         }
+        activeSelectionIdentity = "";
+        activeSelectionReady = false;
     }
 
     private void publish(RuntimeState state, String detail) {

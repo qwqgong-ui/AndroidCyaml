@@ -1,11 +1,13 @@
 package io.github.qwqgong.androidcyaml;
 
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -13,13 +15,25 @@ import java.net.ServerSocket;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
 final class MihomoController {
+    record SelectionRestoreResult(int restored, int fallback, int skipped, int failed) {}
+
     private static final String LOCAL_HOST = "127.0.0.1";
     private static final String PUBLIC_HOST = "0.0.0.0";
     private static final int PREFERRED_PORT = 17_890;
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    private static final Set<String> AUTOMATIC_PROXY_TYPES = Set.of(
+            "urltest",
+            "fallback",
+            "loadbalance",
+            "smart"
+    );
 
     private final String listenerHost;
     private final int port;
@@ -113,6 +127,166 @@ final class MihomoController {
         throw lastFailure == null
                 ? new IOException("mihomo TUN 未在 10 秒内就绪")
                 : lastFailure;
+    }
+
+    Map<String, String> selectorSelections() throws IOException {
+        JSONObject proxies = proxySnapshot();
+        Map<String, String> selections = new TreeMap<>();
+        Iterator<String> names = proxies.keys();
+        while (names.hasNext()) {
+            String name = names.next();
+            JSONObject proxy = proxies.optJSONObject(name);
+            if (!isSelector(proxy)) {
+                continue;
+            }
+            String selected = proxy.optString("now", "");
+            if (!selected.isBlank() && isAvailable(proxies, selected)) {
+                selections.put(name, selected);
+            }
+        }
+        return Map.copyOf(selections);
+    }
+
+    SelectionRestoreResult restoreSelectorSelections(Map<String, String> remembered)
+            throws IOException {
+        if (remembered == null || remembered.isEmpty()) {
+            return new SelectionRestoreResult(0, 0, 0, 0);
+        }
+        JSONObject proxies = proxySnapshot();
+        int restored = 0;
+        int fallback = 0;
+        int skipped = 0;
+        int failed = 0;
+        for (Map.Entry<String, String> selection : new TreeMap<>(remembered).entrySet()) {
+            JSONObject selector = proxies.optJSONObject(selection.getKey());
+            if (!isSelector(selector)) {
+                skipped++;
+                continue;
+            }
+            String target = selection.getValue();
+            if (!containsTarget(selector, target) || !isAvailable(proxies, target)) {
+                target = automaticFallback(selector, proxies);
+                if (target.isBlank()) {
+                    skipped++;
+                    continue;
+                }
+                fallback++;
+            } else {
+                restored++;
+            }
+            if (target.equals(selector.optString("now", ""))) {
+                continue;
+            }
+            try {
+                selectProxy(selection.getKey(), target);
+                selector.put("now", target);
+            } catch (IOException | JSONException exception) {
+                failed++;
+            }
+        }
+        return new SelectionRestoreResult(restored, fallback, skipped, failed);
+    }
+
+    private JSONObject proxySnapshot() throws IOException {
+        HttpURLConnection connection = null;
+        try {
+            connection = open("/proxies");
+            if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+                throw new IOException(
+                        "mihomo 控制器无法读取策略组：HTTP "
+                                + connection.getResponseCode()
+                );
+            }
+            JSONObject proxies = new JSONObject(readBody(connection)).optJSONObject("proxies");
+            if (proxies == null) {
+                throw new IOException("mihomo 控制器未返回策略组");
+            }
+            return proxies;
+        } catch (JSONException exception) {
+            throw new IOException("无法解析 mihomo 策略组", exception);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private void selectProxy(String group, String target) throws IOException {
+        HttpURLConnection connection = null;
+        try {
+            connection = open("/proxies/" + encodePathSegment(group));
+            connection.setRequestMethod("PUT");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            byte[] body;
+            try {
+                body = new JSONObject().put("name", target).toString()
+                        .getBytes(StandardCharsets.UTF_8);
+            } catch (JSONException impossible) {
+                throw new AssertionError("Unable to encode proxy selection", impossible);
+            }
+            connection.setFixedLengthStreamingMode(body.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(body);
+            }
+            int responseCode = connection.getResponseCode();
+            if (responseCode != HttpURLConnection.HTTP_OK
+                    && responseCode != HttpURLConnection.HTTP_NO_CONTENT) {
+                throw new IOException(
+                        "mihomo 策略组切换失败：HTTP " + responseCode
+                );
+            }
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private static boolean isSelector(JSONObject proxy) {
+        return proxy != null && "selector".equalsIgnoreCase(proxy.optString("type", ""));
+    }
+
+    private static boolean containsTarget(JSONObject selector, String target) {
+        JSONArray all = selector.optJSONArray("all");
+        if (all == null || target == null || target.isBlank()) {
+            return false;
+        }
+        for (int index = 0; index < all.length(); index++) {
+            if (target.equals(all.optString(index, ""))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAvailable(JSONObject proxies, String target) {
+        JSONObject proxy = proxies.optJSONObject(target);
+        return proxy != null && (!proxy.has("alive") || proxy.optBoolean("alive", true));
+    }
+
+    private static String automaticFallback(JSONObject selector, JSONObject proxies) {
+        JSONArray all = selector.optJSONArray("all");
+        if (all == null) {
+            return "";
+        }
+        for (int index = 0; index < all.length(); index++) {
+            String candidate = all.optString(index, "");
+            JSONObject proxy = proxies.optJSONObject(candidate);
+            if (proxy == null || !isAvailable(proxies, candidate)) {
+                continue;
+            }
+            String type = proxy.optString("type", "").replace("-", "")
+                    .toLowerCase(java.util.Locale.ROOT);
+            if (AUTOMATIC_PROXY_TYPES.contains(type)) {
+                return candidate;
+            }
+        }
+        return "";
+    }
+
+    private static String encodePathSegment(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private HttpURLConnection open(String path) throws IOException {

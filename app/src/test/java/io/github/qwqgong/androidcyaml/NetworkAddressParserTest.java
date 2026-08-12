@@ -44,21 +44,36 @@ public final class NetworkAddressParserTest {
     @Test
     public void underlyingStateSeparatesPathIpv6AndTransportChanges() {
         Ipv6EnvironmentMonitor.State wifiIpv4 =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0", false, true, List.of("192.168.1.1"));
+                new Ipv6EnvironmentMonitor.State(
+                        100L, "wlan0", false, true, List.of("192.168.1.1"), "home"
+                );
         Ipv6EnvironmentMonitor.State wifiIpv6 =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0", true, true, List.of("192.168.1.1"));
+                new Ipv6EnvironmentMonitor.State(
+                        100L, "wlan0", true, true, List.of("192.168.1.1"), "home"
+                );
         Ipv6EnvironmentMonitor.State mobileIpv6 =
-                new Ipv6EnvironmentMonitor.State(200L, "rmnet_data0", true, false, List.of("10.0.0.1"));
+                new Ipv6EnvironmentMonitor.State(
+                        200L, "rmnet_data0", true, false, List.of("10.0.0.1"), "mobile"
+                );
         Ipv6EnvironmentMonitor.State wifiDnsChanged =
-                new Ipv6EnvironmentMonitor.State(100L, "wlan0-new-dns", true, true, List.of("1.1.1.1"));
+                new Ipv6EnvironmentMonitor.State(
+                        100L, "wlan0-new-dns", true, true, List.of("1.1.1.1"), "home"
+                );
+        Ipv6EnvironmentMonitor.State officeWifi =
+                new Ipv6EnvironmentMonitor.State(
+                        100L, "wlan0", true, true, List.of("192.168.1.1"), "office"
+                );
 
         assertFalse(wifiIpv6.pathChangedFrom(wifiIpv4));
         assertTrue(wifiDnsChanged.pathChangedFrom(wifiIpv6));
         assertTrue(mobileIpv6.pathChangedFrom(wifiIpv6));
+        assertFalse(officeWifi.pathChangedFrom(wifiIpv6));
+        assertFalse(officeWifi.equals(wifiIpv6));
         assertTrue(Ipv6EnvironmentMonitor.State.unavailable().pathChangedFrom(wifiIpv6));
         assertTrue(wifiIpv4.available());
         assertTrue(wifiIpv6.wifi());
         assertEquals(List.of("192.168.1.1"), wifiIpv6.dnsServers());
+        assertEquals("home", wifiIpv6.selectionIdentity());
         assertFalse(mobileIpv6.wifi());
         assertFalse(Ipv6EnvironmentMonitor.State.unavailable().available());
     }

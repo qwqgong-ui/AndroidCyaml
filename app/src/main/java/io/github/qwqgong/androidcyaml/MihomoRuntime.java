@@ -5,6 +5,7 @@ import android.util.Log;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 final class MihomoRuntime implements AutoCloseable {
@@ -116,6 +117,22 @@ final class MihomoRuntime implements AutoCloseable {
             MihomoNative.updateSystemDns(dnsServers);
             MihomoNative.notifyNetworkChanged();
         }
+    }
+
+    Map<String, String> selectorSelections() throws IOException {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            return Map.of();
+        }
+        return controller.selectorSelections();
+    }
+
+    MihomoController.SelectionRestoreResult restoreSelectorSelections(
+            Map<String, String> selections
+    ) throws IOException {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            return new MihomoController.SelectionRestoreResult(0, 0, 0, 0);
+        }
+        return controller.restoreSelectorSelections(selections);
     }
 
     @Override

@@ -16,6 +16,9 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @SuppressWarnings("deprecation")
 public final class MainActivity extends Activity implements
         RuntimeControlClient.Listener,
@@ -24,6 +27,7 @@ public final class MainActivity extends Activity implements
     private static final int REQUEST_VPN_PERMISSION = 10_001;
     private static final int REQUEST_CONFIG_FILE = 10_002;
     private static final int REQUEST_LOCAL_NETWORK_PERMISSION = 10_003;
+    private static final int REQUEST_NETWORK_IDENTITY_PERMISSIONS = 10_004;
     private static final int ANDROID_17_API = 37;
 
     private RuntimeControlClient controlClient;
@@ -52,6 +56,8 @@ public final class MainActivity extends Activity implements
     private boolean autoStartAttempted;
     private boolean activityVisible;
     private RuntimeOverrideSettings pendingRuntimeOverrides;
+    private boolean pendingIdentityPermissionStart;
+    private boolean pendingIdentityPermissionAutomatic;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -141,6 +147,19 @@ public final class MainActivity extends Activity implements
             int[] grantResults
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NETWORK_IDENTITY_PERMISSIONS) {
+            boolean shouldStart = pendingIdentityPermissionStart;
+            boolean automatic = pendingIdentityPermissionAutomatic;
+            pendingIdentityPermissionStart = false;
+            pendingIdentityPermissionAutomatic = false;
+            if (!missingNetworkIdentityPermissions().isEmpty()) {
+                showToast(getString(R.string.network_identity_permission_denied));
+            }
+            if (shouldStart) {
+                vpnController.requestStart(runtimeState, automatic);
+            }
+            return;
+        }
         if (requestCode != REQUEST_LOCAL_NETWORK_PERMISSION) {
             return;
         }
@@ -325,7 +344,7 @@ public final class MainActivity extends Activity implements
             return;
         }
         if (checked) {
-            vpnController.requestStart(runtimeState, false);
+            requestVpnStart(false);
         } else {
             vpnController.requestStop(alwaysOn);
         }
@@ -410,7 +429,44 @@ public final class MainActivity extends Activity implements
             return;
         }
         autoStartAttempted = true;
-        vpnController.requestStart(runtimeState, true);
+        requestVpnStart(true);
+    }
+
+    private void requestVpnStart(boolean automatic) {
+        List<String> missing = missingNetworkIdentityPermissions();
+        if (!missing.isEmpty() && !preferences.networkIdentityPermissionRequested()) {
+            preferences.setNetworkIdentityPermissionRequested();
+            pendingIdentityPermissionStart = true;
+            pendingIdentityPermissionAutomatic = automatic;
+            try {
+                requestPermissions(
+                        missing.toArray(String[]::new),
+                        REQUEST_NETWORK_IDENTITY_PERMISSIONS
+                );
+                return;
+            } catch (RuntimeException exception) {
+                pendingIdentityPermissionStart = false;
+                pendingIdentityPermissionAutomatic = false;
+                showToast(getString(R.string.network_identity_permission_denied));
+            }
+        }
+        vpnController.requestStart(runtimeState, automatic);
+    }
+
+    private List<String> missingNetworkIdentityPermissions() {
+        List<String> missing = new ArrayList<>(3);
+        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI)
+                && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+            missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        }
+        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY_DATA)
+                && checkSelfPermission(Manifest.permission.READ_PHONE_STATE)
+                != PackageManager.PERMISSION_GRANTED) {
+            missing.add(Manifest.permission.READ_PHONE_STATE);
+        }
+        return missing;
     }
 
     private void setVpnToggle(boolean checked) {

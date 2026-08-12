@@ -35,7 +35,8 @@ final class Ipv6EnvironmentMonitor {
             String linkSignature,
             boolean ipv6Usable,
             boolean wifi,
-            List<String> dnsServers
+            List<String> dnsServers,
+            String selectionIdentity
     ) {
         State {
             if (networkHandle == 0L) {
@@ -43,14 +44,16 @@ final class Ipv6EnvironmentMonitor {
                 ipv6Usable = false;
                 wifi = false;
                 dnsServers = List.of();
+                selectionIdentity = "";
             } else {
                 linkSignature = linkSignature == null ? "" : linkSignature;
                 dnsServers = dnsServers == null ? List.of() : List.copyOf(dnsServers);
+                selectionIdentity = selectionIdentity == null ? "" : selectionIdentity;
             }
         }
 
         static State unavailable() {
-            return new State(0L, "", false, false, List.of());
+            return new State(0L, "", false, false, List.of(), "");
         }
 
         boolean available() {
@@ -75,6 +78,7 @@ final class Ipv6EnvironmentMonitor {
     private static final long LOST_HANDOVER_GRACE_MILLIS = 650L;
 
     private final ConnectivityManager connectivityManager;
+    private final NetworkIdentityResolver identityResolver;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Object lock = new Object();
     private final Runnable evaluation = this::evaluateAndNotify;
@@ -83,7 +87,9 @@ final class Ipv6EnvironmentMonitor {
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .build();
     private final ConnectivityManager.NetworkCallback callback =
-            new ConnectivityManager.NetworkCallback() {
+            new ConnectivityManager.NetworkCallback(
+                    ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO
+            ) {
                 @Override
                 public void onAvailable(Network network) {
                     synchronized (lock) {
@@ -141,6 +147,7 @@ final class Ipv6EnvironmentMonitor {
     private State lastState;
 
     Ipv6EnvironmentMonitor(Context context) {
+        identityResolver = new NetworkIdentityResolver(context);
         connectivityManager = Objects.requireNonNull(
                 context.getApplicationContext().getSystemService(ConnectivityManager.class)
         );
@@ -306,7 +313,7 @@ final class Ipv6EnvironmentMonitor {
         return 1;
     }
 
-    private static State stateOf(Snapshot snapshot) {
+    private State stateOf(Snapshot snapshot) {
         if (snapshot == null
                 || snapshot.network() == null
                 || !isUsableUnderlying(snapshot.capabilities())
@@ -321,7 +328,8 @@ final class Ipv6EnvironmentMonitor {
                 linkSignature(properties),
                 ipv6Usable,
                 snapshot.capabilities().hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
-                dnsServers(properties)
+                dnsServers(properties),
+                identityResolver.resolve(snapshot.capabilities())
         );
     }
 

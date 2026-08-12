@@ -171,6 +171,15 @@ resolver transport 并关闭现有 mihomo 连接。新建且已 protect 的 sock
 同一网络快照中的 `LinkProperties.getDnsServers()` 会在 core 启动前以及 handover 时经
 Java → JNI → Go 传给 `dns.UpdateSystemDNS`。Android 不再从 `/etc/resolv.conf` 推断系统 DNS。
 
+`NetworkIdentityResolver` 同时从物理 network capabilities 生成策略选择记忆键：Wi-Fi 使用
+SSID/BSSID，cellular 使用 subscription ID、SIM operator/carrier 与 data network type。原始身份仅在
+内存中组合，`NetworkSelectionStore` 只持久化 SHA-256 指纹及 Selector 组/目标名。
+
+`RuntimeCoordinator` 仅在首次进入网络和 underlying-network identity 变化时读写记忆，不定时
+轮询 controller。handover 先保存旧网络的可用 Selector `now`，等待新网络稳定后恢复。
+已移除/失活目标会回退到组内可用自动类型；无可用自动组或 HTTP 超时时保留当前
+mihomo 选择，不因记忆失败中断 VPN。
+
 ## Config transaction
 
 候选配置由同一嵌入式核心先解析，再原子替换应用私有 `config.yaml`。运行中的新配置若无法启动，

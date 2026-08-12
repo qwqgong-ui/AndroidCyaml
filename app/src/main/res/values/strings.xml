@@ -73,6 +73,7 @@
     <string name="override_lan_webui_public_running">当前监听 0.0.0.0:%1$d；局域网设备访问 http://&lt;手机局域网 IP&gt;:%1$d/ui/，鉴权使用 config.yaml 中的 secret。</string>
     <string name="override_lan_webui_public_pending">应用后监听 0.0.0.0；Android 17 将请求局域网权限，实际端口将在 mihomo 运行后显示，鉴权使用 config.yaml 中的非空 secret。</string>
     <string name="local_network_permission_denied">未授予局域网权限，WebUI 继续保持原监听设置。</string>
+    <string name="network_identity_permission_denied">未授予网络身份权限：VPN 仍会正常启动，但无法识别的 Wi‑Fi 或蜂窝网络不会记忆节点。</string>
     <string name="runtime_override_applied">运行时覆写：%1$s</string>
     <string name="runtime_override_failed">运行时覆写失败：%1$s</string>
     <string name="cancel">取消</string>
