@@ -77,4 +77,42 @@ public final class NetworkAddressParserTest {
         assertFalse(mobileIpv6.wifi());
         assertFalse(Ipv6EnvironmentMonitor.State.unavailable().available());
     }
+
+    @Test
+    public void wifiSelectionIdentitySurvivesAccessPointRoaming() {
+        String firstAccessPoint = NetworkIdentityResolver.wifiFingerprint(
+                "Home", "00:11:22:33:44:55"
+        );
+        String secondAccessPoint = NetworkIdentityResolver.wifiFingerprint(
+                "Home", "66:77:88:99:aa:bb"
+        );
+
+        assertEquals(firstAccessPoint, secondAccessPoint);
+        assertFalse(firstAccessPoint.equals(
+                NetworkIdentityResolver.wifiFingerprint("Office", "00:11:22:33:44:55")
+        ));
+    }
+
+    @Test
+    public void wifiSelectionIdentityFallsBackToBssidWhenSsidIsUnavailable() {
+        assertFalse(NetworkIdentityResolver.wifiFingerprint(
+                "", "00:11:22:33:44:55"
+        ).equals(NetworkIdentityResolver.wifiFingerprint(
+                "", "66:77:88:99:aa:bb"
+        )));
+    }
+
+    @Test
+    public void cellularSelectionIdentityUsesStableCarrierProperties() {
+        String identity = NetworkIdentityResolver.cellularFingerprint(
+                1, "46000", 1435, "Carrier"
+        );
+
+        assertEquals(identity, NetworkIdentityResolver.cellularFingerprint(
+                1, "46000", 1435, "Localized carrier name"
+        ));
+        assertFalse(identity.equals(NetworkIdentityResolver.cellularFingerprint(
+                2, "46000", 1435, "Carrier"
+        )));
+    }
 }

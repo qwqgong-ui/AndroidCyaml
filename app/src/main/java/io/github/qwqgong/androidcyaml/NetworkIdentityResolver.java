@@ -57,9 +57,7 @@ final class NetworkIdentityResolver {
         if (ssid.isEmpty() && bssid.isEmpty()) {
             return "";
         }
-        return fingerprint(
-                "wifi:v1|ssid=" + component(ssid) + "|bssid=" + component(bssid)
-        );
+        return wifiFingerprint(ssid, bssid);
     }
 
     private String cellularIdentity(NetworkCapabilities capabilities) {
@@ -74,20 +72,13 @@ final class NetworkIdentityResolver {
         String operator = safeTelephonyString(telephony::getSimOperator);
         String carrierName = safeTelephonyString(telephony::getSimOperatorName);
         int carrierId = safeCarrierId(telephony);
-        int networkType = safeNetworkType(telephony);
         if (!SubscriptionManager.isValidSubscriptionId(subscriptionId)
                 && operator.isEmpty()
                 && carrierName.isEmpty()
                 && carrierId < 0) {
             return "";
         }
-        return fingerprint(
-                "cellular:v1|subscription=" + subscriptionId
-                        + "|operator=" + component(operator)
-                        + "|carrier=" + carrierId
-                        + "|name=" + component(carrierName)
-                        + "|networkType=" + networkType
-        );
+        return cellularFingerprint(subscriptionId, operator, carrierId, carrierName);
     }
 
     private static int subscriptionId(NetworkCapabilities capabilities) {
@@ -96,18 +87,6 @@ final class NetworkIdentityResolver {
             return telephonySpecifier.getSubscriptionId();
         }
         return SubscriptionManager.getDefaultDataSubscriptionId();
-    }
-
-    private int safeNetworkType(TelephonyManager telephony) {
-        if (context.checkSelfPermission(Manifest.permission.READ_PHONE_STATE)
-                != PackageManager.PERMISSION_GRANTED) {
-            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        }
-        try {
-            return telephony.getDataNetworkType();
-        } catch (RuntimeException ignored) {
-            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        }
     }
 
     private static int safeCarrierId(TelephonyManager telephony) {
@@ -147,6 +126,37 @@ final class NetworkIdentityResolver {
 
     private static String component(String value) {
         return value.length() + ":" + value;
+    }
+
+    static String wifiFingerprint(String ssid, String bssid) {
+        String stableSsid = ssid == null ? "" : ssid.trim();
+        String fallbackBssid = bssid == null ? "" : bssid.trim().toLowerCase(Locale.ROOT);
+        // BSSID identifies an access point, not a Wi-Fi environment. Keying a
+        // remembered choice by it breaks on mesh roaming and multi-AP networks.
+        // It remains useful only when Android redacts the SSID.
+        String canonical = stableSsid.isEmpty()
+                ? "wifi:v2|bssid=" + component(fallbackBssid)
+                : "wifi:v2|ssid=" + component(stableSsid);
+        return fingerprint(canonical);
+    }
+
+    static String cellularFingerprint(
+            int subscriptionId,
+            String operator,
+            int carrierId,
+            String carrierName
+    ) {
+        String stableOperator = operator == null ? "" : operator.trim();
+        String fallbackName = carrierName == null ? "" : carrierName.trim();
+        // Radio technology (for example 4G versus 5G) changes in place and must
+        // not create a new environment. Carrier name is only a fallback because
+        // it may be localized by Android.
+        String carrierComponent = !stableOperator.isEmpty() || carrierId >= 0
+                ? "operator=" + component(stableOperator) + "|carrier=" + carrierId
+                : "name=" + component(fallbackName);
+        return fingerprint(
+                "cellular:v2|subscription=" + subscriptionId + "|" + carrierComponent
+        );
     }
 
     private static String fingerprint(String canonicalIdentity) {

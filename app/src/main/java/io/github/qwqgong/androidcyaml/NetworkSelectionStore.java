@@ -49,21 +49,24 @@ final class NetworkSelectionStore {
         return Map.copyOf(stored.selections());
     }
 
-    void save(String networkIdentity, Map<String, String> selections) {
+    boolean save(String networkIdentity, Map<String, String> selections) {
         if (networkIdentity == null || networkIdentity.isBlank()
                 || selections == null || selections.isEmpty()) {
-            return;
+            return true;
         }
         long now = System.currentTimeMillis();
         Map<String, String> sanitized = sanitizeSelections(selections);
         if (sanitized.isEmpty()) {
-            return;
+            return true;
         }
         Map<String, StoredNetwork> networks = readNetworks();
         networks.entrySet().removeIf(entry -> isExpired(entry.getValue().updatedAt(), now));
         networks.put(networkIdentity, new StoredNetwork(now, sanitized));
         trimOldest(networks);
-        preferences.edit().putString(DOCUMENT, encodeNetworks(networks)).apply();
+        // These writes happen only on network/lifecycle boundaries. commit()
+        // makes the memory-kill acknowledgement truthful: once it returns, the
+        // latest selector state is on disk rather than queued in this process.
+        return preferences.edit().putString(DOCUMENT, encodeNetworks(networks)).commit();
     }
 
     private Map<String, StoredNetwork> readNetworks() {

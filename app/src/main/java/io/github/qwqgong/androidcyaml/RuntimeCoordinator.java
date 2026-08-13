@@ -12,8 +12,12 @@ import android.util.Log;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** Serializes every transition that can replace the TUN or embedded mihomo runtime. */
 final class RuntimeCoordinator {
@@ -89,7 +93,20 @@ final class RuntimeCoordinator {
     }
 
     static boolean persistStateForMemoryKill() {
-        return true;
+        RuntimeCoordinator local = instance;
+        if (local == null || local.runtime == null) {
+            return true;
+        }
+        Future<Boolean> checkpoint = local.executor.submit(local::checkpointSelections);
+        try {
+            return checkpoint.get(2L, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (ExecutionException | TimeoutException exception) {
+            Log.w(TAG, "Unable to persist selector choices before memory kill", exception);
+            return false;
+        }
     }
 
     RuntimeOverrideSettings runtimeOverrideSettings() {
@@ -279,6 +296,10 @@ final class RuntimeCoordinator {
         if (!hasActiveService()) {
             throw new IOException("Android VPN 服务尚未初始化");
         }
+        // A restart must not roll a selector back to the snapshot taken when the
+        // current network was first entered. Capture the user's latest WebUI
+        // choice while the old controller is still reachable.
+        checkpointSelections();
         closeRuntime();
         MihomoRuntime candidate = new MihomoRuntime(
                 fileStore,
@@ -575,22 +596,23 @@ final class RuntimeCoordinator {
         restoreOrRememberSelections(current);
     }
 
-    private void checkpointSelections() {
+    private boolean checkpointSelections() {
         MihomoRuntime current = runtime;
         String identity = activeSelectionIdentity;
         if (!activeSelectionReady
                 || current == null || identity == null || identity.isBlank()) {
-            return;
+            return true;
         }
-        saveSelections(current, identity);
+        return saveSelections(current, identity);
     }
 
-    private void saveSelections(MihomoRuntime current, String identity) {
+    private boolean saveSelections(MihomoRuntime current, String identity) {
         try {
             Map<String, String> selections = current.selectorSelections();
-            selectionStore.save(identity, selections);
+            return selectionStore.save(identity, selections);
         } catch (IOException exception) {
             Log.w(TAG, "Unable to remember selector choices", exception);
+            return false;
         }
     }
 
@@ -641,6 +663,10 @@ final class RuntimeCoordinator {
         mainHandler.removeCallbacks(ipv6Reconciliation);
         mainHandler.removeCallbacks(selectionRestoration);
         networkMonitor.stop();
+        // Stopping the VPN is also leaving the current selector session. Without
+        // this checkpoint, starting again on the same network restores a stale
+        // choice because no physical-network handover occurred.
+        checkpointSelections();
         closeRuntime();
         if (tunManager != null) {
             tunManager.close();

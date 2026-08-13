@@ -453,17 +453,12 @@ public final class MainActivity extends Activity implements
     }
 
     private List<String> missingNetworkIdentityPermissions() {
-        List<String> missing = new ArrayList<>(3);
+        List<String> missing = new ArrayList<>(2);
         if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_WIFI)
                 && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
             missing.add(Manifest.permission.ACCESS_COARSE_LOCATION);
             missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
-        }
-        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY_DATA)
-                && checkSelfPermission(Manifest.permission.READ_PHONE_STATE)
-                != PackageManager.PERMISSION_GRANTED) {
-            missing.add(Manifest.permission.READ_PHONE_STATE);
         }
         return missing;
     }
