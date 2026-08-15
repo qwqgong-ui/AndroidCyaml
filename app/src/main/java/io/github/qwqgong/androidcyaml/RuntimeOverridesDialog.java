@@ -166,7 +166,7 @@ final class RuntimeOverridesDialog {
 
         ScrollView scroll = new ScrollView(context);
         scroll.addView(content, matchWidth());
-        new AlertDialog.Builder(context)
+        AlertDialog dialog = new AlertDialog.Builder(context)
                 .setTitle(R.string.runtime_overrides)
                 .setView(scroll)
                 .setNegativeButton(R.string.cancel, null)
@@ -189,7 +189,9 @@ final class RuntimeOverridesDialog {
                             lanWebUi.isChecked()
                     ));
                 })
-                .show();
+                .create();
+        dialog.getWindow().setBackgroundDrawableResource(R.drawable.popup_menu_background);
+        dialog.show();
     }
 
     private static void addProcessOption(

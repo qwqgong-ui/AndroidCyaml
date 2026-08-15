@@ -2,6 +2,7 @@ package io.github.qwqgong.androidcyaml;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -10,7 +11,6 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.PopupMenu;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -77,7 +77,7 @@ public final class MainActivity extends Activity implements
         vpnController = new VpnUiController(this, REQUEST_VPN_PERMISSION, this);
 
         taskVisibility.setHiddenFromRecents(preferences.hideFromRecents());
-        appTitle.setOnClickListener(this::showRuntimeInfo);
+        appTitle.setOnClickListener(ignored -> showRuntimeInfo());
         moreActions.setOnClickListener(this::showActions);
         vpnToggle.setOnCheckedChangeListener((button, checked) -> onVpnToggleChanged(checked));
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
@@ -359,18 +359,23 @@ public final class MainActivity extends Activity implements
         );
     }
 
-    private void showRuntimeInfo(View anchor) {
-        PopupMenu popup = new PopupMenu(this, anchor);
-        popup.getMenu().add(getString(
+    private void showRuntimeInfo() {
+        StringBuilder details = new StringBuilder(getString(
                 R.string.runtime_info_app,
                 BuildConfig.VERSION_NAME
-        )).setEnabled(false);
+        ));
         for (String detail : runtimeDetail.split("\\s+·\\s+")) {
             if (!detail.isBlank()) {
-                popup.getMenu().add(detail).setEnabled(false);
+                details.append('\n').append(detail);
             }
         }
-        popup.show();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.runtime_info)
+                .setMessage(details)
+                .setPositiveButton(android.R.string.ok, null)
+                .create();
+        dialog.getWindow().setBackgroundDrawableResource(R.drawable.popup_menu_background);
+        dialog.show();
     }
 
     private void chooseConfig() {
