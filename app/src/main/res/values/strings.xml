@@ -41,6 +41,8 @@
     <string name="vpn_settings_failed">无法打开系统 VPN 设置</string>
     <string name="vpn_always_on_controlled">始终开启 VPN 由系统设置控制；请从“VPN 系统设置”中关闭</string>
     <string name="runtime_overrides">覆写面板</string>
+    <string name="override_show_help">展开说明</string>
+    <string name="override_hide_help">收起说明</string>
     <string name="override_tun_stack">TUN 栈</string>
     <string name="override_stack_system">system 全栈（推荐）</string>
     <string name="override_stack_gvisor">gVisor 全栈</string>

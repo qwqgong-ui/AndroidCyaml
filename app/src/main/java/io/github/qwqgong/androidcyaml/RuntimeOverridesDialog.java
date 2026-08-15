@@ -3,6 +3,7 @@ package io.github.qwqgong.androidcyaml;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Typeface;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
@@ -37,16 +38,21 @@ final class RuntimeOverridesDialog {
             int controllerPort,
             Listener listener
     ) {
-        int horizontalPadding = dp(context, 24);
-        int verticalPadding = dp(context, 12);
+        int horizontalPadding = dp(context, 16);
+        int verticalPadding = dp(context, 4);
         LinearLayout content = new LinearLayout(context);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding);
 
-        content.addView(
-                sectionTitle(context, R.string.override_log_level),
-                matchWidth()
+        TextView logSummary = summary(
+                context,
+                context.getString(R.string.override_log_level_summary)
         );
+        content.addView(helpHeader(
+                context,
+                R.string.override_log_level,
+                logSummary
+        ), matchWidth());
         RuntimeLogLevel[] logLevels = RuntimeLogLevel.values();
         String[] logLabels = new String[logLevels.length];
         for (int index = 0; index < logLevels.length; index++) {
@@ -64,17 +70,19 @@ final class RuntimeOverridesDialog {
                 logLevels,
                 currentLogLevel == null ? RuntimeLogLevel.WARNING : currentLogLevel
         ));
-        logLevel.setMinimumHeight(dp(context, 48));
+        logLevel.setMinimumHeight(dp(context, 40));
         content.addView(logLevel, matchWidth());
-        content.addView(summary(
-                context,
-                context.getString(R.string.override_log_level_summary)
-        ), matchWidth());
+        content.addView(logSummary, matchWidth());
 
-        content.addView(
-                sectionTitle(context, R.string.override_process_matching),
-                topSpaced(context)
+        TextView processSummary = summary(
+                context,
+                context.getString(R.string.override_process_matching_summary)
         );
+        content.addView(helpHeader(
+                context,
+                R.string.override_process_matching,
+                processSummary
+        ), topSpaced(context));
         RadioGroup processGroup = new RadioGroup(context);
         processGroup.setOrientation(RadioGroup.VERTICAL);
         Map<Integer, ProcessMatchingMode> processModeById = new HashMap<>();
@@ -104,10 +112,7 @@ final class RuntimeOverridesDialog {
                 currentProcessMatchingMode == ProcessMatchingMode.OFF
         );
         content.addView(processGroup, matchWidth());
-        content.addView(summary(
-                context,
-                context.getString(R.string.override_process_matching_summary)
-        ), matchWidth());
+        content.addView(processSummary, matchWidth());
 
         Switch ipv6 = switchView(context, R.string.override_ipv6, ipv6Enabled);
         content.addView(ipv6, topSpaced(context));
@@ -124,22 +129,32 @@ final class RuntimeOverridesDialog {
                 R.string.override_adaptive_tcp_concurrent,
                 currentAdaptiveTcpConcurrent
         );
-        content.addView(adaptiveTcpConcurrent, topSpaced(context));
-        content.addView(summary(
+        TextView adaptiveSummary = summary(
                 context,
                 context.getString(R.string.override_adaptive_tcp_concurrent_summary)
-        ), matchWidth());
+        );
+        content.addView(helpSwitchRow(
+                context,
+                adaptiveTcpConcurrent,
+                adaptiveSummary
+        ), topSpaced(context));
+        content.addView(adaptiveSummary, matchWidth());
 
         Switch webViewXhttp = switchView(
                 context,
                 R.string.override_webview_xhttp,
                 currentWebViewXhttp
         );
-        content.addView(webViewXhttp, topSpaced(context));
-        content.addView(summary(
+        TextView webViewSummary = summary(
                 context,
                 context.getString(R.string.override_webview_xhttp_summary)
-        ), matchWidth());
+        );
+        content.addView(helpSwitchRow(
+                context,
+                webViewXhttp,
+                webViewSummary
+        ), topSpaced(context));
+        content.addView(webViewSummary, matchWidth());
 
         Switch lanWebUi = switchView(
                 context,
@@ -206,8 +221,8 @@ final class RuntimeOverridesDialog {
         int id = View.generateViewId();
         button.setId(id);
         button.setText(label);
-        button.setTextSize(15);
-        button.setMinHeight(dp(context, 44));
+        button.setTextSize(14);
+        button.setMinHeight(dp(context, 36));
         button.setChecked(checked);
         processModeById.put(id, mode);
         group.addView(button, matchWidth());
@@ -218,8 +233,56 @@ final class RuntimeOverridesDialog {
         view.setText(text);
         view.setTextSize(16);
         view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        view.setPadding(0, 0, 0, dp(context, 4));
         return view;
+    }
+
+    private static LinearLayout helpHeader(
+            Context context,
+            int title,
+            TextView helpText
+    ) {
+        LinearLayout row = horizontalRow(context);
+        row.addView(sectionTitle(context, title), weightedWidth());
+        row.addView(helpButton(context, helpText), helpButtonSize(context));
+        return row;
+    }
+
+    private static LinearLayout helpSwitchRow(
+            Context context,
+            Switch control,
+            TextView helpText
+    ) {
+        LinearLayout row = horizontalRow(context);
+        row.addView(control, weightedWidth());
+        row.addView(helpButton(context, helpText), helpButtonSize(context));
+        return row;
+    }
+
+    private static LinearLayout horizontalRow(Context context) {
+        LinearLayout row = new LinearLayout(context);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        return row;
+    }
+
+    private static TextView helpButton(Context context, TextView helpText) {
+        TextView button = new TextView(context);
+        button.setText("❓");
+        button.setTextSize(16);
+        button.setGravity(Gravity.CENTER);
+        button.setClickable(true);
+        button.setFocusable(true);
+        button.setBackgroundResource(android.R.drawable.list_selector_background);
+        button.setContentDescription(context.getString(R.string.override_show_help));
+        helpText.setVisibility(View.GONE);
+        button.setOnClickListener(ignored -> {
+            boolean show = helpText.getVisibility() != View.VISIBLE;
+            helpText.setVisibility(show ? View.VISIBLE : View.GONE);
+            button.setContentDescription(context.getString(show
+                    ? R.string.override_hide_help
+                    : R.string.override_show_help));
+        });
+        return button;
     }
 
     private static Switch switchView(Context context, int text, boolean checked) {
@@ -228,7 +291,7 @@ final class RuntimeOverridesDialog {
         view.setTextSize(16);
         view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         view.setChecked(checked);
-        view.setMinHeight(dp(context, 48));
+        view.setMinHeight(dp(context, 40));
         return view;
     }
 
@@ -237,7 +300,7 @@ final class RuntimeOverridesDialog {
         view.setText(text);
         view.setTextSize(13);
         view.setAlpha(0.72f);
-        view.setPadding(0, 0, 0, dp(context, 4));
+        view.setPadding(0, 0, 0, dp(context, 2));
         return view;
     }
 
@@ -301,9 +364,21 @@ final class RuntimeOverridesDialog {
         );
     }
 
+    private static LinearLayout.LayoutParams weightedWidth() {
+        return new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1
+        );
+    }
+
+    private static LinearLayout.LayoutParams helpButtonSize(Context context) {
+        return new LinearLayout.LayoutParams(dp(context, 36), dp(context, 36));
+    }
+
     private static LinearLayout.LayoutParams topSpaced(Context context) {
         LinearLayout.LayoutParams params = matchWidth();
-        params.topMargin = dp(context, 12);
+        params.topMargin = dp(context, 8);
         return params;
     }
 
