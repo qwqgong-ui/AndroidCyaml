@@ -166,7 +166,7 @@ final class RuntimeOverridesDialog {
 
         ScrollView scroll = new ScrollView(context);
         scroll.addView(content, matchWidth());
-        AlertDialog dialog = new AlertDialog.Builder(context)
+        AlertDialog panel = new AlertDialog.Builder(context)
                 .setTitle(R.string.runtime_overrides)
                 .setView(scroll)
                 .setNegativeButton(R.string.cancel, null)
@@ -190,8 +190,8 @@ final class RuntimeOverridesDialog {
                     ));
                 })
                 .create();
-        dialog.getWindow().setBackgroundDrawableResource(R.drawable.popup_menu_background);
-        dialog.show();
+        panel.getWindow().setBackgroundDrawableResource(R.drawable.popup_menu_background);
+        panel.show();
     }
 
     private static void addProcessOption(
