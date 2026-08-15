@@ -106,15 +106,12 @@ git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
 
-mihomo_patches=("${SOURCE_DIR}"/patches/mihomo/*.patch)
-(( ${#mihomo_patches[@]} > 0 )) || {
-    echo "No external mihomo patches found at ${SOURCE_DIR}/patches/mihomo" >&2
+readonly MIHOMO_PATCH_SCRIPT="${SOURCE_DIR}/patches/apply-mihomo-patches.sh"
+[[ -f "${MIHOMO_PATCH_SCRIPT}" ]] || {
+    echo "mihomo patch application script is missing: ${MIHOMO_PATCH_SCRIPT}" >&2
     exit 1
 }
-for patch in "${mihomo_patches[@]}"; do
-    git -C "${SOURCE_DIR}" apply --check --whitespace=error-all "${patch}"
-    git -C "${SOURCE_DIR}" apply --whitespace=error-all "${patch}"
-done
+sh "${MIHOMO_PATCH_SCRIPT}"
 git -C "${SOURCE_DIR}" diff --check
 git -C "${SOURCE_DIR}" add -A
 
