@@ -59,6 +59,9 @@
     <string name="override_process_strict">严格（仅进程规则需要时查询）</string>
     <string name="override_process_always">始终查询</string>
     <string name="override_process_off">关闭查询</string>
+    <string name="override_process_strict_compact">严格</string>
+    <string name="override_process_always_compact">始终</string>
+    <string name="override_process_off_compact">关闭</string>
     <string name="override_process_matching_summary">strict 仅在进程规则需要时查询；always 对所有连接查询 Android UID/包名；off 完全关闭。</string>
     <string name="override_ipv6">IPv6</string>
     <string name="override_ipv6_available">当前底层网络具有已验证的全局 IPv6 地址和默认路由。</string>

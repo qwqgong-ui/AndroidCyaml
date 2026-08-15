@@ -8,15 +8,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.LinearLayout;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
-
-import java.util.HashMap;
-import java.util.Map;
 
 final class RuntimeOverridesDialog {
     interface Listener {
@@ -48,11 +43,6 @@ final class RuntimeOverridesDialog {
                 context,
                 context.getString(R.string.override_log_level_summary)
         );
-        content.addView(helpHeader(
-                context,
-                R.string.override_log_level,
-                logSummary
-        ), matchWidth());
         RuntimeLogLevel[] logLevels = RuntimeLogLevel.values();
         String[] logLabels = new String[logLevels.length];
         for (int index = 0; index < logLevels.length; index++) {
@@ -71,51 +61,57 @@ final class RuntimeOverridesDialog {
                 currentLogLevel == null ? RuntimeLogLevel.WARNING : currentLogLevel
         ));
         logLevel.setMinimumHeight(dp(context, 40));
-        content.addView(logLevel, matchWidth());
+        content.addView(helpSpinnerRow(
+                context,
+                R.string.override_log_level,
+                logSummary,
+                logLevel
+        ), matchWidth());
         content.addView(logSummary, matchWidth());
 
         TextView processSummary = summary(
                 context,
                 context.getString(R.string.override_process_matching_summary)
         );
-        content.addView(helpHeader(
+        ProcessMatchingMode[] processModes = {
+                ProcessMatchingMode.STRICT,
+                ProcessMatchingMode.ALWAYS,
+                ProcessMatchingMode.OFF
+        };
+        String[] processLabels = {
+                context.getString(R.string.override_process_strict_compact),
+                context.getString(R.string.override_process_always_compact),
+                context.getString(R.string.override_process_off_compact)
+        };
+        Spinner processMode = new Spinner(context);
+        ArrayAdapter<String> processAdapter = new ArrayAdapter<>(
+                context,
+                android.R.layout.simple_spinner_item,
+                processLabels
+        );
+        processAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        processMode.setAdapter(processAdapter);
+        processMode.setSelection(indexOf(
+                processModes,
+                currentProcessMatchingMode == null
+                        ? ProcessMatchingMode.ALWAYS
+                        : currentProcessMatchingMode
+        ));
+        processMode.setMinimumHeight(dp(context, 40));
+        content.addView(helpSpinnerRow(
                 context,
                 R.string.override_process_matching,
-                processSummary
+                processSummary,
+                processMode
         ), topSpaced(context));
-        RadioGroup processGroup = new RadioGroup(context);
-        processGroup.setOrientation(RadioGroup.VERTICAL);
-        Map<Integer, ProcessMatchingMode> processModeById = new HashMap<>();
-        addProcessOption(
-                context,
-                processGroup,
-                processModeById,
-                ProcessMatchingMode.STRICT,
-                R.string.override_process_strict,
-                currentProcessMatchingMode == ProcessMatchingMode.STRICT
-        );
-        addProcessOption(
-                context,
-                processGroup,
-                processModeById,
-                ProcessMatchingMode.ALWAYS,
-                R.string.override_process_always,
-                currentProcessMatchingMode == null
-                        || currentProcessMatchingMode == ProcessMatchingMode.ALWAYS
-        );
-        addProcessOption(
-                context,
-                processGroup,
-                processModeById,
-                ProcessMatchingMode.OFF,
-                R.string.override_process_off,
-                currentProcessMatchingMode == ProcessMatchingMode.OFF
-        );
-        content.addView(processGroup, matchWidth());
         content.addView(processSummary, matchWidth());
 
-        Switch ipv6 = switchView(context, R.string.override_ipv6, ipv6Enabled);
-        content.addView(ipv6, topSpaced(context));
+        Switch ipv6 = switchView(context, ipv6Enabled);
+        content.addView(switchRow(
+                context,
+                R.string.override_ipv6,
+                ipv6
+        ), topSpaced(context));
         TextView ipv6Status = summary(context, ipv6Status(context, ipv6Enabled, ipv6Effective));
         content.addView(ipv6Status, matchWidth());
         ipv6.setOnCheckedChangeListener((button, checked) -> ipv6Status.setText(
@@ -124,44 +120,38 @@ final class RuntimeOverridesDialog {
                         : context.getString(R.string.override_ipv6_disabled)
         ));
 
-        Switch adaptiveTcpConcurrent = switchView(
-                context,
-                R.string.override_adaptive_tcp_concurrent,
-                currentAdaptiveTcpConcurrent
-        );
+        Switch adaptiveTcpConcurrent = switchView(context, currentAdaptiveTcpConcurrent);
         TextView adaptiveSummary = summary(
                 context,
                 context.getString(R.string.override_adaptive_tcp_concurrent_summary)
         );
         content.addView(helpSwitchRow(
                 context,
+                R.string.override_adaptive_tcp_concurrent,
                 adaptiveTcpConcurrent,
                 adaptiveSummary
         ), topSpaced(context));
         content.addView(adaptiveSummary, matchWidth());
 
-        Switch webViewXhttp = switchView(
-                context,
-                R.string.override_webview_xhttp,
-                currentWebViewXhttp
-        );
+        Switch webViewXhttp = switchView(context, currentWebViewXhttp);
         TextView webViewSummary = summary(
                 context,
                 context.getString(R.string.override_webview_xhttp_summary)
         );
         content.addView(helpSwitchRow(
                 context,
+                R.string.override_webview_xhttp,
                 webViewXhttp,
                 webViewSummary
         ), topSpaced(context));
         content.addView(webViewSummary, matchWidth());
 
-        Switch lanWebUi = switchView(
+        Switch lanWebUi = switchView(context, currentLanWebUiPublic);
+        content.addView(switchRow(
                 context,
                 R.string.override_lan_webui_public,
-                currentLanWebUiPublic
-        );
-        content.addView(lanWebUi, topSpaced(context));
+                lanWebUi
+        ), topSpaced(context));
         TextView lanWebUiStatus = summary(
                 context,
                 lanWebUiStatus(
@@ -186,15 +176,13 @@ final class RuntimeOverridesDialog {
                 .setView(scroll)
                 .setNegativeButton(R.string.cancel, null)
                 .setPositiveButton(R.string.apply, (dialog, which) -> {
-                    ProcessMatchingMode selectedProcessMode = processModeById.get(
-                            processGroup.getCheckedRadioButtonId()
-                    );
+                    int processModeIndex = processMode.getSelectedItemPosition();
                     int logLevelIndex = logLevel.getSelectedItemPosition();
                     listener.onOverridesSelected(new RuntimeOverrideSettings(
                             TunStackMode.SYSTEM,
-                            selectedProcessMode == null
-                                    ? ProcessMatchingMode.ALWAYS
-                                    : selectedProcessMode,
+                            processModeIndex >= 0 && processModeIndex < processModes.length
+                                    ? processModes[processModeIndex]
+                                    : ProcessMatchingMode.ALWAYS,
                             ipv6.isChecked(),
                             logLevelIndex >= 0 && logLevelIndex < logLevels.length
                                     ? logLevels[logLevelIndex]
@@ -209,25 +197,6 @@ final class RuntimeOverridesDialog {
         panel.show();
     }
 
-    private static void addProcessOption(
-            Context context,
-            RadioGroup group,
-            Map<Integer, ProcessMatchingMode> processModeById,
-            ProcessMatchingMode mode,
-            int label,
-            boolean checked
-    ) {
-        RadioButton button = new RadioButton(context);
-        int id = View.generateViewId();
-        button.setId(id);
-        button.setText(label);
-        button.setTextSize(14);
-        button.setMinHeight(dp(context, 36));
-        button.setChecked(checked);
-        processModeById.put(id, mode);
-        group.addView(button, matchWidth());
-    }
-
     private static TextView sectionTitle(Context context, int text) {
         TextView view = new TextView(context);
         view.setText(text);
@@ -236,25 +205,40 @@ final class RuntimeOverridesDialog {
         return view;
     }
 
-    private static LinearLayout helpHeader(
+    private static LinearLayout helpSpinnerRow(
             Context context,
             int title,
-            TextView helpText
+            TextView helpText,
+            Spinner spinner
     ) {
         LinearLayout row = horizontalRow(context);
         row.addView(sectionTitle(context, title), weightedWidth());
         row.addView(helpButton(context, helpText), helpButtonSize(context));
+        row.addView(spinner, spinnerWidth(context));
         return row;
     }
 
     private static LinearLayout helpSwitchRow(
             Context context,
+            int title,
             Switch control,
             TextView helpText
     ) {
         LinearLayout row = horizontalRow(context);
-        row.addView(control, weightedWidth());
+        row.addView(sectionTitle(context, title), weightedWidth());
         row.addView(helpButton(context, helpText), helpButtonSize(context));
+        row.addView(control, switchWidth(context));
+        return row;
+    }
+
+    private static LinearLayout switchRow(
+            Context context,
+            int title,
+            Switch control
+    ) {
+        LinearLayout row = horizontalRow(context);
+        row.addView(sectionTitle(context, title), weightedWidth());
+        row.addView(control, switchWidth(context));
         return row;
     }
 
@@ -285,11 +269,8 @@ final class RuntimeOverridesDialog {
         return button;
     }
 
-    private static Switch switchView(Context context, int text, boolean checked) {
+    private static Switch switchView(Context context, boolean checked) {
         Switch view = new Switch(context);
-        view.setText(text);
-        view.setTextSize(16);
-        view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         view.setChecked(checked);
         view.setMinHeight(dp(context, 40));
         return view;
@@ -357,6 +338,15 @@ final class RuntimeOverridesDialog {
         return 0;
     }
 
+    private static int indexOf(ProcessMatchingMode[] values, ProcessMatchingMode target) {
+        for (int index = 0; index < values.length; index++) {
+            if (values[index] == target) {
+                return index;
+            }
+        }
+        return 0;
+    }
+
     private static LinearLayout.LayoutParams matchWidth() {
         return new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -374,6 +364,14 @@ final class RuntimeOverridesDialog {
 
     private static LinearLayout.LayoutParams helpButtonSize(Context context) {
         return new LinearLayout.LayoutParams(dp(context, 36), dp(context, 36));
+    }
+
+    private static LinearLayout.LayoutParams switchWidth(Context context) {
+        return new LinearLayout.LayoutParams(dp(context, 52), dp(context, 40));
+    }
+
+    private static LinearLayout.LayoutParams spinnerWidth(Context context) {
+        return new LinearLayout.LayoutParams(dp(context, 120), dp(context, 40));
     }
 
     private static LinearLayout.LayoutParams topSpaced(Context context) {
