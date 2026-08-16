@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "2c5476d204c270379a31df7bd15318b71beaa211"
+val mihomoCommit = "ccbaf78f80612dba78b2b84b197127540e72df87"
 val mihomoPatchDir = rootProject.file("patches/mihomo")
 val mihomoPatchFiles = fileTree(mihomoPatchDir) {
     include("*.patch")
@@ -24,8 +24,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 263
-        versionName = "0.7.150"
+        versionCode = 264
+        versionName = "0.7.151"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
