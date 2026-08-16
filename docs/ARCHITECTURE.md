@@ -176,11 +176,16 @@ SSID（缺失时回退 BSSID），cellular 使用 subscription ID 与稳定的 S
 内存中组合，`NetworkSelectionStore` 只持久化 SHA-256 指纹及 Selector 组/目标名。
 
 `RuntimeCoordinator` 仅在首次进入网络和 underlying-network identity 变化时读写记忆，不定时
-轮询 controller。handover 先保存旧网络的可用 Selector `now`，等待新网络稳定后恢复。
+轮询 controller。handover 只保存旧网络第一个 Selector 的可用 `now`，等待新网络稳定后恢复。
 停止 VPN、重启 core 或回应后台内存回收协议前也会同步持久化最新选择；只有写盘
 成功才向回收协议报告状态已保存。
 已移除/失活目标会回退到组内可用自动类型；无可用自动组或 HTTP 超时时保留当前
 mihomo 选择，不因记忆失败中断 VPN。
+
+UI 通过同 UID Binder 向 `RuntimeCoordinator` 查询网络档案和第一个 Selector 的目录。目录保留可恢复的
+直接目标，同时沿 Selector/URLTest/Fallback/LoadBalance/Smart 的当前选择递归解析实际叶子节点名。
+对当前网络的选择先由 controller `PUT /proxies/{group}` 生效再同步写盘；对非当前网络只更新其档案，
+待 underlying identity 切换时沿既有恢复事务应用。
 
 ## Config transaction
 

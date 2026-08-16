@@ -36,8 +36,30 @@ final class Ipv6EnvironmentMonitor {
             boolean ipv6Usable,
             boolean wifi,
             List<String> dnsServers,
-            String selectionIdentity
+            String selectionIdentity,
+            String selectionKind,
+            String selectionLabel
     ) {
+        State(
+                long networkHandle,
+                String linkSignature,
+                boolean ipv6Usable,
+                boolean wifi,
+                List<String> dnsServers,
+                String selectionIdentity
+        ) {
+            this(
+                    networkHandle,
+                    linkSignature,
+                    ipv6Usable,
+                    wifi,
+                    dnsServers,
+                    selectionIdentity,
+                    wifi ? "wifi" : "cellular",
+                    wifi ? "Wi-Fi" : "移动数据"
+            );
+        }
+
         State {
             if (networkHandle == 0L) {
                 linkSignature = "";
@@ -45,15 +67,19 @@ final class Ipv6EnvironmentMonitor {
                 wifi = false;
                 dnsServers = List.of();
                 selectionIdentity = "";
+                selectionKind = "";
+                selectionLabel = "";
             } else {
                 linkSignature = linkSignature == null ? "" : linkSignature;
                 dnsServers = dnsServers == null ? List.of() : List.copyOf(dnsServers);
                 selectionIdentity = selectionIdentity == null ? "" : selectionIdentity;
+                selectionKind = selectionKind == null ? "" : selectionKind;
+                selectionLabel = selectionLabel == null ? "" : selectionLabel;
             }
         }
 
         static State unavailable() {
-            return new State(0L, "", false, false, List.of(), "");
+            return new State(0L, "", false, false, List.of(), "", "", "");
         }
 
         boolean available() {
@@ -213,6 +239,29 @@ final class Ipv6EnvironmentMonitor {
         return stateOf(inspectBestAvailableNetwork());
     }
 
+    List<NetworkIdentityResolver.Profile> availableProfiles() {
+        List<NetworkIdentityResolver.Profile> profiles = new ArrayList<>();
+        try {
+            for (Network network : connectivityManager.getAllNetworks()) {
+                Snapshot snapshot = inspect(network);
+                if (snapshot.network() == null) {
+                    continue;
+                }
+                NetworkIdentityResolver.Profile profile =
+                        identityResolver.profile(snapshot.capabilities());
+                if (profile.available()
+                        && profiles.stream().noneMatch(
+                                existing -> existing.identity().equals(profile.identity())
+                        )) {
+                    profiles.add(profile);
+                }
+            }
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to enumerate network profiles", exception);
+        }
+        return List.copyOf(profiles);
+    }
+
     private void scheduleIfComplete() {
         synchronized (lock) {
             if (selectedCapabilities == null || selectedLinkProperties == null) {
@@ -323,13 +372,17 @@ final class Ipv6EnvironmentMonitor {
         LinkProperties properties = snapshot.linkProperties();
         boolean ipv6Usable =
                 hasGlobalIpv6Address(properties) && hasIpv6DefaultRoute(properties);
+        NetworkIdentityResolver.Profile profile =
+                identityResolver.profile(snapshot.capabilities());
         return new State(
                 snapshot.network().getNetworkHandle(),
                 linkSignature(properties),
                 ipv6Usable,
                 snapshot.capabilities().hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
                 dnsServers(properties),
-                identityResolver.resolve(snapshot.capabilities())
+                profile.identity(),
+                profile.kind(),
+                profile.label()
         );
     }
 

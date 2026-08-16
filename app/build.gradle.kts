@@ -24,8 +24,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 264
-        versionName = "0.7.151"
+        versionCode = 265
+        versionName = "0.7.152"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -104,6 +104,7 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.webkit:webkit:1.16.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }
 
 val fetchGeodata by tasks.registering(Exec::class) {

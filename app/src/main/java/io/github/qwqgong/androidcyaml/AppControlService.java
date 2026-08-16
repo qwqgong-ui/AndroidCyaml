@@ -51,6 +51,30 @@ public final class AppControlService extends Service implements RuntimeStateBus.
         }
 
         @Override
+        public void getNetworkSelectionCatalog(IOperationCallback callback) {
+            enforceSameAppCaller();
+            coordinator.networkSelectionCatalog(
+                    (success, message) -> complete(callback, success, message)
+            );
+        }
+
+        @Override
+        public void setNetworkSelection(
+                String identity,
+                String group,
+                String target,
+                IOperationCallback callback
+        ) {
+            enforceSameAppCaller();
+            coordinator.setNetworkSelection(
+                    identity,
+                    group,
+                    target,
+                    (success, message) -> complete(callback, success, message)
+            );
+        }
+
+        @Override
         public void setRuntimeOverrides(
                 String tunStack,
                 String processMatchingMode,

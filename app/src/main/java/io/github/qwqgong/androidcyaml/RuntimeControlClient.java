@@ -180,6 +180,44 @@ final class RuntimeControlClient {
         }
     }
 
+    void getNetworkSelectionCatalog(ResultCallback result) {
+        IAppControl current = service;
+        if (current == null) {
+            result.onComplete(false, "运行时控制服务暂不可用");
+            return;
+        }
+        try {
+            current.getNetworkSelectionCatalog(operationCallback(result));
+        } catch (RemoteException exception) {
+            disconnect();
+            result.onComplete(false, usefulMessage(exception));
+        }
+    }
+
+    void setNetworkSelection(
+            String identity,
+            String group,
+            String target,
+            ResultCallback result
+    ) {
+        IAppControl current = service;
+        if (current == null) {
+            result.onComplete(false, "运行时控制服务暂不可用");
+            return;
+        }
+        try {
+            current.setNetworkSelection(
+                    identity,
+                    group,
+                    target,
+                    operationCallback(result)
+            );
+        } catch (RemoteException exception) {
+            disconnect();
+            result.onComplete(false, usefulMessage(exception));
+        }
+    }
+
     void setRuntimeOverrides(
             TunStackMode tunStack,
             ProcessMatchingMode processMatchingMode,

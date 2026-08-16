@@ -9,8 +9,15 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.io.IOException;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -53,6 +60,8 @@ final class RuntimeCoordinator {
     private volatile boolean effectiveIpv6Enabled;
     private volatile boolean effectiveTcpConcurrent;
     private String activeSelectionIdentity = "";
+    private String activeSelectionKind = "";
+    private String activeSelectionLabel = "";
     private boolean activeSelectionReady;
 
     private RuntimeCoordinator(Context context) {
@@ -199,6 +208,35 @@ final class RuntimeCoordinator {
                         webViewXhttp,
                         lanWebUiPublic
                 ),
+                callback
+        ));
+    }
+
+    void networkSelectionCatalog(OperationCallback callback) {
+        executor.execute(() -> {
+            MihomoRuntime current = runtime;
+            if (current == null) {
+                postOperation(callback, false, "请先启动 VPN，再设置网络节点");
+                return;
+            }
+            try {
+                postOperation(callback, true, encodeNetworkSelectionCatalog(current));
+            } catch (IOException | JSONException exception) {
+                postOperation(callback, false, usefulMessage(exception));
+            }
+        });
+    }
+
+    void setNetworkSelection(
+            String identity,
+            String group,
+            String target,
+            OperationCallback callback
+    ) {
+        executor.execute(() -> setNetworkSelectionInternal(
+                identity,
+                group,
+                target,
                 callback
         ));
     }
@@ -452,6 +490,8 @@ final class RuntimeCoordinator {
             mainHandler.removeCallbacks(selectionRestoration);
             checkpointSelections();
             activeSelectionIdentity = state.selectionIdentity();
+            activeSelectionKind = state.selectionKind();
+            activeSelectionLabel = state.selectionLabel();
             activeSelectionReady = false;
         }
         underlyingNetworkState = state;
@@ -592,6 +632,12 @@ final class RuntimeCoordinator {
         activeSelectionIdentity = underlyingNetworkState == null
                 ? ""
                 : underlyingNetworkState.selectionIdentity();
+        activeSelectionKind = underlyingNetworkState == null
+                ? ""
+                : underlyingNetworkState.selectionKind();
+        activeSelectionLabel = underlyingNetworkState == null
+                ? ""
+                : underlyingNetworkState.selectionLabel();
         activeSelectionReady = false;
         restoreOrRememberSelections(current);
     }
@@ -603,13 +649,23 @@ final class RuntimeCoordinator {
                 || current == null || identity == null || identity.isBlank()) {
             return true;
         }
-        return saveSelections(current, identity);
+        return saveSelections(
+                current,
+                identity,
+                activeSelectionKind,
+                activeSelectionLabel
+        );
     }
 
-    private boolean saveSelections(MihomoRuntime current, String identity) {
+    private boolean saveSelections(
+            MihomoRuntime current,
+            String identity,
+            String kind,
+            String label
+    ) {
         try {
             Map<String, String> selections = current.selectorSelections();
-            return selectionStore.save(identity, selections);
+            return selectionStore.save(identity, kind, label, selections);
         } catch (IOException exception) {
             Log.w(TAG, "Unable to remember selector choices", exception);
             return false;
@@ -627,7 +683,12 @@ final class RuntimeCoordinator {
         }
         Map<String, String> remembered = selectionStore.selections(identity);
         if (remembered.isEmpty()) {
-            saveSelections(current, identity);
+            saveSelections(
+                    current,
+                    identity,
+                    activeSelectionKind,
+                    activeSelectionLabel
+            );
             activeSelectionReady = true;
             return;
         }
@@ -641,12 +702,164 @@ final class RuntimeCoordinator {
                             + ", skipped=" + result.skipped()
                             + ", failed=" + result.failed()
             );
+            // Rewrite legacy profiles that remembered every Selector so only
+            // the first configured user Selector remains on disk.
+            saveSelections(
+                    current,
+                    identity,
+                    activeSelectionKind,
+                    activeSelectionLabel
+            );
         } catch (IOException exception) {
             // A memory restore timeout must leave the core's current choices intact.
             Log.w(TAG, "Unable to restore selector choices for this network", exception);
         } finally {
             activeSelectionReady = true;
         }
+    }
+
+    private String encodeNetworkSelectionCatalog(MihomoRuntime current)
+            throws IOException, JSONException {
+        Map<String, NetworkSelectionStore.Profile> stored = new HashMap<>();
+        for (NetworkSelectionStore.Profile profile : selectionStore.profiles()) {
+            stored.put(profile.identity(), profile);
+        }
+
+        LinkedHashMap<String, NetworkIdentityResolver.Profile> profiles =
+                new LinkedHashMap<>();
+        if (activeSelectionIdentity != null && !activeSelectionIdentity.isBlank()) {
+            profiles.put(
+                    activeSelectionIdentity,
+                    new NetworkIdentityResolver.Profile(
+                            activeSelectionIdentity,
+                            activeSelectionKind,
+                            activeSelectionLabel
+                    )
+            );
+        }
+        for (NetworkIdentityResolver.Profile profile : networkMonitor.availableProfiles()) {
+            profiles.put(profile.identity(), profile);
+        }
+        for (NetworkSelectionStore.Profile profile : stored.values()) {
+            String kind = profile.kind();
+            String label = profile.label();
+            // v1 records predate human-readable metadata and cannot be mapped
+            // back to a Wi-Fi SSID or SIM without weakening the hashed identity.
+            // Keep them on disk for rollback, but do not expose opaque hashes as
+            // selectable networks in the UI.
+            if (label == null || label.isBlank()) {
+                continue;
+            }
+            profiles.putIfAbsent(
+                    profile.identity(),
+                    new NetworkIdentityResolver.Profile(profile.identity(), kind, label)
+            );
+        }
+        if (profiles.isEmpty()
+                && activeSelectionIdentity != null
+                && !activeSelectionIdentity.isBlank()) {
+            profiles.put(
+                    activeSelectionIdentity,
+                    new NetworkIdentityResolver.Profile(
+                            activeSelectionIdentity,
+                            activeSelectionKind,
+                            activeSelectionLabel
+                    )
+            );
+        }
+
+        JSONArray encodedProfiles = new JSONArray();
+        for (NetworkIdentityResolver.Profile profile : profiles.values()) {
+            NetworkSelectionStore.Profile storedProfile = stored.get(profile.identity());
+            Map<String, String> selections = storedProfile == null
+                    ? Map.of()
+                    : storedProfile.selections();
+            if (selections.isEmpty()
+                    && profile.identity().equals(activeSelectionIdentity)) {
+                selections = current.selectorSelections();
+            }
+            JSONObject encoded = new JSONObject();
+            encoded.put("identity", profile.identity());
+            encoded.put("kind", profile.kind());
+            encoded.put("label", profile.label());
+            encoded.put("current", profile.identity().equals(activeSelectionIdentity));
+            encoded.put("groups", current.selectorCatalog(selections));
+            encodedProfiles.put(encoded);
+        }
+        return new JSONObject().put("profiles", encodedProfiles).toString();
+    }
+
+    private void setNetworkSelectionInternal(
+            String identity,
+            String group,
+            String target,
+            OperationCallback callback
+    ) {
+        if (identity == null || identity.isBlank()
+                || group == null || group.isBlank()
+                || target == null || target.isBlank()) {
+            postOperation(callback, false, "网络、策略组或节点为空");
+            return;
+        }
+        MihomoRuntime current = runtime;
+        if (current == null) {
+            postOperation(callback, false, "请先启动 VPN，再设置网络节点");
+            return;
+        }
+        try {
+            String kind = "";
+            String label = "";
+            for (NetworkIdentityResolver.Profile profile : networkMonitor.availableProfiles()) {
+                if (identity.equals(profile.identity())) {
+                    kind = profile.kind();
+                    label = profile.label();
+                    break;
+                }
+            }
+            Map<String, String> selections = new HashMap<>(selectionStore.selections(identity));
+            if (selections.isEmpty()) {
+                selections.putAll(current.selectorSelections());
+            }
+            // Building the catalog validates both the selector and its direct targets.
+            JSONObject groupCatalog = current.selectorCatalog(selections).optJSONObject(group);
+            if (groupCatalog == null || !catalogContains(groupCatalog, target)) {
+                throw new IOException("策略组或节点已不存在");
+            }
+            selections.put(group, target);
+            if (identity.equals(activeSelectionIdentity)) {
+                current.selectSelector(group, target);
+                kind = activeSelectionKind;
+                label = activeSelectionLabel;
+            }
+            if (!selectionStore.save(identity, kind, label, selections)) {
+                throw new IOException("节点选择无法写入设备存储");
+            }
+            if (identity.equals(activeSelectionIdentity)) {
+                activeSelectionReady = true;
+            }
+            postOperation(callback, true, "已为 " + nonBlank(label, "该网络")
+                    + " 设置 " + group + " → " + target);
+        } catch (IOException exception) {
+            postOperation(callback, false, usefulMessage(exception));
+        }
+    }
+
+    private static boolean catalogContains(JSONObject group, String target) {
+        JSONArray options = group.optJSONArray("options");
+        if (options == null) {
+            return false;
+        }
+        for (int index = 0; index < options.length(); index++) {
+            JSONObject option = options.optJSONObject(index);
+            if (option != null && target.equals(option.optString("name", ""))) {
+                return option.optBoolean("available", true);
+            }
+        }
+        return false;
+    }
+
+    private static String nonBlank(String preferred, String fallback) {
+        return preferred == null || preferred.isBlank() ? fallback : preferred;
     }
 
     private void failActiveService(String message) {
@@ -686,6 +899,8 @@ final class RuntimeCoordinator {
             runtime = null;
         }
         activeSelectionIdentity = "";
+        activeSelectionKind = "";
+        activeSelectionLabel = "";
         activeSelectionReady = false;
     }
 

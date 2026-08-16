@@ -41,6 +41,10 @@
     <string name="vpn_settings_failed">无法打开系统 VPN 设置</string>
     <string name="vpn_always_on_controlled">始终开启 VPN 由系统设置控制；请从“VPN 系统设置”中关闭</string>
     <string name="runtime_overrides">覆写面板</string>
+    <string name="network_nodes">按网络选择节点</string>
+    <string name="network_nodes_loading">正在读取每个网络的节点…</string>
+    <string name="network_nodes_title">选择网络</string>
+    <string name="network_targets_title">%1$s · 选择节点</string>
     <string name="override_show_help">展开说明</string>
     <string name="override_hide_help">收起说明</string>
     <string name="override_tun_stack">TUN 栈</string>

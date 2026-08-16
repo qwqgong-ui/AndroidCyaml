@@ -95,6 +95,7 @@ type embeddedOptions struct {
 
 type startPayload struct {
 	ControllerSecret string `json:"controllerSecret"`
+	PrimarySelector  string `json:"primarySelector"`
 }
 
 type tunSpec struct {
@@ -218,6 +219,15 @@ func AndroidCyamlStart(
 	if cfg == nil || cfg.General == nil || cfg.Controller == nil {
 		return respond(nil, errors.New("AndroidCyaml received an incomplete mihomo configuration"))
 	}
+	configuration, err := os.ReadFile(configPath)
+	if err != nil {
+		return respond(nil, fmt.Errorf("read selector configuration: %w", err))
+	}
+	rawCfg, err := config.UnmarshalRawConfig(configuration)
+	if err != nil {
+		return respond(nil, fmt.Errorf("parse selector configuration: %w", err))
+	}
+	primarySelector := firstConfiguredSelector(rawCfg)
 
 	logLevelName := strings.ToLower(strings.TrimSpace(C.GoString(logLevelValue)))
 	logLevel, found := MLog.LogLevelMapping[logLevelName]
@@ -243,7 +253,10 @@ func AndroidCyamlStart(
 	if err != nil {
 		return respond(nil, err)
 	}
-	payload, err := json.Marshal(startPayload{ControllerSecret: cfg.Controller.Secret})
+	payload, err := json.Marshal(startPayload{
+		ControllerSecret: cfg.Controller.Secret,
+		PrimarySelector:  primarySelector,
+	})
 	if err != nil {
 		return respond(nil, fmt.Errorf("encode controller credentials: %w", err))
 	}

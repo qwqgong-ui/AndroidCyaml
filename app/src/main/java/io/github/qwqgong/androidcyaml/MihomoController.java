@@ -16,6 +16,7 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -38,6 +39,11 @@ final class MihomoController {
     private final String listenerHost;
     private final int port;
     private String secret = "";
+    private String primarySelector = "";
+
+    void setPrimarySelector(String name) {
+        primarySelector = name == null ? "" : name.trim();
+    }
 
     private MihomoController(String listenerHost, int port) {
         this.listenerHost = listenerHost;
@@ -135,6 +141,9 @@ final class MihomoController {
         Iterator<String> names = proxies.keys();
         while (names.hasNext()) {
             String name = names.next();
+            if (!name.equals(primarySelector)) {
+                continue;
+            }
             JSONObject proxy = proxies.optJSONObject(name);
             if (!isSelector(proxy)) {
                 continue;
@@ -145,6 +154,124 @@ final class MihomoController {
             }
         }
         return Map.copyOf(selections);
+    }
+
+    JSONObject selectorCatalog(Map<String, String> overrides) throws IOException {
+        if (primarySelector.isBlank()) {
+            throw new IOException("config.yaml 的第一个策略组不是 Selector");
+        }
+        JSONObject all = selectorCatalog(
+                proxySnapshot(),
+                overrides == null ? Map.of() : overrides
+        );
+        JSONObject primary = all.optJSONObject(primarySelector);
+        if (primary == null) {
+            throw new IOException("第一个 Selector 策略组已不存在：" + primarySelector);
+        }
+        try {
+            return new JSONObject().put(primarySelector, primary);
+        } catch (JSONException impossible) {
+            throw new AssertionError("Unable to encode primary selector", impossible);
+        }
+    }
+
+    void selectSelector(String group, String target) throws IOException {
+        if (!group.equals(primarySelector)) {
+            throw new IOException("只允许设置 config.yaml 的第一个 Selector 策略组");
+        }
+        JSONObject proxies = proxySnapshot();
+        JSONObject selector = proxies.optJSONObject(group);
+        if (!isSelector(selector) || !containsTarget(selector, target)) {
+            throw new IOException("策略组或目标已不存在");
+        }
+        if (!isAvailable(proxies, target)) {
+            throw new IOException("目标节点当前不可用");
+        }
+        selectProxy(group, target);
+    }
+
+    static JSONObject selectorCatalog(
+            JSONObject proxies,
+            Map<String, String> overrides
+    ) throws IOException {
+        try {
+            JSONObject result = new JSONObject();
+            java.util.List<String> names = new java.util.ArrayList<>();
+            Iterator<String> keys = proxies.keys();
+            while (keys.hasNext()) {
+                String name = keys.next();
+                if (isSelector(proxies.optJSONObject(name))) {
+                    names.add(name);
+                }
+            }
+            names.sort(String::compareTo);
+            for (String name : names) {
+                JSONObject selector = proxies.optJSONObject(name);
+                String selected = overrides.getOrDefault(
+                        name,
+                        selector.optString("now", "")
+                );
+                if (!containsTarget(selector, selected)) {
+                    selected = selector.optString("now", "");
+                }
+                JSONObject encoded = new JSONObject();
+                encoded.put("selected", selected);
+                encoded.put(
+                        "effective",
+                        effectiveNode(proxies, selected, overrides, new HashSet<>())
+                );
+                JSONArray options = new JSONArray();
+                JSONArray all = selector.optJSONArray("all");
+                if (all != null) {
+                    for (int index = 0; index < all.length(); index++) {
+                        String target = all.optString(index, "");
+                        if (target.isBlank()) {
+                            continue;
+                        }
+                        JSONObject option = new JSONObject();
+                        option.put("name", target);
+                        option.put(
+                                "effective",
+                                effectiveNode(proxies, target, overrides, new HashSet<>())
+                        );
+                        option.put("available", isAvailable(proxies, target));
+                        options.put(option);
+                    }
+                }
+                encoded.put("options", options);
+                result.put(name, encoded);
+            }
+            return result;
+        } catch (JSONException exception) {
+            throw new IOException("无法生成策略节点目录", exception);
+        }
+    }
+
+    private static String effectiveNode(
+            JSONObject proxies,
+            String name,
+            Map<String, String> overrides,
+            Set<String> visited
+    ) {
+        if (name == null || name.isBlank() || !visited.add(name)) {
+            return name == null ? "" : name;
+        }
+        JSONObject proxy = proxies.optJSONObject(name);
+        if (proxy == null) {
+            return name;
+        }
+        String type = proxy.optString("type", "").replace("-", "")
+                .toLowerCase(java.util.Locale.ROOT);
+        if (!isSelector(proxy) && !AUTOMATIC_PROXY_TYPES.contains(type)) {
+            return name;
+        }
+        String next = isSelector(proxy)
+                ? overrides.getOrDefault(name, proxy.optString("now", ""))
+                : proxy.optString("now", "");
+        if (next.isBlank()) {
+            return name;
+        }
+        return effectiveNode(proxies, next, overrides, visited);
     }
 
     SelectionRestoreResult restoreSelectorSelections(Map<String, String> remembered)
@@ -158,6 +285,10 @@ final class MihomoController {
         int skipped = 0;
         int failed = 0;
         for (Map.Entry<String, String> selection : new TreeMap<>(remembered).entrySet()) {
+            if (!selection.getKey().equals(primarySelector)) {
+                skipped++;
+                continue;
+            }
             JSONObject selector = proxies.optJSONObject(selection.getKey());
             if (!isSelector(selector)) {
                 skipped++;

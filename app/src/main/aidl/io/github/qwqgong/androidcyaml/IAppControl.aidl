@@ -9,6 +9,13 @@ interface IAppControl {
     void unregisterCallback(IControlCallback callback);
     void restartRuntime(IOperationCallback callback);
     void importConfig(in Uri source, IOperationCallback callback);
+    void getNetworkSelectionCatalog(IOperationCallback callback);
+    void setNetworkSelection(
+            String identity,
+            String group,
+            String target,
+            IOperationCallback callback
+    );
     void setRuntimeOverrides(
             String tunStack,
             String processMatchingMode,

@@ -78,6 +78,7 @@ final class MihomoNative {
         if (payload == null || !payload.has("controllerSecret")) {
             throw new IOException("mihomo 未返回控制器鉴权信息");
         }
+        controller.setPrimarySelector(payload.optString("primarySelector", ""));
         return payload.optString("controllerSecret", "");
     }
 

@@ -3,6 +3,8 @@ package io.github.qwqgong.androidcyaml;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
+import org.json.JSONObject;
+
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
@@ -124,6 +126,20 @@ final class MihomoRuntime implements AutoCloseable {
             return Map.of();
         }
         return controller.selectorSelections();
+    }
+
+    JSONObject selectorCatalog(Map<String, String> overrides) throws IOException {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            throw new IOException("VPN 未启动");
+        }
+        return controller.selectorCatalog(overrides);
+    }
+
+    void selectSelector(String group, String target) throws IOException {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            throw new IOException("VPN 未启动");
+        }
+        controller.selectSelector(group, target);
     }
 
     MihomoController.SelectionRestoreResult restoreSelectorSelections(

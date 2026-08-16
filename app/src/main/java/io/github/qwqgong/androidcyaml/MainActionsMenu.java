@@ -14,6 +14,8 @@ final class MainActionsMenu {
 
         void onOpenRuntimeOverrides();
 
+        void onOpenNetworkNodes();
+
         void onOpenVpnSettings();
 
         void onAutoStartChanged(boolean enabled);
@@ -27,6 +29,7 @@ final class MainActionsMenu {
     private static final int VPN_SETTINGS = 4;
     private static final int AUTO_START = 5;
     private static final int HIDE_RECENTS = 6;
+    private static final int NETWORK_NODES = 7;
 
     private MainActionsMenu() {}
 
@@ -42,11 +45,12 @@ final class MainActionsMenu {
         menu.add(Menu.NONE, UPLOAD, 0, R.string.upload_config);
         menu.add(Menu.NONE, RESTART, 1, R.string.restart_core);
         menu.add(Menu.NONE, RUNTIME_OVERRIDES, 2, R.string.runtime_overrides);
-        menu.add(Menu.NONE, VPN_SETTINGS, 3, R.string.vpn_system_settings);
-        menu.add(Menu.NONE, AUTO_START, 4, R.string.auto_start_vpn)
+        menu.add(Menu.NONE, NETWORK_NODES, 3, R.string.network_nodes);
+        menu.add(Menu.NONE, VPN_SETTINGS, 4, R.string.vpn_system_settings);
+        menu.add(Menu.NONE, AUTO_START, 5, R.string.auto_start_vpn)
                 .setCheckable(true)
                 .setChecked(autoStartEnabled);
-        menu.add(Menu.NONE, HIDE_RECENTS, 5, R.string.hide_from_recents)
+        menu.add(Menu.NONE, HIDE_RECENTS, 6, R.string.hide_from_recents)
                 .setCheckable(true)
                 .setChecked(hiddenFromRecents);
         popup.setOnMenuItemClickListener(item -> handle(item, listener));
@@ -58,6 +62,7 @@ final class MainActionsMenu {
             case UPLOAD -> listener.onUploadConfig();
             case RESTART -> listener.onRestartRuntime();
             case RUNTIME_OVERRIDES -> listener.onOpenRuntimeOverrides();
+            case NETWORK_NODES -> listener.onOpenNetworkNodes();
             case VPN_SETTINGS -> listener.onOpenVpnSettings();
             case AUTO_START -> {
                 boolean enabled = !item.isChecked();

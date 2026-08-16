@@ -18,6 +18,18 @@ import java.util.Locale;
 
 /** Builds privacy-preserving identities for validated physical networks. */
 final class NetworkIdentityResolver {
+    record Profile(String identity, String kind, String label) {
+        Profile {
+            identity = identity == null ? "" : identity;
+            kind = kind == null ? "" : kind;
+            label = label == null ? "" : label;
+        }
+
+        boolean available() {
+            return !identity.isBlank();
+        }
+    }
+
     private static final String REDACTED_BSSID = "02:00:00:00:00:00";
 
     private final Context context;
@@ -27,43 +39,48 @@ final class NetworkIdentityResolver {
     }
 
     String resolve(NetworkCapabilities capabilities) {
+        return profile(capabilities).identity();
+    }
+
+    Profile profile(NetworkCapabilities capabilities) {
         if (capabilities == null) {
-            return "";
+            return new Profile("", "", "");
         }
         try {
             if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                return wifiIdentity(capabilities);
+                return wifiProfile(capabilities);
             }
             if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                return cellularIdentity(capabilities);
+                return cellularProfile(capabilities);
             }
         } catch (RuntimeException ignored) {
             // Permission, telephony, and Wi-Fi services may change during a handover.
         }
-        return "";
+        return new Profile("", "", "");
     }
 
-    private String wifiIdentity(NetworkCapabilities capabilities) {
+    private Profile wifiProfile(NetworkCapabilities capabilities) {
         if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 != PackageManager.PERMISSION_GRANTED) {
-            return "";
+            return new Profile("", "wifi", "Wi-Fi");
         }
         Object transportInfo = capabilities.getTransportInfo();
         if (!(transportInfo instanceof WifiInfo wifiInfo)) {
-            return "";
+            return new Profile("", "wifi", "Wi-Fi");
         }
         String ssid = normalizeSsid(wifiInfo.getSSID());
         String bssid = normalizeBssid(wifiInfo.getBSSID());
         if (ssid.isEmpty() && bssid.isEmpty()) {
-            return "";
+            return new Profile("", "wifi", "Wi-Fi");
         }
-        return wifiFingerprint(ssid, bssid);
+        String name = !ssid.isEmpty() ? ssid : bssid;
+        return new Profile(wifiFingerprint(ssid, bssid), "wifi", "Wi-Fi · " + name);
     }
 
-    private String cellularIdentity(NetworkCapabilities capabilities) {
+    private Profile cellularProfile(NetworkCapabilities capabilities) {
         TelephonyManager base = context.getSystemService(TelephonyManager.class);
         if (base == null) {
-            return "";
+            return new Profile("", "cellular", "移动数据");
         }
         int subscriptionId = subscriptionId(capabilities);
         TelephonyManager telephony = SubscriptionManager.isValidSubscriptionId(subscriptionId)
@@ -76,9 +93,19 @@ final class NetworkIdentityResolver {
                 && operator.isEmpty()
                 && carrierName.isEmpty()
                 && carrierId < 0) {
-            return "";
+            return new Profile("", "cellular", "移动数据");
         }
-        return cellularFingerprint(subscriptionId, operator, carrierId, carrierName);
+        String name = !carrierName.isEmpty() ? carrierName : operator;
+        if (name.isEmpty()) {
+            name = SubscriptionManager.isValidSubscriptionId(subscriptionId)
+                    ? "SIM " + subscriptionId
+                    : "当前 SIM";
+        }
+        return new Profile(
+                cellularFingerprint(subscriptionId, operator, carrierId, carrierName),
+                "cellular",
+                "移动数据 · " + name
+        );
     }
 
     private static int subscriptionId(NetworkCapabilities capabilities) {
