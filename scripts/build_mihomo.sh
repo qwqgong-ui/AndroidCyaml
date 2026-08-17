@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
-readonly MIHOMO_COMMIT="cbb33a0ba7829801d16b19322e945f1e158e4fd9"
+readonly MIHOMO_COMMIT="3d8a5065daa0187313ec75204f7521f60eb8ecdf"
 readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
 readonly BUILD_RECIPE_VERSION="22"
