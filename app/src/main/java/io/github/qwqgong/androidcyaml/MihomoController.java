@@ -29,6 +29,8 @@ final class MihomoController {
     private static final String PUBLIC_HOST = "0.0.0.0";
     private static final int PREFERRED_PORT = 17_890;
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
+    private static final int SELECTION_APPLY_ATTEMPTS = 3;
+    private static final long SELECTION_VERIFY_DELAY_MILLIS = 100L;
     private static final Set<String> AUTOMATIC_PROXY_TYPES = Set.of(
             "urltest",
             "fallback",
@@ -187,7 +189,7 @@ final class MihomoController {
         if (!isAvailable(proxies, target)) {
             throw new IOException("目标节点当前不可用");
         }
-        selectProxy(group, target);
+        selectProxyAndVerify(group, target);
     }
 
     static JSONObject selectorCatalog(
@@ -295,22 +297,31 @@ final class MihomoController {
                 continue;
             }
             String target = selection.getValue();
+            boolean usedFallback = false;
             if (!containsTarget(selector, target) || !isAvailable(proxies, target)) {
                 target = automaticFallback(selector, proxies);
                 if (target.isBlank()) {
                     skipped++;
                     continue;
                 }
-                fallback++;
-            } else {
-                restored++;
+                usedFallback = true;
             }
             if (target.equals(selector.optString("now", ""))) {
+                if (usedFallback) {
+                    fallback++;
+                } else {
+                    restored++;
+                }
                 continue;
             }
             try {
-                selectProxy(selection.getKey(), target);
+                selectProxyAndVerify(selection.getKey(), target);
                 selector.put("now", target);
+                if (usedFallback) {
+                    fallback++;
+                } else {
+                    restored++;
+                }
             } catch (IOException | JSONException exception) {
                 failed++;
             }
@@ -372,6 +383,40 @@ final class MihomoController {
                 connection.disconnect();
             }
         }
+    }
+
+    /**
+     * A successful PUT only means the controller accepted the request. During
+     * an underlying-network handover the core can concurrently reset its
+     * persistent state, so the accepted selection may be lost. Always read
+     * the Selector back and retry before reporting a background restore as
+     * successful.
+     */
+    private void selectProxyAndVerify(String group, String target) throws IOException {
+        IOException lastFailure = null;
+        for (int attempt = 0; attempt < SELECTION_APPLY_ATTEMPTS; attempt++) {
+            try {
+                selectProxy(group, target);
+                JSONObject selector = proxySnapshot().optJSONObject(group);
+                if (selector != null && target.equals(selector.optString("now", ""))) {
+                    return;
+                }
+                lastFailure = new IOException("策略组切换未生效：" + group + " -> " + target);
+            } catch (IOException exception) {
+                lastFailure = exception;
+            }
+            if (attempt + 1 < SELECTION_APPLY_ATTEMPTS) {
+                try {
+                    Thread.sleep(SELECTION_VERIFY_DELAY_MILLIS);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("策略组切换验证被中断", exception);
+                }
+            }
+        }
+        throw lastFailure == null
+                ? new IOException("策略组切换未生效")
+                : lastFailure;
     }
 
     private static boolean isSelector(JSONObject proxy) {
