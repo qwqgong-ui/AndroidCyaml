@@ -277,16 +277,40 @@ final class Ipv6EnvironmentMonitor {
     }
 
     private void evaluateAndNotify() {
-        State state;
+        Snapshot callbackSnapshot;
+        synchronized (lock) {
+            callbackSnapshot = new Snapshot(
+                    selectedNetwork,
+                    selectedCapabilities,
+                    selectedLinkProperties
+            );
+        }
+
+        State state = stateOf(callbackSnapshot);
+        Snapshot fallback = state.available() ? null : inspectBestAvailableNetwork();
+        if (fallback != null && fallback.network() != null) {
+            state = stateOf(fallback);
+        }
+
         Listener current;
         synchronized (lock) {
-            state = selectedNetwork == null
-                    ? State.unavailable()
-                    : stateOf(new Snapshot(
-                            selectedNetwork,
+            if (!Objects.equals(selectedNetwork, callbackSnapshot.network())
+                    || !Objects.equals(
                             selectedCapabilities,
-                            selectedLinkProperties
-                    ));
+                            callbackSnapshot.capabilities()
+                    )
+                    || !Objects.equals(
+                            selectedLinkProperties,
+                            callbackSnapshot.linkProperties()
+                    )) {
+                scheduleIfComplete();
+                return;
+            }
+            if (state.available() && fallback != null) {
+                selectedNetwork = fallback.network();
+                selectedCapabilities = fallback.capabilities();
+                selectedLinkProperties = fallback.linkProperties();
+            }
             if (state.equals(lastState)) {
                 return;
             }
