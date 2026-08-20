@@ -111,6 +111,7 @@ final class Ipv6EnvironmentMonitor {
     private final NetworkRequest request = new NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             .build();
     private final ConnectivityManager.NetworkCallback callback =
             new ConnectivityManager.NetworkCallback(
@@ -118,16 +119,24 @@ final class Ipv6EnvironmentMonitor {
             ) {
                 @Override
                 public void onAvailable(Network network) {
-                    synchronized (lock) {
-                        selectedNetwork = network;
-                        selectedCapabilities = null;
-                        selectedLinkProperties = null;
+                    NetworkCapabilities capabilities =
+                            connectivityManager.getNetworkCapabilities(network);
+                    LinkProperties properties = connectivityManager.getLinkProperties(network);
+                    if (!isUsableUnderlying(capabilities) || properties == null) {
+                        return;
                     }
-                    // A backgrounded process can receive onAvailable before
-                    // the corresponding capability/link callbacks, or have
-                    // those callbacks coalesced. Re-inspect after a short
-                    // debounce so the previous mobile network is not kept as
-                    // the selector-memory identity when Wi-Fi takes over.
+                    synchronized (lock) {
+                        if (selectedNetwork != null
+                                && !network.equals(selectedNetwork)
+                                && isUsableUnderlying(selectedCapabilities)
+                                && transportRank(capabilities)
+                                        <= transportRank(selectedCapabilities)) {
+                            return;
+                        }
+                        selectedNetwork = network;
+                        selectedCapabilities = capabilities;
+                        selectedLinkProperties = properties;
+                    }
                     scheduleEvaluation(READY_DEBOUNCE_MILLIS);
                 }
 
@@ -166,6 +175,16 @@ final class Ipv6EnvironmentMonitor {
                         selectedCapabilities = null;
                         selectedLinkProperties = null;
                     }
+                    Snapshot fallback = inspectBestAvailableNetwork();
+                    if (fallback.network() != null) {
+                        synchronized (lock) {
+                            if (selectedNetwork == null) {
+                                selectedNetwork = fallback.network();
+                                selectedCapabilities = fallback.capabilities();
+                                selectedLinkProperties = fallback.linkProperties();
+                            }
+                        }
+                    }
                     scheduleEvaluation(LOST_HANDOVER_GRACE_MILLIS);
                 }
             };
@@ -190,7 +209,7 @@ final class Ipv6EnvironmentMonitor {
             listener = nextListener;
         }
         if (!registered) {
-            connectivityManager.registerBestMatchingNetworkCallback(request, callback, handler);
+            connectivityManager.registerNetworkCallback(request, callback, handler);
             registered = true;
         }
 
@@ -292,15 +311,6 @@ final class Ipv6EnvironmentMonitor {
         }
 
         State state = stateOf(callbackSnapshot);
-        // The best-matching callback is normally authoritative, but Android
-        // may coalesce its detail callbacks while this VPN process is in the
-        // background. Reconcile with a synchronous physical-network snapshot
-        // on every scheduled evaluation instead of retaining an old callback
-        // selection (commonly cellular) until it is lost.
-        Snapshot currentBest = inspectBestAvailableNetwork();
-        if (currentBest.network() != null) {
-            state = stateOf(currentBest);
-        }
 
         Listener current;
         synchronized (lock) {
@@ -315,11 +325,6 @@ final class Ipv6EnvironmentMonitor {
                     )) {
                 scheduleIfComplete();
                 return;
-            }
-            if (currentBest.network() != null) {
-                selectedNetwork = currentBest.network();
-                selectedCapabilities = currentBest.capabilities();
-                selectedLinkProperties = currentBest.linkProperties();
             }
             if (state.equals(lastState)) {
                 return;
