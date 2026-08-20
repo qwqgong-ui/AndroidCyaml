@@ -123,7 +123,12 @@ final class Ipv6EnvironmentMonitor {
                         selectedCapabilities = null;
                         selectedLinkProperties = null;
                     }
-                    handler.removeCallbacks(evaluation);
+                    // A backgrounded process can receive onAvailable before
+                    // the corresponding capability/link callbacks, or have
+                    // those callbacks coalesced. Re-inspect after a short
+                    // debounce so the previous mobile network is not kept as
+                    // the selector-memory identity when Wi-Fi takes over.
+                    scheduleEvaluation(READY_DEBOUNCE_MILLIS);
                 }
 
                 @Override
@@ -287,9 +292,14 @@ final class Ipv6EnvironmentMonitor {
         }
 
         State state = stateOf(callbackSnapshot);
-        Snapshot fallback = state.available() ? null : inspectBestAvailableNetwork();
-        if (fallback != null && fallback.network() != null) {
-            state = stateOf(fallback);
+        // The best-matching callback is normally authoritative, but Android
+        // may coalesce its detail callbacks while this VPN process is in the
+        // background. Reconcile with a synchronous physical-network snapshot
+        // on every scheduled evaluation instead of retaining an old callback
+        // selection (commonly cellular) until it is lost.
+        Snapshot currentBest = inspectBestAvailableNetwork();
+        if (currentBest.network() != null) {
+            state = stateOf(currentBest);
         }
 
         Listener current;
@@ -306,10 +316,10 @@ final class Ipv6EnvironmentMonitor {
                 scheduleIfComplete();
                 return;
             }
-            if (state.available() && fallback != null) {
-                selectedNetwork = fallback.network();
-                selectedCapabilities = fallback.capabilities();
-                selectedLinkProperties = fallback.linkProperties();
+            if (currentBest.network() != null) {
+                selectedNetwork = currentBest.network();
+                selectedCapabilities = currentBest.capabilities();
+                selectedLinkProperties = currentBest.linkProperties();
             }
             if (state.equals(lastState)) {
                 return;
