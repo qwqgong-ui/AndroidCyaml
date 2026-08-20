@@ -162,8 +162,11 @@ AndroidCyaml 会按物理网络身份只记忆 config.yaml 中第一个 `Selecto
 Selector 的直接目标和递归解析后的实际出口节点，例如 `🌐：🇯🇵⚡ → x03-jp`，避免把自动策略组名
 误报为节点名。未曾连接的 Wi-Fi 不会由应用扫描或预建档案。
 
-Wi-Fi SSID/BSSID 受 Android 位置权限保护。用户拒绝时，VPN 仍正常运行，
-但不会对无法稳定识别的 Wi-Fi 保存选择；蜂窝网络识别不再要求电话状态权限。
+Wi-Fi SSID/BSSID 受 Android 位置权限保护。从前台界面正常启动 VPN 且已授予位置权限时，
+VPN 前台服务会保持识别 Wi-Fi 所需的 location 服务类型，以便退到后台后仍能恢复该网络的节点。
+用户拒绝位置权限，或 always-on/后台冷启动不允许 location 服务权限时，VPN 仍以
+system-exempted 类型正常运行，但不会对无法稳定识别的 Wi-Fi 保存或恢复选择；蜂窝网络
+识别不再要求电话状态权限。
 
 ### 日志与局域网 WebUI
 

@@ -118,11 +118,11 @@ final class Ipv6EnvironmentMonitor {
                     ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO
             ) {
                 @Override
-                public void onAvailable(Network network) {
-                    NetworkCapabilities capabilities =
-                            connectivityManager.getNetworkCapabilities(network);
-                    LinkProperties properties = connectivityManager.getLinkProperties(network);
-                    if (!isUsableUnderlying(capabilities) || properties == null) {
+                public void onCapabilitiesChanged(
+                        Network network,
+                        NetworkCapabilities capabilities
+                ) {
+                    if (!isUsableUnderlying(capabilities)) {
                         return;
                     }
                     synchronized (lock) {
@@ -135,21 +135,7 @@ final class Ipv6EnvironmentMonitor {
                         }
                         selectedNetwork = network;
                         selectedCapabilities = capabilities;
-                        selectedLinkProperties = properties;
-                    }
-                    scheduleEvaluation(READY_DEBOUNCE_MILLIS);
-                }
-
-                @Override
-                public void onCapabilitiesChanged(
-                        Network network,
-                        NetworkCapabilities capabilities
-                ) {
-                    synchronized (lock) {
-                        if (!network.equals(selectedNetwork)) {
-                            return;
-                        }
-                        selectedCapabilities = capabilities;
+                        selectedLinkProperties = connectivityManager.getLinkProperties(network);
                     }
                     scheduleIfComplete();
                 }

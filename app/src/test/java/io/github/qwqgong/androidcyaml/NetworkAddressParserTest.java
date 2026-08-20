@@ -1,5 +1,7 @@
 package io.github.qwqgong.androidcyaml;
 
+import android.content.pm.ServiceInfo;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
@@ -114,5 +116,30 @@ public final class NetworkAddressParserTest {
         assertFalse(identity.equals(NetworkIdentityResolver.cellularFingerprint(
                 2, "46000", 1435, "Carrier"
         )));
+    }
+
+    @Test
+    public void foregroundVpnStartKeepsWifiIdentityLocationAccessWhenGranted() {
+        assertEquals(
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                        | ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
+                AndroidVpnService.foregroundServiceTypes(true, true, true)
+        );
+    }
+
+    @Test
+    public void coarseOnlyBackgroundOrDeniedStartDoesNotRequireLocationServiceAccess() {
+        assertEquals(
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                AndroidVpnService.foregroundServiceTypes(false, true, true)
+        );
+        assertEquals(
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                AndroidVpnService.foregroundServiceTypes(false, false, true)
+        );
+        assertEquals(
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
+                AndroidVpnService.foregroundServiceTypes(true, true, false)
+        );
     }
 }

@@ -88,6 +88,7 @@ final class VpnUiController {
             activity.startForegroundService(
                     new Intent(activity, AndroidVpnService.class)
                             .setAction(AndroidVpnService.ACTION_START)
+                            .putExtra(AndroidVpnService.EXTRA_FOREGROUND_START, true)
             );
             listener.onToggleRequested(true);
         } catch (RuntimeException exception) {

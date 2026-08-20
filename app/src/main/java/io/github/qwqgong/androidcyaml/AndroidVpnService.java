@@ -4,8 +4,10 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.graphics.drawable.Icon;
 import android.net.VpnService;
@@ -18,6 +20,8 @@ public final class AndroidVpnService extends VpnService implements
             "io.github.qwqgong.androidcyaml.action.START_VPN";
     public static final String ACTION_STOP =
             "io.github.qwqgong.androidcyaml.action.STOP_VPN";
+    static final String EXTRA_FOREGROUND_START =
+            "io.github.qwqgong.androidcyaml.extra.FOREGROUND_START";
 
     private static final String TAG = "AndroidCyaml/VPN";
     private static final String NOTIFICATION_CHANNEL = "androidcyaml_vpn";
@@ -29,6 +33,8 @@ public final class AndroidVpnService extends VpnService implements
     private RuntimeCoordinator coordinator;
     private volatile boolean stopping;
     private volatile boolean foregroundActive;
+    private int activeForegroundServiceTypes =
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED;
 
     public static boolean isAlwaysOnMode() {
         return sharedAlwaysOn;
@@ -62,10 +68,15 @@ public final class AndroidVpnService extends VpnService implements
 
         stopping = false;
         try {
-            startForeground(
-                    NOTIFICATION_ID,
+            boolean foregroundStart = intent != null
+                    && intent.getBooleanExtra(EXTRA_FOREGROUND_START, false);
+            enterForeground(
                     buildNotification(getString(R.string.vpn_starting)),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                    foregroundServiceTypes(
+                            hasFineLocationPermission(),
+                            hasCoarseLocationPermission(),
+                            foregroundStart
+                    )
             );
             foregroundActive = true;
         } catch (RuntimeException exception) {
@@ -211,10 +222,52 @@ public final class AndroidVpnService extends VpnService implements
             startForeground(
                     NOTIFICATION_ID,
                     buildNotification(text),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                    activeForegroundServiceTypes
             );
         } catch (RuntimeException exception) {
             Log.w(TAG, "Unable to update foreground notification", exception);
         }
+    }
+
+    private void enterForeground(Notification notification, int serviceTypes) {
+        try {
+            startForeground(NOTIFICATION_ID, notification, serviceTypes);
+            activeForegroundServiceTypes = serviceTypes;
+        } catch (SecurityException locationFailure) {
+            if ((serviceTypes & ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) == 0) {
+                throw locationFailure;
+            }
+            Log.w(
+                    TAG,
+                    "Location foreground-service access unavailable; "
+                            + "continuing VPN without background Wi-Fi identity",
+                    locationFailure
+            );
+            activeForegroundServiceTypes =
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED;
+            startForeground(NOTIFICATION_ID, notification, activeForegroundServiceTypes);
+        }
+    }
+
+    private boolean hasFineLocationPermission() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean hasCoarseLocationPermission() {
+        return checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    static int foregroundServiceTypes(
+            boolean fineLocationGranted,
+            boolean coarseLocationGranted,
+            boolean foregroundStart
+    ) {
+        int serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED;
+        if (fineLocationGranted && foregroundStart) {
+            serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION;
+        }
+        return serviceTypes;
     }
 }
