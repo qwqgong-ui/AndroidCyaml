@@ -88,7 +88,6 @@ type nativeResponse struct {
 
 type embeddedOptions struct {
 	FileDescriptor  int
-	Stack           string
 	IPv6Enabled     bool
 	ProcessMatching string
 }
@@ -158,7 +157,6 @@ func AndroidCyamlValidate(homeValue, configValue *C.char) *C.char {
 func AndroidCyamlPrepareTun(
 	homeValue,
 	configValue,
-	stackValue *C.char,
 	processMatchingValue *C.char,
 	ipv6Value C.int,
 ) *C.char {
@@ -177,7 +175,6 @@ func AndroidCyamlPrepareTun(
 	}
 	payload, err := prepareEmbeddedConfig(cfg, embeddedOptions{
 		FileDescriptor:  -1,
-		Stack:           C.GoString(stackValue),
 		IPv6Enabled:     ipv6Value != 0,
 		ProcessMatching: C.GoString(processMatchingValue),
 	})
@@ -190,7 +187,6 @@ func AndroidCyamlStart(
 	configValue,
 	uiValue,
 	controllerValue,
-	stackValue,
 	logLevelValue,
 	processMatchingValue *C.char,
 	fileDescriptor,
@@ -246,7 +242,6 @@ func AndroidCyamlStart(
 	cfg.General.LogLevel = logLevel
 	_, err = prepareEmbeddedConfig(cfg, embeddedOptions{
 		FileDescriptor:  int(fileDescriptor),
-		Stack:           C.GoString(stackValue),
 		IPv6Enabled:     ipv6Value != 0,
 		ProcessMatching: C.GoString(processMatchingValue),
 	})
@@ -355,15 +350,6 @@ func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte,
 		return nil, errors.New("AndroidCyaml received an incomplete mihomo configuration")
 	}
 
-	stackName := strings.ToLower(strings.TrimSpace(options.Stack))
-	if stackName == "" {
-		stackName = "system"
-	}
-	stack, found := MC.StackTypeMapping[stackName]
-	if !found {
-		return nil, fmt.Errorf("unsupported Android TUN stack: %s", options.Stack)
-	}
-
 	tunConfig := &cfg.General.Tun
 	if len(tunConfig.RouteAddressSet) != 0 || len(tunConfig.RouteExcludeAddressSet) != 0 {
 		return nil, errors.New("Android VpnService does not support dynamic TUN route-address-set fields")
@@ -372,7 +358,7 @@ func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte,
 	originalAutoRoute := tunConfig.AutoRoute
 	tunConfig.Enable = true
 	tunConfig.Device = "AndroidCyaml"
-	tunConfig.Stack = stack
+	tunConfig.Stack = MC.TunSystem
 	tunConfig.MTU = embeddedMTU
 	tunConfig.GSO = false
 	tunConfig.GSOMaxSize = 0

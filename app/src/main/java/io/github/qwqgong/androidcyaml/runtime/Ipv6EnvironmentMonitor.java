@@ -15,7 +15,9 @@ import android.util.Log;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -107,6 +109,9 @@ final class Ipv6EnvironmentMonitor {
     private final NetworkIdentityResolver identityResolver;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Object lock = new Object();
+    private final Map<Long, Snapshot> callbackSnapshots = new LinkedHashMap<>();
+    private final UnderlyingNetworkCandidates callbackCandidates =
+            new UnderlyingNetworkCandidates();
     private final Runnable evaluation = this::evaluateAndNotify;
     private final NetworkRequest request = new NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -118,24 +123,36 @@ final class Ipv6EnvironmentMonitor {
                     ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO
             ) {
                 @Override
+                public void onAvailable(Network network) {
+                    synchronized (lock) {
+                        callbackCandidates.onAvailable(network.getNetworkHandle());
+                    }
+                }
+
+                @Override
                 public void onCapabilitiesChanged(
                         Network network,
                         NetworkCapabilities capabilities
                 ) {
                     if (!isUsableUnderlying(capabilities)) {
+                        removeCallbackCandidate(network);
                         return;
                     }
+                    LinkProperties properties = connectivityManager.getLinkProperties(network);
                     synchronized (lock) {
-                        if (selectedNetwork != null
-                                && !network.equals(selectedNetwork)
-                                && isUsableUnderlying(selectedCapabilities)
-                                && transportRank(capabilities)
-                                        <= transportRank(selectedCapabilities)) {
-                            return;
+                        long handle = network.getNetworkHandle();
+                        Snapshot previous = callbackSnapshots.get(handle);
+                        if (properties == null && previous != null) {
+                            properties = previous.linkProperties();
                         }
-                        selectedNetwork = network;
-                        selectedCapabilities = capabilities;
-                        selectedLinkProperties = connectivityManager.getLinkProperties(network);
+                        callbackSnapshots.put(
+                                handle,
+                                new Snapshot(network, capabilities, properties)
+                        );
+                        if (properties != null) {
+                            callbackCandidates.update(handle, transportRank(capabilities));
+                        }
+                        selectBestCallbackCandidateLocked();
                     }
                     scheduleIfComplete();
                 }
@@ -143,35 +160,26 @@ final class Ipv6EnvironmentMonitor {
                 @Override
                 public void onLinkPropertiesChanged(Network network, LinkProperties properties) {
                     synchronized (lock) {
-                        if (!network.equals(selectedNetwork)) {
-                            return;
+                        long handle = network.getNetworkHandle();
+                        Snapshot previous = callbackSnapshots.get(handle);
+                        NetworkCapabilities capabilities = previous == null
+                                ? null
+                                : previous.capabilities();
+                        callbackSnapshots.put(
+                                handle,
+                                new Snapshot(network, capabilities, properties)
+                        );
+                        if (isUsableUnderlying(capabilities)) {
+                            callbackCandidates.update(handle, transportRank(capabilities));
                         }
-                        selectedLinkProperties = properties;
+                        selectBestCallbackCandidateLocked();
                     }
                     scheduleIfComplete();
                 }
 
                 @Override
                 public void onLost(Network network) {
-                    synchronized (lock) {
-                        if (!network.equals(selectedNetwork)) {
-                            return;
-                        }
-                        selectedNetwork = null;
-                        selectedCapabilities = null;
-                        selectedLinkProperties = null;
-                    }
-                    Snapshot fallback = inspectBestAvailableNetwork();
-                    if (fallback.network() != null) {
-                        synchronized (lock) {
-                            if (selectedNetwork == null) {
-                                selectedNetwork = fallback.network();
-                                selectedCapabilities = fallback.capabilities();
-                                selectedLinkProperties = fallback.linkProperties();
-                            }
-                        }
-                    }
-                    scheduleEvaluation(LOST_HANDOVER_GRACE_MILLIS);
+                    removeCallbackCandidate(network);
                 }
             };
 
@@ -203,9 +211,8 @@ final class Ipv6EnvironmentMonitor {
         State initialState = stateOf(initial);
         synchronized (lock) {
             if (selectedNetwork == null && initial.network() != null) {
-                selectedNetwork = initial.network();
-                selectedCapabilities = initial.capabilities();
-                selectedLinkProperties = initial.linkProperties();
+                cacheCallbackSnapshotLocked(initial);
+                selectBestCallbackCandidateLocked();
             }
             lastState = initialState;
         }
@@ -227,6 +234,8 @@ final class Ipv6EnvironmentMonitor {
             selectedNetwork = null;
             selectedCapabilities = null;
             selectedLinkProperties = null;
+            callbackSnapshots.clear();
+            callbackCandidates.clear();
             lastState = null;
         }
     }
@@ -281,6 +290,20 @@ final class Ipv6EnvironmentMonitor {
         scheduleEvaluation(READY_DEBOUNCE_MILLIS);
     }
 
+    private void removeCallbackCandidate(Network network) {
+        boolean replacementAvailable;
+        synchronized (lock) {
+            long handle = network.getNetworkHandle();
+            callbackCandidates.onLost(handle);
+            callbackSnapshots.remove(handle);
+            selectBestCallbackCandidateLocked();
+            replacementAvailable = selectedNetwork != null;
+        }
+        scheduleEvaluation(
+                replacementAvailable ? READY_DEBOUNCE_MILLIS : LOST_HANDOVER_GRACE_MILLIS
+        );
+    }
+
     private void scheduleEvaluation(long delayMillis) {
         handler.removeCallbacks(evaluation);
         handler.postDelayed(evaluation, delayMillis);
@@ -288,15 +311,20 @@ final class Ipv6EnvironmentMonitor {
 
     private void evaluateAndNotify() {
         Snapshot callbackSnapshot;
+        UnderlyingNetworkCandidates.Exclusion exclusion;
         synchronized (lock) {
             callbackSnapshot = new Snapshot(
                     selectedNetwork,
                     selectedCapabilities,
                     selectedLinkProperties
             );
+            exclusion = callbackCandidates.exclusion();
         }
 
         State state = stateOf(callbackSnapshot);
+        Snapshot fallback = state.available()
+                ? new Snapshot(null, null, null)
+                : inspectBestAvailableNetwork(exclusion.networkHandle());
 
         Listener current;
         synchronized (lock) {
@@ -308,9 +336,23 @@ final class Ipv6EnvironmentMonitor {
                     || !Objects.equals(
                             selectedLinkProperties,
                             callbackSnapshot.linkProperties()
-                    )) {
+                    )
+                    || !exclusion.equals(callbackCandidates.exclusion())) {
                 scheduleIfComplete();
                 return;
+            }
+            if (fallback.network() != null
+                    && callbackCandidates.acceptsFallback(
+                            fallback.network().getNetworkHandle(),
+                            exclusion
+                    )) {
+                cacheCallbackSnapshotLocked(fallback);
+                selectBestCallbackCandidateLocked();
+                state = stateOf(new Snapshot(
+                        selectedNetwork,
+                        selectedCapabilities,
+                        selectedLinkProperties
+                ));
             }
             if (state.equals(lastState)) {
                 return;
@@ -324,18 +366,26 @@ final class Ipv6EnvironmentMonitor {
     }
 
     private Snapshot inspectBestAvailableNetwork() {
+        return inspectBestAvailableNetwork(0L);
+    }
+
+    private Snapshot inspectBestAvailableNetwork(long excludedNetworkHandle) {
         try {
             Network active = connectivityManager.getActiveNetwork();
             Snapshot activeSnapshot = inspect(active);
-            if (activeSnapshot.network() != null) {
+            if (activeSnapshot.network() != null
+                    && activeSnapshot.network().getNetworkHandle() != excludedNetworkHandle) {
                 return activeSnapshot;
             }
 
-            // This is only a synchronous startup fallback. The registered
-            // best-matching callback is authoritative once it delivers.
+            // Callback candidates are authoritative. This synchronous scan is
+            // only a startup/delayed-loss fallback for coalesced callbacks.
             Snapshot best = new Snapshot(null, null, null);
             int bestRank = Integer.MIN_VALUE;
             for (Network network : connectivityManager.getAllNetworks()) {
+                if (network.getNetworkHandle() == excludedNetworkHandle) {
+                    continue;
+                }
                 Snapshot candidate = inspect(network);
                 if (candidate.network() == null) {
                     continue;
@@ -351,6 +401,22 @@ final class Ipv6EnvironmentMonitor {
             Log.w(TAG, "Unable to inspect the underlying network", exception);
             return new Snapshot(null, null, null);
         }
+    }
+
+    private void cacheCallbackSnapshotLocked(Snapshot snapshot) {
+        long handle = snapshot.network().getNetworkHandle();
+        callbackSnapshots.put(handle, snapshot);
+        callbackCandidates.update(handle, transportRank(snapshot.capabilities()));
+    }
+
+    private void selectBestCallbackCandidateLocked() {
+        UnderlyingNetworkCandidates.Candidate best = callbackCandidates.best();
+        Snapshot snapshot = best == null
+                ? null
+                : callbackSnapshots.get(best.networkHandle());
+        selectedNetwork = snapshot == null ? null : snapshot.network();
+        selectedCapabilities = snapshot == null ? null : snapshot.capabilities();
+        selectedLinkProperties = snapshot == null ? null : snapshot.linkProperties();
     }
 
     private Snapshot inspect(Network network) {

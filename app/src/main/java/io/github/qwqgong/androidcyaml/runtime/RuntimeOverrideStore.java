@@ -50,7 +50,6 @@ final class RuntimeOverrideStore {
             }
         }
         return new RuntimeOverrideSettings(
-                TunStackMode.SYSTEM,
                 processMatchingMode,
                 preferences.getBoolean(IPV6_ENABLED, true),
                 logLevel,

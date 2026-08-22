@@ -17,7 +17,6 @@ interface IAppControl {
             IOperationCallback callback
     );
     void setRuntimeOverrides(
-            String tunStack,
             String processMatchingMode,
             boolean ipv6Enabled,
             String logLevel,

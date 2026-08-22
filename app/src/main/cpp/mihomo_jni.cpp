@@ -462,18 +462,15 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativePrepareTun(
         jclass,
         jstring home,
         jstring config_path,
-        jstring stack,
         jboolean ipv6_enabled,
         jstring process_matching_mode
 ) {
     std::string home_value = stringFromJava(env, home);
     std::string config_value = stringFromJava(env, config_path);
-    std::string stack_value = stringFromJava(env, stack);
     std::string process_matching_mode_value = stringFromJava(env, process_matching_mode);
     return stringFromNative(env, AndroidCyamlPrepareTun(
             const_cast<char*>(home_value.c_str()),
             const_cast<char*>(config_value.c_str()),
-            const_cast<char*>(stack_value.c_str()),
             const_cast<char*>(process_matching_mode_value.c_str()),
             ipv6_enabled == JNI_TRUE ? 1 : 0
     ));
@@ -598,7 +595,6 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
         jstring config_path,
         jstring ui_path,
         jstring controller_address,
-        jstring stack,
         jstring log_level,
         jint tun_file_descriptor,
         jboolean ipv6_enabled,
@@ -615,7 +611,6 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
     std::string config_value = stringFromJava(env, config_path);
     std::string ui_value = stringFromJava(env, ui_path);
     std::string controller_value = stringFromJava(env, controller_address);
-    std::string stack_value = stringFromJava(env, stack);
     std::string log_level_value = stringFromJava(env, log_level);
     std::string process_matching_mode_value = stringFromJava(env, process_matching_mode);
     return stringFromNative(env, AndroidCyamlStart(
@@ -623,7 +618,6 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
             const_cast<char*>(config_value.c_str()),
             const_cast<char*>(ui_value.c_str()),
             const_cast<char*>(controller_value.c_str()),
-            const_cast<char*>(stack_value.c_str()),
             const_cast<char*>(log_level_value.c_str()),
             const_cast<char*>(process_matching_mode_value.c_str()),
             static_cast<int>(tun_file_descriptor),

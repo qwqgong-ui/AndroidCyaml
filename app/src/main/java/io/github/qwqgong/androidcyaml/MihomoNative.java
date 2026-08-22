@@ -30,7 +30,6 @@ final class MihomoNative {
         JSONObject payload = requireSuccess(nativePrepareTun(
                 paths.home().getAbsolutePath(),
                 paths.config().getAbsolutePath(),
-                settings.tunStack().wireValue(),
                 ipv6Enabled,
                 settings.processMatchingMode().wireValue()
         ));
@@ -59,7 +58,6 @@ final class MihomoNative {
                     paths.config().getAbsolutePath(),
                     paths.ui().getAbsolutePath(),
                     controller.listenerAddress(),
-                    settings.tunStack().wireValue(),
                     settings.logLevel().wireValue(),
                     tunFileDescriptor,
                     ipv6Enabled,
@@ -151,7 +149,6 @@ final class MihomoNative {
     private static native String nativePrepareTun(
             String home,
             String configPath,
-            String stack,
             boolean ipv6Enabled,
             String processMatchingMode
     );
@@ -174,7 +171,6 @@ final class MihomoNative {
             String configPath,
             String uiPath,
             String controllerAddress,
-            String stack,
             String logLevel,
             int tunFileDescriptor,
             boolean ipv6Enabled,

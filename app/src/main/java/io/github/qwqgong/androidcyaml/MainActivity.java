@@ -45,7 +45,6 @@ public final class MainActivity extends Activity implements
 
     private RuntimeState runtimeState = RuntimeState.STOPPED;
     private String runtimeDetail = "VPN 未连接";
-    private TunStackMode tunStack = TunStackMode.SYSTEM;
     private ProcessMatchingMode processMatchingMode = ProcessMatchingMode.ALWAYS;
     private boolean ipv6Enabled = true;
     private boolean ipv6Effective = true;
@@ -188,7 +187,6 @@ public final class MainActivity extends Activity implements
             boolean newLockdown,
             String dashboardUrl,
             int controllerPort,
-            String newTunStack,
             String newProcessMatchingMode,
             boolean newIpv6Enabled,
             boolean newIpv6Effective,
@@ -201,11 +199,6 @@ public final class MainActivity extends Activity implements
         RuntimeState parsed = state >= 0 && state < values.length
                 ? values[state]
                 : RuntimeState.FAILED;
-        try {
-            tunStack = TunStackMode.fromWireValue(newTunStack);
-        } catch (IllegalArgumentException ignored) {
-            tunStack = TunStackMode.SYSTEM;
-        }
         try {
             logLevel = RuntimeLogLevel.fromWireValue(newLogLevel);
         } catch (IllegalArgumentException ignored) {
@@ -251,7 +244,6 @@ public final class MainActivity extends Activity implements
     public void onOpenRuntimeOverrides() {
         RuntimeOverridesDialog.show(
                 this,
-                tunStack,
                 processMatchingMode,
                 ipv6Enabled,
                 ipv6Effective,
@@ -558,7 +550,6 @@ public final class MainActivity extends Activity implements
     private void submitRuntimeOverrides(RuntimeOverrideSettings requested) {
         pendingRuntimeOverrides = null;
         controlClient.setRuntimeOverrides(
-                requested.tunStack(),
                 requested.processMatchingMode(),
                 requested.ipv6Enabled(),
                 requested.logLevel(),

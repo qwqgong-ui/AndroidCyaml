@@ -38,18 +38,3 @@ release, selects only the no-font archive, verifies its release digest, and repl
 `app/src/main/assets/zashboard`. The resolved release tag and asset ID are recorded in
 `app/src/main/assets/zashboard.version`. The unmodified files are served only from mihomo's loopback
 controller.
-
-## MetaCubeX meta-rules-dat
-
-- Project: <https://github.com/MetaCubeX/meta-rules-dat>
-- Source selection: latest GitHub Release
-- Bundled asset: `geoip-lite.dat`, installed as `GeoIP.dat`
-- Not bundled: GeoSite data; mihomo may acquire it according to the imported configuration
-- Integrity: SHA-256 digest returned for the release asset by the GitHub Releases API
-- License: GPL-3.0 (the repository root [`LICENSE`](LICENSE) contains the license text)
-
-Before every build, [`scripts/fetch_geodata.sh`](scripts/fetch_geodata.sh) resolves the latest release,
-verifies `geoip-lite.dat`, and replaces `app/src/main/assets/geodata`. The release ID and exact asset ID
-are recorded in `app/src/main/assets/geodata.version` so an upgraded APK replaces the previously installed
-GeoIP file. Upgrading from a build that bundled GeoSite removes that bundled legacy file once; future
-mihomo-managed GeoSite files are left untouched.

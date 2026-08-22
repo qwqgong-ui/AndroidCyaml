@@ -39,7 +39,6 @@ android {
         }
 
         buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
-        buildConfigField("String", "MIHOMO_PATCH_SET", "\"patches/mihomo/*.patch\"")
     }
 
     buildFeatures {
@@ -107,15 +106,6 @@ dependencies {
     testImplementation("org.json:json:20250517")
 }
 
-val fetchGeodata by tasks.registering(Exec::class) {
-    group = "build setup"
-    description = "Fetch latest MetaCubeX geoip-lite.dat release asset"
-    workingDir(rootProject.projectDir)
-    commandLine("bash", "scripts/fetch_geodata.sh")
-    inputs.file(rootProject.file("scripts/fetch_geodata.sh"))
-    outputs.upToDateWhen { false }
-}
-
 val fetchZashboard by tasks.registering(Exec::class) {
     group = "build setup"
     description = "Fetch latest zashboard dist-no-fonts.zip release asset"
@@ -153,5 +143,5 @@ tasks.configureEach {
 }
 
 tasks.named("preBuild") {
-    dependsOn(fetchGeodata, buildMihomo)
+    dependsOn(buildMihomo)
 }

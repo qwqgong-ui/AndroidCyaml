@@ -19,7 +19,6 @@ final class MihomoFileStore {
     static final int MAX_CONFIG_BYTES = 32 * 1024 * 1024;
 
     private static final String ZASHBOARD_VERSION_ASSET = "zashboard.version";
-    private static final String GEODATA_VERSION_ASSET = "geodata.version";
 
     private final Context context;
 
@@ -38,8 +37,6 @@ final class MihomoFileStore {
             copyAssetFile("default-config.yaml", config);
         }
         makeConfigOwnerReadWrite(config);
-        ensureGeodata(home);
-
         File ui = new File(home, "ui");
         ensureDashboard(home, ui);
         return new MihomoPaths(home, config, ui);
@@ -83,30 +80,6 @@ final class MihomoFileStore {
 
     void deleteIfExists(File file) throws IOException {
         Files.deleteIfExists(file.toPath());
-    }
-
-    private void ensureGeodata(File home) throws IOException {
-        String bundledVersion = requiredAssetVersion(GEODATA_VERSION_ASSET);
-        File marker = new File(home, ".androidcyaml-geodata-version");
-        File geoIp = new File(home, "GeoIP.dat");
-        String installedVersion = marker.isFile() ? readText(marker).trim() : "";
-        if (bundledVersion.equals(installedVersion) && geoIp.isFile()) {
-            return;
-        }
-
-        File geoIpStaging = new File(home, "GeoIP.dat.installing");
-        deleteIfExists(geoIpStaging);
-        try {
-            copyAssetFile("geodata/GeoIP.dat", geoIpStaging);
-            moveReplacing(geoIpStaging, geoIp);
-            if (hasBundledGeoSiteVersion(installedVersion)) {
-                deleteIfExists(new File(home, "GeoSite.dat"));
-            }
-            deleteIfExists(new File(home, "GeoSite.dat.installing"));
-            writeText(marker, bundledVersion);
-        } finally {
-            deleteIfExists(geoIpStaging);
-        }
     }
 
     private void ensureDashboard(File home, File ui) throws IOException {
@@ -183,25 +156,6 @@ final class MihomoFileStore {
             }
             output.getFD().sync();
         }
-    }
-
-    private static boolean hasBundledGeoSiteVersion(String versionToken) {
-        if (versionToken.indexOf(',') >= 0) {
-            return true;
-        }
-        if (versionToken.length() != 40) {
-            return false;
-        }
-        for (int index = 0; index < versionToken.length(); index++) {
-            char value = versionToken.charAt(index);
-            boolean hexadecimal = (value >= '0' && value <= '9')
-                    || (value >= 'a' && value <= 'f')
-                    || (value >= 'A' && value <= 'F');
-            if (!hexadecimal) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static String displayVersion(String versionToken) {

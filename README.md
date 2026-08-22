@@ -207,15 +207,9 @@ IP 时，连接面板显示 IP 属于正常结果。
 4. VPN 运行时停止旧核心并重建必要的运行时状态；
 5. 新配置无法启动时恢复上一份配置和运行状态。
 
-首次安装使用内置 DIRECT 默认配置。APK 离线包含：
-
-- `GeoIP.dat`：从 MetaCubeX `meta-rules-dat` 的 `geoip-lite.dat` release 资产获取；
-- Zashboard：无字体构建。
-
-`GeoIP.dat` 与 `geodata.version` 由构建任务按上游 release 生成，不纳入版本控制；
-全新 checkout 的首次构建因此需要联网。
-
-**GeoSite 不再随 APK 打包。** 使用 GeoSite 规则的配置需要自行提供对应数据或改用 rule-provider/MRS。
+首次安装使用内置 DIRECT 默认配置。APK 离线包含无字体构建的 Zashboard，但不再打包或安装
+`GeoIP.dat` 与 `GeoSite.dat`。使用 GeoIP/GeoSite 规则的配置需要自行提供对应数据，允许 mihomo
+按导入配置获取数据，或改用 rule-provider/MRS。
 
 ## 系统 VPN
 
@@ -262,7 +256,6 @@ sdk.dir=/absolute/path/to/Android/Sdk
 
 ```bash
 ./scripts/fetch_zashboard.sh
-./scripts/fetch_geodata.sh
 ./gradlew :app:assembleDebug :app:lintDebug
 bash scripts/verify_native_runtime.sh app/build/outputs/apk/debug/app-debug.apk
 ```
@@ -290,6 +283,5 @@ bash scripts/verify_art_optimization.sh \
 - AndroidCyaml 平台补丁：`patches/mihomo/0001-androidcyaml-platform-hooks.patch`
 - AndroidCyaml Go 包装模块：`native/mihomo`
 - Zashboard：由 `scripts/fetch_zashboard.sh` 获取固定 release 资产
-- MetaCubeX `meta-rules-dat`：由 `scripts/fetch_geodata.sh` 获取最新 `geoip-lite.dat` release 资产
 
 许可证与第三方版本说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。

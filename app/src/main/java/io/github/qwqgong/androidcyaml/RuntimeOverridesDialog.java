@@ -22,7 +22,6 @@ final class RuntimeOverridesDialog {
 
     static void show(
             Context context,
-            TunStackMode currentStack,
             ProcessMatchingMode currentProcessMatchingMode,
             boolean ipv6Enabled,
             boolean ipv6Effective,
@@ -179,7 +178,6 @@ final class RuntimeOverridesDialog {
                     int processModeIndex = processMode.getSelectedItemPosition();
                     int logLevelIndex = logLevel.getSelectedItemPosition();
                     listener.onOverridesSelected(new RuntimeOverrideSettings(
-                            TunStackMode.SYSTEM,
                             processModeIndex >= 0 && processModeIndex < processModes.length
                                     ? processModes[processModeIndex]
                                     : ProcessMatchingMode.ALWAYS,

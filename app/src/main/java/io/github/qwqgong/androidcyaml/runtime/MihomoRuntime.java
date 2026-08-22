@@ -71,7 +71,7 @@ final class MihomoRuntime implements AutoCloseable {
             started = true;
             return "mihomo " + shortCommit()
                     + " · JNI/CGO"
-                    + " · " + stackDetail(settings.tunStack())
+                    + " · system 全栈"
                     + " · 进程匹配 " + settings.processMatchingMode().wireValue()
                     + (ipv6Enabled ? " · IPv6" : " · IPv4-only")
                     + (tcpConcurrentEnabled ? " · TCP 并发" : " · TCP 并发关闭")
@@ -172,14 +172,6 @@ final class MihomoRuntime implements AutoCloseable {
         } catch (IOException | RuntimeException ignored) {
             // Startup is already failing; descriptor cleanup is best effort.
         }
-    }
-
-    private static String stackDetail(TunStackMode stack) {
-        return switch (stack) {
-            case SYSTEM -> "system 全栈";
-            case GVISOR -> "gVisor 全栈";
-            case MIXED -> "mixed（TCP system / UDP gVisor）";
-        };
     }
 
     private static String shortCommit() {

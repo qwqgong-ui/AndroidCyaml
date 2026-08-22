@@ -22,5 +22,4 @@ Lio/github/qwqgong/androidcyaml/RuntimeSnapshot;
 Lio/github/qwqgong/androidcyaml/RuntimeState;
 Lio/github/qwqgong/androidcyaml/RuntimeStateBus;
 Lio/github/qwqgong/androidcyaml/RuntimeStateBus$Listener;
-Lio/github/qwqgong/androidcyaml/TunStackMode;
 Lio/github/qwqgong/androidcyaml/TombstoneStore;

@@ -22,8 +22,6 @@ Lio/github/qwqgong/androidcyaml/RuntimeSnapshot;
 HSPLio/github/qwqgong/androidcyaml/RuntimeSnapshot;->**(**)**
 Lio/github/qwqgong/androidcyaml/RuntimeState;
 HSPLio/github/qwqgong/androidcyaml/RuntimeState;->**(**)**
-Lio/github/qwqgong/androidcyaml/TunStackMode;
-HSPLio/github/qwqgong/androidcyaml/TunStackMode;->**(**)**
 Lio/github/qwqgong/androidcyaml/TombstoneStore**;
 HSPLio/github/qwqgong/androidcyaml/TombstoneStore**;->**(**)**
 Landroidx/profileinstaller/**;

@@ -5,7 +5,11 @@
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | `AndroidVpnService` | VPN permission, foreground lifetime, notification, Builder and TUN FD | mihomo rules and proxy semantics |
-| `RuntimeCoordinator` | serialized startup, stop, config, IPv6 and handover transactions | packet processing |
+| `RuntimeCoordinator` | public runtime API, single-thread submission, module assembly and state publication | lifecycle, config rollback or network debounce implementation |
+| `RuntimeLifecycle` | VPN service, TUN/native resources, core restart and IPv6-to-IPv4 startup fallback | persisted settings or network monitoring |
+| `RuntimeConfigTransactions` | config install, runtime override persistence and failure rollback | direct mutation of lifecycle or coordinator state |
+| `NetworkReconciler` | underlying-network handover, adaptive TCP, IPv6 debounce/reconcile and delayed selector restore | TUN/native resource ownership |
+| `SelectorSession` | per-network selector checkpoint, restore, catalog and selection persistence | physical-network monitoring or core lifecycle |
 | `RuntimeOverrideStore` | process matching, IPv6, log level, adaptive TCP concurrency and LAN WebUI intent | YAML mutation or effective network state |
 | `Ipv6EnvironmentMonitor` | best validated non-VPN network identity, link state and IPv6 availability | user preference or core lifecycle |
 | `AndroidTunManager` | fixed interface addresses, routes, DNS and application scope | socket protection or proxy routing |
@@ -18,6 +22,10 @@
 
 `MainActivity` runs in `:ui`; `AppControlService`、`AndroidVpnService`、两个原生库和 Go runtime 均位于默认
 VPN 服务进程。
+
+这些 Java runtime 类型物理位于 `app/src/main/java/io/github/qwqgong/androidcyaml/runtime/`，但仍使用
+`io.github.qwqgong.androidcyaml` package，以保留 Android/JNI adapter 的 package-private 边界，
+避免仅为目录分层扩大内部 API 的 public 可见性。
 
 ## Core isolation
 
@@ -192,8 +200,8 @@ UI 通过同 UID Binder 向 `RuntimeCoordinator` 查询网络档案和第一个 
 候选配置由同一嵌入式核心先解析，再原子替换应用私有 `config.yaml`。运行中的新配置若无法启动，
 旧文件与旧运行状态会恢复。Android 平台字段只在内存中变换，不写回用户文件。
 
-APK 离线包含 Zashboard 和 `GeoIP.dat`；GeoSite 已停止打包。使用 GeoSite 的配置需要自行提供数据，
-或改用 rule-provider/MRS。
+APK 离线只包含 Zashboard，不打包或安装 `GeoIP.dat` 与 `GeoSite.dat`。使用 GeoIP/GeoSite 的配置
+需要自行提供数据，允许 mihomo 按导入配置获取数据，或改用 rule-provider/MRS。
 
 ## Removed architecture
 
