@@ -3,7 +3,7 @@ package io.github.qwqgong.androidcyaml;
 /**
  * The in-page JavaScript that bridges XHTTP fetch()/streaming requests
  * between mihomo's native core and Chromium, shared by every WebView
- * {@link WebViewXhttpDialer} creates.
+ * WebViewXhttpDialer creates.
  */
 final class WebViewXhttpBridgeScript {
     private WebViewXhttpBridgeScript() {}

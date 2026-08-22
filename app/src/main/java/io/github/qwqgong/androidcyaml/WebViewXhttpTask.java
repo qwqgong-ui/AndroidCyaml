@@ -5,7 +5,7 @@ import android.util.Log;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** One in-flight XHTTP request bridged through a {@link WebViewXhttpOriginPage}. */
+// One in-flight XHTTP request bridged through a WebViewXhttpOriginPage.
 final class WebViewXhttpTask {
     final long id;
     final byte[] requestBody;

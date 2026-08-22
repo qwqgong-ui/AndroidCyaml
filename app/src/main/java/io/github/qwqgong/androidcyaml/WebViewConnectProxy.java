@@ -118,12 +118,10 @@ final class WebViewConnectProxy implements AutoCloseable {
         return authenticationRealm.equals(realm);
     }
 
-    /**
-     * Drops a binding created by {@link #register}, e.g. once its origin page
-     * has been idle-evicted. Without this, a long session that visits many
-     * XHTTP origins grows {@code bindingsByKey}/{@code bindingsByUsername}/
-     * {@code authorities} for the lifetime of the dialer.
-     */
+    // Drops a binding created by register(), e.g. once its origin page has
+    // been idle-evicted. Without this, a long session that visits many XHTTP
+    // origins grows bindingsByKey/bindingsByUsername/authorities for the
+    // lifetime of the dialer.
     void unregister(TargetBinding binding) {
         bindingsByKey.remove(binding.key(), binding);
         bindingsByUsername.remove(binding.username(), binding);
