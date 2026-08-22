@@ -1,6 +1,6 @@
-package io.github.qwqgong.androidcyaml;
+package io.github.qwqgong.androidcyaml
 
-enum RuntimeState {
+enum class RuntimeState {
     STOPPED,
     STARTING,
     RUNNING,
