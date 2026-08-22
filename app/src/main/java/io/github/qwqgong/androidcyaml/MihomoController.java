@@ -138,7 +138,10 @@ final class MihomoController {
     }
 
     Map<String, String> selectorSelections() throws IOException {
-        JSONObject proxies = proxySnapshot();
+        return selectorSelections(proxySnapshot());
+    }
+
+    Map<String, String> selectorSelections(JSONObject proxies) {
         Map<String, String> selections = new TreeMap<>();
         Iterator<String> names = proxies.keys();
         while (names.hasNext()) {
@@ -159,11 +162,16 @@ final class MihomoController {
     }
 
     JSONObject selectorCatalog(Map<String, String> overrides) throws IOException {
+        return selectorCatalogFor(proxySnapshot(), overrides);
+    }
+
+    JSONObject selectorCatalogFor(JSONObject proxies, Map<String, String> overrides)
+            throws IOException {
         if (primarySelector.isBlank()) {
             throw new IOException("config.yaml 的第一个策略组不是 Selector");
         }
         JSONObject all = selectorCatalog(
-                proxySnapshot(),
+                proxies,
                 overrides == null ? Map.of() : overrides
         );
         JSONObject primary = all.optJSONObject(primarySelector);
@@ -329,7 +337,7 @@ final class MihomoController {
         return new SelectionRestoreResult(restored, fallback, skipped, failed);
     }
 
-    private JSONObject proxySnapshot() throws IOException {
+    JSONObject proxySnapshot() throws IOException {
         HttpURLConnection connection = null;
         try {
             connection = open("/proxies");

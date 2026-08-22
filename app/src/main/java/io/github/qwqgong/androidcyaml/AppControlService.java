@@ -139,7 +139,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
         RuntimeSnapshot current = snapshot;
         RuntimeOverrideSettings overrides = coordinator.runtimeOverrideSettings();
         try {
-            callback.onStateChanged(
+            callback.onStateChanged(new RuntimeSnapshotPayload(
                     current.state().ordinal(),
                     current.detail(),
                     AndroidVpnService.isAlwaysOnMode(),
@@ -153,7 +153,7 @@ public final class AppControlService extends Service implements RuntimeStateBus.
                     overrides.adaptiveTcpConcurrent(),
                     overrides.webViewXhttp(),
                     overrides.lanWebUiPublic()
-            );
+            ));
         } catch (RemoteException ignored) {
             // RemoteCallbackList removes dead UI callbacks automatically.
         }

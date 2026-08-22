@@ -58,7 +58,16 @@ final class RuntimeLifecycle {
         tunManager = new AndroidTunManager(requestedService);
         platformCallbacks = new NativePlatformCallbacks(requestedService);
         platformCallbacks.updateUnderlyingNetwork(networkState.networkHandle());
-        return restart(settings, networkState, runtimeStarted);
+        try {
+            return restart(settings, networkState, runtimeStarted);
+        } catch (IOException | InterruptedException failure) {
+            // A failed restart() already leaves runtime == null, but service/
+            // tunManager/platformCallbacks would otherwise stay set, making
+            // hasActiveService() report "active" for a lifecycle that never
+            // came up. Self-clean rather than depend on every caller doing it.
+            stop();
+            throw failure;
+        }
     }
 
     String restart(
@@ -99,8 +108,8 @@ final class RuntimeLifecycle {
                     Thread.currentThread().interrupt();
                 }
                 throw new IOException(
-                        "IPv6 模式启动失败：" + usefulMessage(firstFailure)
-                                + "；IPv4 回退也失败：" + usefulMessage(fallbackFailure),
+                        "IPv6 模式启动失败：" + Exceptions.usefulMessage(firstFailure)
+                                + "；IPv4 回退也失败：" + Exceptions.usefulMessage(fallbackFailure),
                         fallbackFailure
                 );
             }
@@ -200,12 +209,5 @@ final class RuntimeLifecycle {
             runtime = null;
         }
         selectorSession.reset();
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

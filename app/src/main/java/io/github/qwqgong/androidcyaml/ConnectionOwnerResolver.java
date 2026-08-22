@@ -8,11 +8,20 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 final class ConnectionOwnerResolver {
+    // Android can reassign an app's uid to a different package after an
+    // uninstall/reinstall cycle. An unbounded cache would keep matching
+    // routing rules against the old package forever; bound the staleness
+    // window instead of caching for the life of the process.
+    private static final long CACHE_TTL_NANOS = TimeUnit.MINUTES.toNanos(10);
+
+    private record CacheEntry(String packageName, long cachedAtNanos) {}
+
     private final Context context;
     private final ConnectivityManager connectivityManager;
-    private final ConcurrentHashMap<Integer, String> packageNames = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, CacheEntry> packageNames = new ConcurrentHashMap<>();
 
     ConnectionOwnerResolver(Context context) {
         this.context = context.getApplicationContext();
@@ -35,7 +44,18 @@ final class ConnectionOwnerResolver {
         if (uid == android.os.Process.INVALID_UID) {
             throw new IOException("未找到连接所属进程");
         }
-        return uid + "\n" + packageNames.computeIfAbsent(uid, this::packageNameForUid);
+        return uid + "\n" + packageNameFor(uid);
+    }
+
+    private String packageNameFor(int uid) {
+        long now = System.nanoTime();
+        CacheEntry cached = packageNames.get(uid);
+        if (cached != null && now - cached.cachedAtNanos() < CACHE_TTL_NANOS) {
+            return cached.packageName();
+        }
+        String resolved = packageNameForUid(uid);
+        packageNames.put(uid, new CacheEntry(resolved, now));
+        return resolved;
     }
 
     private String packageNameForUid(int uid) {

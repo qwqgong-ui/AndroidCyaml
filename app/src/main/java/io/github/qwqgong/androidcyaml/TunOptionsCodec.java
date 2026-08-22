@@ -6,6 +6,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 final class TunOptionsCodec {
@@ -39,13 +40,13 @@ final class TunOptionsCodec {
         if (array == null || array.length() == 0) {
             return List.of();
         }
-        ArrayList<String> values = new ArrayList<>(array.length());
+        List<String> values = new ArrayList<>(array.length());
         for (int index = 0; index < array.length(); index++) {
             String value = array.getString(index);
             if (!value.isBlank()) {
                 values.add(value);
             }
         }
-        return List.copyOf(values);
+        return Collections.unmodifiableList(values);
     }
 }

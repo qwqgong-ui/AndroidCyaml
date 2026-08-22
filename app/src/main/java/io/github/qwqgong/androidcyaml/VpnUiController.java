@@ -78,7 +78,7 @@ final class VpnUiController {
             listener.onToggleRequested(true);
             listener.onMessage(activity.getString(
                     R.string.vpn_start_failed,
-                    usefulMessage(exception)
+                    Exceptions.usefulMessage(exception)
             ));
         }
     }
@@ -95,15 +95,8 @@ final class VpnUiController {
             listener.onToggleRequested(false);
             listener.onMessage(activity.getString(
                     R.string.vpn_start_failed,
-                    usefulMessage(exception)
+                    Exceptions.usefulMessage(exception)
             ));
         }
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

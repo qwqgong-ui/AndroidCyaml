@@ -27,9 +27,9 @@ final class EdgeToEdgeController {
                     WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
             );
         }
+        View statusBarScrim = activity.findViewById(R.id.status_bar_scrim);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
-            View statusBarScrim = activity.findViewById(R.id.status_bar_scrim);
             ViewGroup.LayoutParams scrimLayout = statusBarScrim.getLayoutParams();
             if (scrimLayout.height != bars.top) {
                 scrimLayout.height = bars.top;

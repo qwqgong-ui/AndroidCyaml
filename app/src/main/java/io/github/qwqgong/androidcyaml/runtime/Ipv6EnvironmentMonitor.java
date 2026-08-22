@@ -9,7 +9,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.RouteInfo;
 import android.os.Handler;
-import android.os.Looper;
+import android.os.HandlerThread;
 import android.util.Log;
 
 import java.net.Inet6Address;
@@ -107,7 +107,9 @@ final class Ipv6EnvironmentMonitor {
 
     private final ConnectivityManager connectivityManager;
     private final NetworkIdentityResolver identityResolver;
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final HandlerThread callbackThread =
+            new HandlerThread("AndroidCyaml-NetworkMonitor");
+    private final Handler handler;
     private final Object lock = new Object();
     private final Map<Long, Snapshot> callbackSnapshots = new LinkedHashMap<>();
     private final UnderlyingNetworkCandidates callbackCandidates =
@@ -195,6 +197,8 @@ final class Ipv6EnvironmentMonitor {
         connectivityManager = Objects.requireNonNull(
                 context.getApplicationContext().getSystemService(ConnectivityManager.class)
         );
+        callbackThread.start();
+        handler = new Handler(callbackThread.getLooper());
     }
 
     State start(Listener nextListener) {

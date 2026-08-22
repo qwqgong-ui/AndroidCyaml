@@ -21,8 +21,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -39,6 +42,10 @@ final class WebViewConnectProxy implements AutoCloseable {
     private static final int MAX_LINE_BYTES = 16 * 1024;
     private static final int CONNECT_TIMEOUT_MILLIS = 30_000;
     private static final byte[] IPV4_LOOPBACK = {127, 0, 0, 1};
+    // Two worker threads per active CONNECT tunnel (accept handler + the
+    // reverse-direction copy), plus the permanent accept-loop thread. This
+    // caps runaway thread growth while still scaling like a cached pool.
+    private static final int MAX_WORKER_THREADS = 256;
 
     private final ServerSocket listener;
     private final ExecutorService workers;
@@ -64,7 +71,14 @@ final class WebViewConnectProxy implements AutoCloseable {
         // getLoopbackAddress(): Android commonly returns ::1, while a
         // 127.0.0.1 proxy rule cannot reach an IPv6-only ServerSocket.
         listener.bind(new InetSocketAddress(InetAddress.getByAddress(IPV4_LOOPBACK), 0), 64);
-        workers = Executors.newCachedThreadPool(new ProxyThreadFactory());
+        workers = new ThreadPoolExecutor(
+                0,
+                MAX_WORKER_THREADS,
+                60L,
+                TimeUnit.SECONDS,
+                new SynchronousQueue<>(),
+                new ProxyThreadFactory()
+        );
         workers.execute(this::acceptLoop);
     }
 
@@ -104,13 +118,35 @@ final class WebViewConnectProxy implements AutoCloseable {
         return authenticationRealm.equals(realm);
     }
 
+    /**
+     * Drops a binding created by {@link #register}, e.g. once its origin page
+     * has been idle-evicted. Without this, a long session that visits many
+     * XHTTP origins grows {@code bindingsByKey}/{@code bindingsByUsername}/
+     * {@code authorities} for the lifetime of the dialer.
+     */
+    void unregister(TargetBinding binding) {
+        bindingsByKey.remove(binding.key(), binding);
+        bindingsByUsername.remove(binding.username(), binding);
+        boolean stillReferenced = bindingsByKey.values().stream()
+                .anyMatch(candidate -> candidate.authority().equals(binding.authority()));
+        if (!stillReferenced) {
+            authorities.remove(binding.authority());
+        }
+    }
+
     private void acceptLoop() {
         while (!closed.get()) {
             try {
                 Socket client = listener.accept();
                 client.setTcpNoDelay(true);
                 sockets.add(client);
-                workers.execute(() -> handle(client));
+                try {
+                    workers.execute(() -> handle(client));
+                } catch (RejectedExecutionException exception) {
+                    // Worker pool is saturated; drop this one tunnel instead of
+                    // letting the exception escape and kill the accept loop.
+                    closeSocket(client);
+                }
             } catch (IOException ignored) {
                 // Listener closure and transient accept failures both end this
                 // iteration. The loop exits once close() flips the state.
@@ -179,12 +215,18 @@ final class WebViewConnectProxy implements AutoCloseable {
             output.flush();
 
             Socket upstreamSocket = upstream;
-            workers.execute(() -> copyAndClose(
-                    upstreamSocket,
-                    client,
-                    inputOf(upstreamSocket),
-                    outputOf(client)
-            ));
+            try {
+                workers.execute(() -> copyAndClose(
+                        upstreamSocket,
+                        client,
+                        inputOf(upstreamSocket),
+                        outputOf(client)
+                ));
+            } catch (RejectedExecutionException exception) {
+                // Worker pool is saturated; the finally block below still
+                // closes both sockets, ending this tunnel cleanly.
+                return;
+            }
             copy(input, upstream.getOutputStream());
         } catch (IOException ignored) {
             // CONNECT tunnels routinely end with one side closing first.

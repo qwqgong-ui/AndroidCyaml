@@ -63,7 +63,14 @@ final class NetworkReconciler {
     }
 
     Ipv6EnvironmentMonitor.State currentState() {
-        return underlyingNetworkState;
+        // Read straight from the (already thread-safe) monitor rather than the
+        // locally cached field below: the cache only updates once the queued
+        // onUnderlyingNetworkChanged() reconciliation runs on the coordinator
+        // executor, which can be delayed behind a long-running start()/restart().
+        // A start() that races ahead of that queued reconciliation must still see
+        // the freshest known network, not a stale one left over from before the
+        // switch.
+        return networkMonitor.currentState();
     }
 
     Ipv6EnvironmentMonitor.State refreshState() {
@@ -191,7 +198,7 @@ final class NetworkReconciler {
             String detail = host.start();
             host.publish(RuntimeState.RUNNING, detail);
         } catch (Exception exception) {
-            host.failActiveService("IPv6 环境切换失败：" + usefulMessage(exception));
+            host.failActiveService("IPv6 环境切换失败：" + Exceptions.usefulMessage(exception));
         }
     }
 
@@ -244,12 +251,5 @@ final class NetworkReconciler {
                 : state.networkHandle()
                         + (state.wifi() ? "/Wi-Fi" : "/non-Wi-Fi")
                         + (state.ipv6Usable() ? "/dual-stack" : "/IPv4");
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

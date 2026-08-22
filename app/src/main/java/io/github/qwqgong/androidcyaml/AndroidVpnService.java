@@ -100,6 +100,12 @@ public final class AndroidVpnService extends VpnService implements
         if (!stopping) {
             coordinator.stop(this, null);
         }
+        // Without this reset, a destroyed service leaves its last known
+        // always-on/lockdown state visible to isAlwaysOnMode()/isLockdownMode()
+        // forever, which AppControlService.sendSnapshot() reads even when no
+        // AndroidVpnService instance is alive.
+        sharedAlwaysOn = false;
+        sharedLockdown = false;
         super.onDestroy();
     }
 

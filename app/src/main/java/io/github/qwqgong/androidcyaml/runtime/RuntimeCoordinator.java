@@ -167,7 +167,7 @@ final class RuntimeCoordinator implements
                 publish(RuntimeState.RUNNING, detail);
                 complete(callback, true, "mihomo 已重启");
             } catch (Exception exception) {
-                String message = usefulMessage(exception);
+                String message = Exceptions.usefulMessage(exception);
                 failActiveService("mihomo 重启失败：" + message);
                 complete(callback, false, message);
             }
@@ -193,7 +193,7 @@ final class RuntimeCoordinator implements
             logLevel = RuntimeLogLevel.fromWireValue(logLevelValue);
             processMatchingMode = ProcessMatchingMode.fromWireValue(processMatchingModeValue);
         } catch (IllegalArgumentException exception) {
-            complete(callback, false, usefulMessage(exception));
+            complete(callback, false, Exceptions.usefulMessage(exception));
             return;
         }
         executor.execute(() -> configTransactions.setRuntimeOverrides(
@@ -219,7 +219,7 @@ final class RuntimeCoordinator implements
             try {
                 complete(callback, true, selectorSession.catalog(current));
             } catch (IOException | JSONException exception) {
-                complete(callback, false, usefulMessage(exception));
+                complete(callback, false, Exceptions.usefulMessage(exception));
             }
         });
     }
@@ -244,7 +244,7 @@ final class RuntimeCoordinator implements
                         target
                 ));
             } catch (IOException exception) {
-                complete(callback, false, usefulMessage(exception));
+                complete(callback, false, Exceptions.usefulMessage(exception));
             }
         });
     }
@@ -276,7 +276,7 @@ final class RuntimeCoordinator implements
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            failActiveService("VPN 启动失败：" + usefulMessage(exception));
+            failActiveService("VPN 启动失败：" + Exceptions.usefulMessage(exception));
         }
     }
 
@@ -402,12 +402,5 @@ final class RuntimeCoordinator implements
         if (completion != null) {
             mainHandler.post(completion);
         }
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

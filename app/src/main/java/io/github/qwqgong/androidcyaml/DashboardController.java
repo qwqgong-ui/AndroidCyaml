@@ -4,7 +4,6 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ComponentCallbacks2;
 import android.content.Intent;
-import android.content.pm.ApplicationInfo;
 import android.net.Uri;
 import android.webkit.SafeBrowsingResponse;
 import android.webkit.WebChromeClient;
@@ -96,9 +95,6 @@ final class DashboardController {
         settings.setSafeBrowsingEnabled(true);
         settings.setUserAgentString(
                 settings.getUserAgentString() + " AndroidCyaml/" + BuildConfig.VERSION_NAME
-        );
-        WebView.setWebContentsDebuggingEnabled(
-                (activity.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
         );
         dashboard.setWebChromeClient(new WebChromeClient());
         dashboard.setWebViewClient(new DashboardWebClient());

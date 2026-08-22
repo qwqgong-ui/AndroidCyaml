@@ -31,12 +31,18 @@ final class FairMemoryManager {
     private static final int RESULT_HANDLED = 0;
     private static final int RESULT_NOT_HANDLED = 1;
     private static final long PSS_SAMPLE_INTERVAL_MILLIS = 30_000L;
+    // This receiver is RECEIVER_EXPORTED by design (the OEM memory-pressure
+    // subsystem is a different process/app), so any app on the device can
+    // send TRIM/KILL. Bound how often a burst can actually trigger real work
+    // instead of relying on the sender to behave.
+    private static final long MIN_HANDLE_INTERVAL_MILLIS = 200L;
 
     private final Context context;
     private final HandlerThread workerThread;
     private final Handler worker;
     private long lastPssSampleElapsed;
     private long lastPssKb = -1;
+    private long lastHandledElapsed = Long.MIN_VALUE;
 
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
@@ -102,10 +108,17 @@ final class FairMemoryManager {
                 throw new IllegalArgumentException("missing callback binder");
             }
 
-            int clearedCacheGroups = handled ? releaseLocalCaches() : 0;
-            boolean statePersisted = !ACTION_KILL.equals(receivedAction)
-                    || RuntimeCoordinator.persistStateForMemoryKill();
-            handled = handled && statePersisted;
+            long now = SystemClock.elapsedRealtime();
+            boolean throttled = now - lastHandledElapsed < MIN_HANDLE_INTERVAL_MILLIS;
+            int clearedCacheGroups = 0;
+            boolean statePersisted = true;
+            if (handled && !throttled) {
+                lastHandledElapsed = now;
+                clearedCacheGroups = releaseLocalCaches();
+                statePersisted = !ACTION_KILL.equals(receivedAction)
+                        || RuntimeCoordinator.persistStateForMemoryKill();
+                handled = statePersisted;
+            }
             MemorySnapshot snapshot = snapshotMemory();
             Log.i(
                     TAG,
@@ -118,6 +131,7 @@ final class FairMemoryManager {
                             + snapshot.heapCapacityKb + " KiB"
                             + " pss=" + snapshot.pssKb + " KiB"
                             + suppliedLimits(detail)
+                            + " throttled=" + throttled
                             + " clearedCacheGroups=" + clearedCacheGroups
                             + " statePersisted=" + statePersisted
             );

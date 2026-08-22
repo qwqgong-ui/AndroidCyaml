@@ -131,6 +131,11 @@ final class SelectorSession {
             );
         }
 
+        // The live group/option catalog is identical for every remembered
+        // network; only the "selected" overlay differs per profile. Fetch it
+        // once instead of once per profile (previously up to
+        // NetworkSelectionStore.MAX_NETWORKS controller round-trips).
+        JSONObject proxiesSnapshot = runtime.proxySnapshot();
         JSONArray encodedProfiles = new JSONArray();
         for (NetworkIdentityResolver.Profile profile : profiles.values()) {
             NetworkSelectionStore.Profile storedProfile = stored.get(profile.identity());
@@ -138,14 +143,14 @@ final class SelectorSession {
                     ? Map.of()
                     : storedProfile.selections();
             if (selections.isEmpty() && profile.identity().equals(identity)) {
-                selections = runtime.selectorSelections();
+                selections = runtime.selectorSelections(proxiesSnapshot);
             }
             JSONObject encoded = new JSONObject();
             encoded.put("identity", profile.identity());
             encoded.put("kind", profile.kind());
             encoded.put("label", profile.label());
             encoded.put("current", profile.identity().equals(identity));
-            encoded.put("groups", runtime.selectorCatalog(selections));
+            encoded.put("groups", runtime.selectorCatalog(proxiesSnapshot, selections));
             encodedProfiles.put(encoded);
         }
         return new JSONObject().put("profiles", encodedProfiles).toString();

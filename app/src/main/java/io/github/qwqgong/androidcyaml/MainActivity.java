@@ -10,17 +10,13 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
+import android.window.OnBackInvokedCallback;
 import android.widget.FrameLayout;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 
 @SuppressWarnings("deprecation")
@@ -61,6 +57,24 @@ public final class MainActivity extends Activity implements
     private RuntimeOverrideSettings pendingRuntimeOverrides;
     private boolean pendingIdentityPermissionStart;
     private boolean pendingIdentityPermissionAutomatic;
+    private OnBackInvokedCallback backInvokedCallback;
+
+    private static final String STATE_PENDING_OVERRIDES_PRESENT = "pending_overrides_present";
+    private static final String STATE_PENDING_OVERRIDES_PROCESS_MODE =
+            "pending_overrides_process_mode";
+    private static final String STATE_PENDING_OVERRIDES_IPV6 = "pending_overrides_ipv6";
+    private static final String STATE_PENDING_OVERRIDES_LOG_LEVEL =
+            "pending_overrides_log_level";
+    private static final String STATE_PENDING_OVERRIDES_ADAPTIVE_TCP =
+            "pending_overrides_adaptive_tcp";
+    private static final String STATE_PENDING_OVERRIDES_WEBVIEW_XHTTP =
+            "pending_overrides_webview_xhttp";
+    private static final String STATE_PENDING_OVERRIDES_LAN_WEBUI =
+            "pending_overrides_lan_webui";
+    private static final String STATE_PENDING_IDENTITY_PERMISSION_START =
+            "pending_identity_permission_start";
+    private static final String STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC =
+            "pending_identity_permission_automatic";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,15 +98,92 @@ public final class MainActivity extends Activity implements
         appTitle.setOnClickListener(ignored -> showRuntimeInfo());
         moreActions.setOnClickListener(this::showActions);
         vpnToggle.setOnCheckedChangeListener((button, checked) -> onVpnToggleChanged(checked));
+        backInvokedCallback = () -> {
+            if (!dashboard.handleBack()) {
+                finish();
+            }
+        };
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                () -> {
-                    if (!dashboard.handleBack()) {
-                        finish();
-                    }
-                }
+                backInvokedCallback
         );
+        restorePendingState(savedInstanceState);
         applySnapshot(RuntimeSnapshot.stopped(), false, false);
+    }
+
+    private void restorePendingState(Bundle savedInstanceState) {
+        if (savedInstanceState == null) {
+            return;
+        }
+        if (savedInstanceState.getBoolean(STATE_PENDING_OVERRIDES_PRESENT, false)) {
+            ProcessMatchingMode processMode;
+            try {
+                processMode = ProcessMatchingMode.fromWireValue(
+                        savedInstanceState.getString(STATE_PENDING_OVERRIDES_PROCESS_MODE)
+                );
+            } catch (IllegalArgumentException exception) {
+                processMode = ProcessMatchingMode.ALWAYS;
+            }
+            RuntimeLogLevel savedLogLevel;
+            try {
+                savedLogLevel = RuntimeLogLevel.fromWireValue(
+                        savedInstanceState.getString(STATE_PENDING_OVERRIDES_LOG_LEVEL)
+                );
+            } catch (IllegalArgumentException exception) {
+                savedLogLevel = RuntimeLogLevel.WARNING;
+            }
+            pendingRuntimeOverrides = new RuntimeOverrideSettings(
+                    processMode,
+                    savedInstanceState.getBoolean(STATE_PENDING_OVERRIDES_IPV6, true),
+                    savedLogLevel,
+                    savedInstanceState.getBoolean(STATE_PENDING_OVERRIDES_ADAPTIVE_TCP, false),
+                    savedInstanceState.getBoolean(STATE_PENDING_OVERRIDES_WEBVIEW_XHTTP, false),
+                    savedInstanceState.getBoolean(STATE_PENDING_OVERRIDES_LAN_WEBUI, false)
+            );
+        }
+        pendingIdentityPermissionStart = savedInstanceState.getBoolean(
+                STATE_PENDING_IDENTITY_PERMISSION_START,
+                false
+        );
+        pendingIdentityPermissionAutomatic = savedInstanceState.getBoolean(
+                STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC,
+                false
+        );
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        RuntimeOverrideSettings requested = pendingRuntimeOverrides;
+        outState.putBoolean(STATE_PENDING_OVERRIDES_PRESENT, requested != null);
+        if (requested != null) {
+            outState.putString(
+                    STATE_PENDING_OVERRIDES_PROCESS_MODE,
+                    requested.processMatchingMode().wireValue()
+            );
+            outState.putBoolean(STATE_PENDING_OVERRIDES_IPV6, requested.ipv6Enabled());
+            outState.putString(
+                    STATE_PENDING_OVERRIDES_LOG_LEVEL,
+                    requested.logLevel().wireValue()
+            );
+            outState.putBoolean(
+                    STATE_PENDING_OVERRIDES_ADAPTIVE_TCP,
+                    requested.adaptiveTcpConcurrent()
+            );
+            outState.putBoolean(
+                    STATE_PENDING_OVERRIDES_WEBVIEW_XHTTP,
+                    requested.webViewXhttp()
+            );
+            outState.putBoolean(STATE_PENDING_OVERRIDES_LAN_WEBUI, requested.lanWebUiPublic());
+        }
+        outState.putBoolean(
+                STATE_PENDING_IDENTITY_PERMISSION_START,
+                pendingIdentityPermissionStart
+        );
+        outState.putBoolean(
+                STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC,
+                pendingIdentityPermissionAutomatic
+        );
     }
 
     @Override
@@ -118,6 +209,10 @@ public final class MainActivity extends Activity implements
 
     @Override
     protected void onDestroy() {
+        if (backInvokedCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
+            backInvokedCallback = null;
+        }
         dashboard.release();
         super.onDestroy();
     }
@@ -180,45 +275,24 @@ public final class MainActivity extends Activity implements
     }
 
     @Override
-    public void onRuntimeSnapshot(
-            int state,
-            String detail,
-            boolean newAlwaysOn,
-            boolean newLockdown,
-            String dashboardUrl,
-            int controllerPort,
-            String newProcessMatchingMode,
-            boolean newIpv6Enabled,
-            boolean newIpv6Effective,
-            String newLogLevel,
-            boolean newAdaptiveTcpConcurrent,
-            boolean newWebViewXhttp,
-            boolean newLanWebUiPublic
-    ) {
-        RuntimeState[] values = RuntimeState.values();
-        RuntimeState parsed = state >= 0 && state < values.length
-                ? values[state]
-                : RuntimeState.FAILED;
-        try {
-            logLevel = RuntimeLogLevel.fromWireValue(newLogLevel);
-        } catch (IllegalArgumentException ignored) {
-            logLevel = RuntimeLogLevel.WARNING;
-        }
-        try {
-            processMatchingMode = ProcessMatchingMode.fromWireValue(newProcessMatchingMode);
-        } catch (IllegalArgumentException ignored) {
-            processMatchingMode = ProcessMatchingMode.ALWAYS;
-        }
-        ipv6Enabled = newIpv6Enabled;
-        ipv6Effective = newIpv6Effective;
-        adaptiveTcpConcurrent = newAdaptiveTcpConcurrent;
-        webViewXhttp = newWebViewXhttp;
-        lanWebUiPublic = newLanWebUiPublic;
-        this.controllerPort = controllerPort;
+    public void onRuntimeSnapshot(RuntimeSnapshotPayload payload) {
+        logLevel = payload.logLevel();
+        processMatchingMode = payload.processMatchingMode();
+        ipv6Enabled = payload.ipv6Enabled();
+        ipv6Effective = payload.ipv6Effective();
+        adaptiveTcpConcurrent = payload.adaptiveTcpConcurrent();
+        webViewXhttp = payload.webViewXhttp();
+        lanWebUiPublic = payload.lanWebUiPublic();
+        this.controllerPort = payload.controllerPort();
         applySnapshot(
-                new RuntimeSnapshot(parsed, detail, dashboardUrl, controllerPort),
-                newAlwaysOn,
-                newLockdown
+                new RuntimeSnapshot(
+                        payload.state(),
+                        payload.detail(),
+                        payload.dashboardUrl(),
+                        payload.controllerPort()
+                ),
+                payload.alwaysOn(),
+                payload.lockdown()
         );
     }
 
@@ -268,134 +342,29 @@ public final class MainActivity extends Activity implements
                 showToast(detail);
                 return;
             }
-            try {
-                showNetworkProfiles(new JSONObject(detail));
-            } catch (JSONException exception) {
-                showToast("无法解析网络节点列表");
-            }
+            NetworkNodesDialog.show(this, detail, networkNodesListener);
         });
     }
 
-    private void showNetworkProfiles(JSONObject catalog) throws JSONException {
-        JSONArray profiles = catalog.optJSONArray("profiles");
-        if (profiles == null || profiles.length() == 0) {
-            showToast("当前没有可识别或已记忆的 Wi-Fi / 移动数据网络");
-            return;
+    private final NetworkNodesDialog.Listener networkNodesListener =
+            new NetworkNodesDialog.Listener() {
+        @Override
+        public void onMessage(String message) {
+            showToast(message);
         }
-        List<JSONObject> values = new ArrayList<>();
-        List<String> labels = new ArrayList<>();
-        for (int index = 0; index < profiles.length(); index++) {
-            JSONObject profile = profiles.optJSONObject(index);
-            if (profile == null) {
-                continue;
-            }
-            values.add(profile);
-            String label = profile.optString("label", "已记忆网络");
-            if (profile.optBoolean("current", false)) {
-                label += "（当前）";
-            }
-            String summary = summarizeGroups(profile.optJSONObject("groups"));
-            labels.add(summary.isBlank() ? label : label + "\n" + summary);
-        }
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.network_nodes_title)
-                .setItems(labels.toArray(String[]::new), (dialog, which) -> {
-                    try {
-                        JSONObject profile = values.get(which);
-                        JSONObject groups = profile.optJSONObject("groups");
-                        if (groups == null || groups.length() == 0) {
-                            showToast("config.yaml 的第一个策略组不是 Selector");
-                            return;
-                        }
-                        Iterator<String> names = groups.keys();
-                        showNetworkTargets(profile, names.next());
-                    } catch (JSONException exception) {
-                        showToast("无法解析节点列表");
-                    }
-                })
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
 
-    private void showNetworkTargets(JSONObject profile, String groupName)
-            throws JSONException {
-        JSONObject group = profile.getJSONObject("groups").getJSONObject(groupName);
-        String selected = group.optString("selected", "");
-        JSONArray options = group.optJSONArray("options");
-        List<JSONObject> values = new ArrayList<>();
-        List<String> labels = new ArrayList<>();
-        int selectedIndex = -1;
-        if (options != null) {
-            for (int index = 0; index < options.length(); index++) {
-                JSONObject option = options.optJSONObject(index);
-                if (option == null || !option.optBoolean("available", true)) {
-                    continue;
-                }
-                values.add(option);
-                String name = option.optString("name", "");
-                String label = displayTarget(name, option.optString("effective", ""));
-                labels.add((name.equals(selected) ? "✓ " : "") + label);
-                if (name.equals(selected)) {
-                    selectedIndex = values.size() - 1;
-                }
-            }
+        @Override
+        public void onTargetSelected(String identity, String group, String target) {
+            controlClient.setNetworkSelection(
+                    identity,
+                    group,
+                    target,
+                    (success, detail) -> showToast(success
+                            ? detail
+                            : "节点设置失败：" + detail)
+            );
         }
-        if (values.isEmpty()) {
-            showToast("该策略组当前没有可用节点");
-            return;
-        }
-        int checkedIndex = selectedIndex;
-        new AlertDialog.Builder(this)
-                .setTitle(getString(R.string.network_targets_title, groupName))
-                .setSingleChoiceItems(
-                        labels.toArray(String[]::new),
-                        checkedIndex,
-                        (dialog, which) -> {
-                    dialog.dismiss();
-                    JSONObject option = values.get(which);
-                    String target = option.optString("name", "");
-                    controlClient.setNetworkSelection(
-                            profile.optString("identity", ""),
-                            groupName,
-                            target,
-                            (success, detail) -> showToast(success
-                                    ? detail
-                                    : "节点设置失败：" + detail)
-                    );
-                        }
-                )
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    private static String summarizeGroups(JSONObject groups) {
-        if (groups == null) {
-            return "";
-        }
-        List<String> summaries = new ArrayList<>();
-        Iterator<String> keys = groups.keys();
-        while (keys.hasNext()) {
-            String name = keys.next();
-            JSONObject group = groups.optJSONObject(name);
-            if (group != null) {
-                summaries.add(name + "：" + displayTarget(
-                        group.optString("selected", ""),
-                        group.optString("effective", "")
-                ));
-            }
-        }
-        summaries.sort(String::compareTo);
-        return String.join("；", summaries);
-    }
-
-    private static String displayTarget(String selected, String effective) {
-        if (selected == null || selected.isBlank()) {
-            return "未选择";
-        }
-        return effective == null || effective.isBlank() || effective.equals(selected)
-                ? selected
-                : selected + " → " + effective;
-    }
+    };
 
     @Override
     public void onOpenVpnSettings() {
@@ -520,7 +489,10 @@ public final class MainActivity extends Activity implements
         try {
             ConfigPicker.open(this, REQUEST_CONFIG_FILE);
         } catch (RuntimeException exception) {
-            showToast(getString(R.string.config_import_failed, usefulMessage(exception)));
+            showToast(getString(
+                    R.string.config_import_failed,
+                    Exceptions.usefulMessage(exception)
+            ));
         }
     }
 
@@ -613,12 +585,5 @@ public final class MainActivity extends Activity implements
 
     private void showToast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

@@ -12,21 +12,7 @@ import android.os.RemoteException;
 
 final class RuntimeControlClient {
     interface Listener {
-        void onRuntimeSnapshot(
-                int state,
-                String detail,
-                boolean alwaysOn,
-                boolean lockdown,
-                String dashboardUrl,
-                int controllerPort,
-                String processMatchingMode,
-                boolean ipv6Enabled,
-                boolean ipv6Effective,
-                String logLevel,
-                boolean adaptiveTcpConcurrent,
-                boolean webViewXhttp,
-                boolean lanWebUiPublic
-        );
+        void onRuntimeSnapshot(RuntimeSnapshotPayload payload);
 
         void onControlDisconnected();
     }
@@ -44,36 +30,8 @@ final class RuntimeControlClient {
 
     private final IControlCallback callback = new IControlCallback.Stub() {
         @Override
-        public void onStateChanged(
-                int state,
-                String detail,
-                boolean alwaysOn,
-                boolean lockdown,
-                String dashboardUrl,
-                int controllerPort,
-                String processMatchingMode,
-                boolean ipv6Enabled,
-                boolean ipv6Effective,
-                String logLevel,
-                boolean adaptiveTcpConcurrent,
-                boolean webViewXhttp,
-                boolean lanWebUiPublic
-        ) {
-            mainHandler.post(() -> listener.onRuntimeSnapshot(
-                    state,
-                    detail,
-                    alwaysOn,
-                    lockdown,
-                    dashboardUrl,
-                    controllerPort,
-                    processMatchingMode,
-                    ipv6Enabled,
-                    ipv6Effective,
-                    logLevel,
-                    adaptiveTcpConcurrent,
-                    webViewXhttp,
-                    lanWebUiPublic
-            ));
+        public void onStateChanged(RuntimeSnapshotPayload payload) {
+            mainHandler.post(() -> listener.onRuntimeSnapshot(payload));
         }
     };
 
@@ -159,7 +117,7 @@ final class RuntimeControlClient {
             current.restartRuntime(operationCallback(result));
         } catch (RemoteException exception) {
             disconnect();
-            result.onComplete(false, usefulMessage(exception));
+            result.onComplete(false, Exceptions.usefulMessage(exception));
         }
     }
 
@@ -173,7 +131,7 @@ final class RuntimeControlClient {
             current.importConfig(source, operationCallback(result));
         } catch (RemoteException exception) {
             disconnect();
-            result.onComplete(false, usefulMessage(exception));
+            result.onComplete(false, Exceptions.usefulMessage(exception));
         }
     }
 
@@ -187,7 +145,7 @@ final class RuntimeControlClient {
             current.getNetworkSelectionCatalog(operationCallback(result));
         } catch (RemoteException exception) {
             disconnect();
-            result.onComplete(false, usefulMessage(exception));
+            result.onComplete(false, Exceptions.usefulMessage(exception));
         }
     }
 
@@ -211,7 +169,7 @@ final class RuntimeControlClient {
             );
         } catch (RemoteException exception) {
             disconnect();
-            result.onComplete(false, usefulMessage(exception));
+            result.onComplete(false, Exceptions.usefulMessage(exception));
         }
     }
 
@@ -245,7 +203,7 @@ final class RuntimeControlClient {
             );
         } catch (RemoteException exception) {
             disconnect();
-            result.onComplete(false, usefulMessage(exception));
+            result.onComplete(false, Exceptions.usefulMessage(exception));
         }
     }
 
@@ -263,12 +221,5 @@ final class RuntimeControlClient {
         bound = false;
         service = null;
         mainHandler.post(listener::onControlDisconnected);
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

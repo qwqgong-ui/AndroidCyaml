@@ -327,16 +327,7 @@ final class RuntimeOverridesDialog {
         });
     }
 
-    private static int indexOf(RuntimeLogLevel[] values, RuntimeLogLevel target) {
-        for (int index = 0; index < values.length; index++) {
-            if (values[index] == target) {
-                return index;
-            }
-        }
-        return 0;
-    }
-
-    private static int indexOf(ProcessMatchingMode[] values, ProcessMatchingMode target) {
+    private static <T> int indexOf(T[] values, T target) {
         for (int index = 0; index < values.length; index++) {
             if (values[index] == target) {
                 return index;

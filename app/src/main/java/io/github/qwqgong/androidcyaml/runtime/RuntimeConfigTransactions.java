@@ -72,10 +72,25 @@ final class RuntimeConfigTransactions {
                     host.publish(RuntimeState.RUNNING, detail);
                 } catch (Exception startFailure) {
                     transaction.rollback();
-                    String restoredDetail = lifecycle.start();
-                    host.publish(RuntimeState.RUNNING, restoredDetail);
+                    try {
+                        String restoredDetail = lifecycle.start();
+                        host.publish(RuntimeState.RUNNING, restoredDetail);
+                    } catch (Exception restoreFailure) {
+                        if (restoreFailure instanceof InterruptedException) {
+                            Thread.currentThread().interrupt();
+                        }
+                        IOException combined = new IOException(
+                                "新配置无法启动，且恢复上一份配置也失败："
+                                        + Exceptions.usefulMessage(startFailure)
+                                        + "；" + Exceptions.usefulMessage(restoreFailure),
+                                restoreFailure
+                        );
+                        combined.addSuppressed(startFailure);
+                        throw combined;
+                    }
                     throw new IOException(
-                            "新配置无法启动，已恢复上一份配置：" + usefulMessage(startFailure),
+                            "新配置无法启动，已恢复上一份配置："
+                                    + Exceptions.usefulMessage(startFailure),
                             startFailure
                     );
                 }
@@ -88,9 +103,9 @@ final class RuntimeConfigTransactions {
             }
             Log.e(TAG, "Unable to import config", exception);
             if (host.snapshot().state() == RuntimeState.STARTING) {
-                host.failActiveService("配置应用失败：" + usefulMessage(exception));
+                host.failActiveService("配置应用失败：" + Exceptions.usefulMessage(exception));
             }
-            host.complete(callback, false, usefulMessage(exception));
+            host.complete(callback, false, Exceptions.usefulMessage(exception));
         }
     }
 
@@ -112,7 +127,7 @@ final class RuntimeConfigTransactions {
         try {
             overrideStore.setSettings(requested);
         } catch (RuntimeException exception) {
-            host.complete(callback, false, usefulMessage(exception));
+            host.complete(callback, false, Exceptions.usefulMessage(exception));
             return;
         }
 
@@ -158,13 +173,13 @@ final class RuntimeConfigTransactions {
                 host.complete(
                         callback,
                         false,
-                        "无法应用运行时覆写，已恢复上一状态：" + usefulMessage(applyFailure)
+                        "无法应用运行时覆写，已恢复上一状态：" + Exceptions.usefulMessage(applyFailure)
                 );
             } catch (Exception restoreFailure) {
                 String message = "运行时覆写失败且无法恢复："
-                        + usefulMessage(applyFailure)
+                        + Exceptions.usefulMessage(applyFailure)
                         + "；"
-                        + usefulMessage(restoreFailure);
+                        + Exceptions.usefulMessage(restoreFailure);
                 host.failActiveService(message);
                 host.complete(callback, false, message);
             }
@@ -206,12 +221,5 @@ final class RuntimeConfigTransactions {
         }
         return "system 全栈；" + process + "；" + ipv6 + "；" + tcpConcurrent
                 + "；" + xhttp + "；" + logLevel + "；" + webUi;
-    }
-
-    private static String usefulMessage(Throwable throwable) {
-        String message = throwable.getMessage();
-        return message == null || message.isBlank()
-                ? throwable.getClass().getSimpleName()
-                : message;
     }
 }

@@ -128,11 +128,33 @@ final class MihomoRuntime implements AutoCloseable {
         return controller.selectorSelections();
     }
 
+    Map<String, String> selectorSelections(JSONObject proxies) {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            return Map.of();
+        }
+        return controller.selectorSelections(proxies);
+    }
+
+    JSONObject proxySnapshot() throws IOException {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            throw new IOException("VPN 未启动");
+        }
+        return controller.proxySnapshot();
+    }
+
     JSONObject selectorCatalog(Map<String, String> overrides) throws IOException {
         if (!started || controller == null || !MihomoNative.isRunning()) {
             throw new IOException("VPN 未启动");
         }
         return controller.selectorCatalog(overrides);
+    }
+
+    JSONObject selectorCatalog(JSONObject proxies, Map<String, String> overrides)
+            throws IOException {
+        if (!started || controller == null || !MihomoNative.isRunning()) {
+            throw new IOException("VPN 未启动");
+        }
+        return controller.selectorCatalogFor(proxies, overrides);
     }
 
     void selectSelector(String group, String target) throws IOException {
