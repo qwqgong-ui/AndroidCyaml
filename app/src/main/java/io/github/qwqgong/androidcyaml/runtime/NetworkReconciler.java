@@ -104,7 +104,7 @@ final class NetworkReconciler {
         underlyingNetworkState = state;
         lifecycle.updateUnderlyingNetwork(state.networkHandle());
         RuntimeOverrideSettings settings = overrideStore.settings();
-        boolean targetTcpConcurrent = settings.adaptiveTcpConcurrent() && state.wifi();
+        boolean targetTcpConcurrent = settings.adaptiveTcpConcurrent();
         if (!lifecycle.hasActiveService()) {
             lifecycle.setIdleEffectiveState(settings, state);
             host.publish(host.snapshot());
@@ -144,8 +144,8 @@ final class NetworkReconciler {
             Log.i(
                     TAG,
                     targetEnabled
-                            ? "Enabled tcp-concurrent for Wi-Fi"
-                            : "Disabled tcp-concurrent outside Wi-Fi"
+                            ? "Enabled tcp-concurrent"
+                            : "Disabled tcp-concurrent"
             );
         } catch (IOException exception) {
             // A best-effort dialing optimization must not tear down the VPN.

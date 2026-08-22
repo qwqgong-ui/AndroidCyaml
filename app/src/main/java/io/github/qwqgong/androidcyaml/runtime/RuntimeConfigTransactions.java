@@ -141,7 +141,6 @@ final class RuntimeConfigTransactions {
                     describeOverrides(
                             requested,
                             lifecycle.effectiveIpv6Enabled(),
-                            lifecycle.effectiveTcpConcurrent(),
                             0
                     )
             );
@@ -159,7 +158,6 @@ final class RuntimeConfigTransactions {
                     describeOverrides(
                             applied,
                             lifecycle.effectiveIpv6Enabled(),
-                            lifecycle.effectiveTcpConcurrent(),
                             lifecycle.controllerPort()
                     )
             );
@@ -189,7 +187,6 @@ final class RuntimeConfigTransactions {
     private static String describeOverrides(
             RuntimeOverrideSettings settings,
             boolean ipv6Effective,
-            boolean tcpConcurrentEffective,
             int controllerPort
     ) {
         String process = "进程匹配 " + settings.processMatchingMode().wireValue();
@@ -201,14 +198,9 @@ final class RuntimeConfigTransactions {
         } else {
             ipv6 = "IPv6 已开启，但当前环境不可用，已自动使用 IPv4";
         }
-        String tcpConcurrent;
-        if (!settings.adaptiveTcpConcurrent()) {
-            tcpConcurrent = "TCP 并发已全局关闭";
-        } else if (tcpConcurrentEffective) {
-            tcpConcurrent = "TCP 并发已在 Wi-Fi 开启";
-        } else {
-            tcpConcurrent = "TCP 并发已在当前非 Wi-Fi 网络关闭";
-        }
+        String tcpConcurrent = settings.adaptiveTcpConcurrent()
+                ? "TCP 并发已全局开启"
+                : "TCP 并发已全局关闭";
         String xhttp = settings.webViewXhttp()
                 ? "XHTTP WebView 已开启"
                 : "XHTTP 使用 mihomo 原生栈";

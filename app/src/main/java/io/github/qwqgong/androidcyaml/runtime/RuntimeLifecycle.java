@@ -76,8 +76,7 @@ final class RuntimeLifecycle {
             Runnable runtimeStarted
     ) throws IOException, InterruptedException {
         boolean requestedIpv6 = settings.ipv6Enabled() && networkState.ipv6Usable();
-        boolean requestedTcpConcurrent =
-                settings.adaptiveTcpConcurrent() && networkState.wifi();
+        boolean requestedTcpConcurrent = settings.adaptiveTcpConcurrent();
         try {
             return startRuntime(
                     settings,
@@ -136,8 +135,7 @@ final class RuntimeLifecycle {
             Ipv6EnvironmentMonitor.State networkState
     ) {
         effectiveIpv6Enabled = settings.ipv6Enabled() && networkState.ipv6Usable();
-        effectiveTcpConcurrent =
-                settings.adaptiveTcpConcurrent() && networkState.wifi();
+        effectiveTcpConcurrent = settings.adaptiveTcpConcurrent();
     }
 
     void stop() {
