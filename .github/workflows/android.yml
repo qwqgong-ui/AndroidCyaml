@@ -58,7 +58,7 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26.x"
+          go-version: "1.27.x"
           cache: false
 
       - name: Restore pinned mihomo JNI output
@@ -69,7 +69,7 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/libmihomo.so
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-native-go1.26-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
+          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
 
       - name: Restore weekly Go build cache
         id: go-cache
@@ -79,9 +79,9 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-mihomo-go-work-go1.26-ndk29-${{ steps.build.outputs.go-cache-generation }}
+          key: ${{ runner.os }}-mihomo-go-work-go1.27-ndk29-${{ steps.build.outputs.go-cache-generation }}
           restore-keys: |
-            ${{ runner.os }}-mihomo-go-work-go1.26-ndk29-
+            ${{ runner.os }}-mihomo-go-work-go1.27-ndk29-
 
       - uses: android-actions/setup-android@v4
 
