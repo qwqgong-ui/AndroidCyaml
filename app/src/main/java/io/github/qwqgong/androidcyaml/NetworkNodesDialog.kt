@@ -68,7 +68,6 @@ object NetworkNodesDialog {
         val options = group.optJSONArray("options")
         val values = ArrayList<JSONObject>()
         val labels = ArrayList<String>()
-        var selectedIndex = -1
         if (options != null) {
             for (index in 0 until options.length()) {
                 val option = options.optJSONObject(index)
@@ -77,11 +76,11 @@ object NetworkNodesDialog {
                 }
                 values.add(option)
                 val name = option.optString("name", "")
-                val label = displayTarget(name, option.optString("effective", ""))
-                labels.add((if (name == selected) "✓ " else "") + label)
+                var label = displayTarget(name, option.optString("effective", ""))
                 if (name == selected) {
-                    selectedIndex = values.size - 1
+                    label += "（当前）"
                 }
+                labels.add(label)
             }
         }
         if (values.isEmpty()) {
@@ -90,8 +89,7 @@ object NetworkNodesDialog {
         }
         AlertDialog.Builder(context)
             .setTitle(context.getString(R.string.network_targets_title, groupName))
-            .setSingleChoiceItems(labels.toTypedArray(), selectedIndex) { dialog, which ->
-                dialog.dismiss()
+            .setItems(labels.toTypedArray()) { _, which ->
                 val target = values[which].optString("name", "")
                 listener.onTargetSelected(profile.optString("identity", ""), groupName, target)
             }

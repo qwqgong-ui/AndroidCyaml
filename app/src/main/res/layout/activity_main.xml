@@ -13,7 +13,7 @@
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="44dp"
         android:background="@color/top_bar_background"
         android:gravity="center_vertical"
         android:orientation="horizontal"
@@ -23,7 +23,7 @@
         <TextView
             android:id="@+id/app_title"
             android:layout_width="wrap_content"
-            android:layout_height="48dp"
+            android:layout_height="40dp"
             android:background="?android:attr/selectableItemBackground"
             android:clickable="true"
             android:contentDescription="@string/runtime_info"
@@ -39,7 +39,7 @@
         <TextView
             android:id="@+id/vpn_status"
             android:layout_width="0dp"
-            android:layout_height="48dp"
+            android:layout_height="40dp"
             android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:ellipsize="end"
@@ -53,7 +53,7 @@
         <Switch
             android:id="@+id/vpn_toggle"
             android:layout_width="wrap_content"
-            android:layout_height="48dp"
+            android:layout_height="40dp"
             android:contentDescription="@string/vpn_switch"
             android:minWidth="0dp"
             android:paddingStart="8dp"
@@ -61,8 +61,8 @@
 
         <TextView
             android:id="@+id/more_actions"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:background="@drawable/more_actions_background"
             android:clickable="true"
             android:contentDescription="@string/more_actions"
