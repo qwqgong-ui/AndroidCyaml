@@ -1,7 +1,9 @@
 package io.github.qwqgong.androidcyaml
 
-import android.app.AlertDialog
 import android.content.Context
+import android.view.Menu
+import android.view.View
+import android.widget.PopupMenu
 import org.json.JSONException
 import org.json.JSONObject
 
@@ -12,15 +14,23 @@ object NetworkNodesDialog {
         fun onTargetSelected(identity: String, group: String, target: String)
     }
 
-    fun show(context: Context, catalogJson: String, listener: Listener) {
+    private const val HEADER = 0
+    private const val FIRST_ENTRY = 1
+
+    fun show(context: Context, anchor: View, catalogJson: String, listener: Listener) {
         try {
-            showProfiles(context, JSONObject(catalogJson), listener)
+            showProfiles(context, anchor, JSONObject(catalogJson), listener)
         } catch (exception: JSONException) {
             listener.onMessage("无法解析网络节点列表")
         }
     }
 
-    private fun showProfiles(context: Context, catalog: JSONObject, listener: Listener) {
+    private fun showProfiles(
+        context: Context,
+        anchor: View,
+        catalog: JSONObject,
+        listener: Listener,
+    ) {
         val profiles = catalog.optJSONArray("profiles")
         if (profiles == null || profiles.length() == 0) {
             listener.onMessage("当前没有可识别或已记忆的 Wi-Fi / 移动数据网络")
@@ -36,29 +46,26 @@ object NetworkNodesDialog {
                 label += "（当前）"
             }
             val summary = summarizeGroups(profile.optJSONObject("groups"))
-            labels.add(if (summary.isBlank()) label else label + "\n" + summary)
+            labels.add(if (summary.isBlank()) label else label + " · " + summary)
         }
-        AlertDialog.Builder(context)
-            .setTitle(R.string.network_nodes_title)
-            .setItems(labels.toTypedArray()) { _, which ->
-                try {
-                    val profile = values[which]
-                    val groups = profile.optJSONObject("groups")
-                    if (groups == null || groups.length() == 0) {
-                        listener.onMessage("config.yaml 的第一个策略组不是 Selector")
-                        return@setItems
-                    }
-                    showTargets(context, profile, groups.keys().next(), listener)
-                } catch (exception: JSONException) {
-                    listener.onMessage("无法解析节点列表")
+        showMenu(context, anchor, context.getString(R.string.network_nodes_title), labels) { which ->
+            try {
+                val profile = values[which]
+                val groups = profile.optJSONObject("groups")
+                if (groups == null || groups.length() == 0) {
+                    listener.onMessage("config.yaml 的第一个策略组不是 Selector")
+                    return@showMenu
                 }
+                showTargets(context, anchor, profile, groups.keys().next(), listener)
+            } catch (exception: JSONException) {
+                listener.onMessage("无法解析节点列表")
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        }
     }
 
     private fun showTargets(
         context: Context,
+        anchor: View,
         profile: JSONObject,
         groupName: String,
         listener: Listener,
@@ -87,14 +94,35 @@ object NetworkNodesDialog {
             listener.onMessage("该策略组当前没有可用节点")
             return
         }
-        AlertDialog.Builder(context)
-            .setTitle(context.getString(R.string.network_targets_title, groupName))
-            .setItems(labels.toTypedArray()) { _, which ->
-                val target = values[which].optString("name", "")
-                listener.onTargetSelected(profile.optString("identity", ""), groupName, target)
+        val title = context.getString(R.string.network_targets_title, groupName)
+        showMenu(context, anchor, title, labels) { which ->
+            val target = values[which].optString("name", "")
+            listener.onTargetSelected(profile.optString("identity", ""), groupName, target)
+        }
+    }
+
+    private fun showMenu(
+        context: Context,
+        anchor: View,
+        title: String,
+        labels: List<String>,
+        onSelected: (Int) -> Unit,
+    ) {
+        val popup = PopupMenu(context, anchor)
+        val menu = popup.menu
+        menu.add(Menu.NONE, HEADER, 0, title).isEnabled = false
+        for (index in labels.indices) {
+            menu.add(Menu.NONE, FIRST_ENTRY + index, FIRST_ENTRY + index, labels[index])
+        }
+        popup.setOnMenuItemClickListener { item ->
+            if (item.itemId == HEADER) {
+                false
+            } else {
+                onSelected(item.itemId - FIRST_ENTRY)
+                true
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        }
+        popup.show()
     }
 
     private fun summarizeGroups(groups: JSONObject?): String {

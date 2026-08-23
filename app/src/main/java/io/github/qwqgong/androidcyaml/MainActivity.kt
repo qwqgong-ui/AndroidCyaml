@@ -311,7 +311,12 @@ class MainActivity :
                 showToast(detail)
                 return@getNetworkSelectionCatalog
             }
-            NetworkNodesDialog.show(this, detail, networkNodesListener)
+            NetworkNodesDialog.show(
+                this,
+                findViewById(R.id.more_actions),
+                detail,
+                networkNodesListener,
+            )
         }
     }
 
