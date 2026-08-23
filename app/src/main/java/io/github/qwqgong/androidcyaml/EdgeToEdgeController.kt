@@ -7,7 +7,6 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 
 object EdgeToEdgeController {
-    @JvmStatic
     fun apply(activity: Activity, root: View) {
         val window = activity.window
         window.setDecorFitsSystemWindows(false)

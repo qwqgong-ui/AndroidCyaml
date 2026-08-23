@@ -6,12 +6,10 @@ import java.net.InetAddress
 
 object NetworkAddressParser {
     data class AddressPrefix(
-        @get:JvmName("address") val address: InetAddress,
-        @get:JvmName("prefixLength") val prefixLength: Int,
+        val address: InetAddress,
+        val prefixLength: Int,
     )
 
-    @JvmStatic
-    @Throws(IOException::class)
     fun parseAddress(value: String?): InetAddress {
         if (value == null || value.isBlank() || !value.matches(Regex("[0-9A-Fa-f:.]+"))) {
             throw IOException("invalid numeric IP address: $value")
@@ -19,15 +17,11 @@ object NetworkAddressParser {
         return InetAddress.getByName(value)
     }
 
-    @JvmStatic
-    @Throws(IOException::class)
     fun parsePrefix(value: String?): IpPrefix {
         val prefix = parseAddressPrefix(value)
         return IpPrefix(prefix.address, prefix.prefixLength)
     }
 
-    @JvmStatic
-    @Throws(IOException::class)
     fun parseAddressPrefix(value: String?): AddressPrefix {
         if (value == null) {
             throw IOException("invalid IP prefix: null")

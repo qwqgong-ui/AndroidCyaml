@@ -2,13 +2,12 @@ package io.github.qwqgong.androidcyaml
 
 import java.util.Locale
 
-enum class ProcessMatchingMode(@get:JvmName("wireValue") val wireValue: String) {
+enum class ProcessMatchingMode(val wireValue: String) {
     STRICT("strict"),
     ALWAYS("always"),
     OFF("off");
 
     companion object {
-        @JvmStatic
         fun fromWireValue(value: String?): ProcessMatchingMode {
             val normalized = value?.trim()?.lowercase(Locale.ROOT) ?: ""
             if (normalized.isEmpty()) {

@@ -2,7 +2,7 @@ package io.github.qwqgong.androidcyaml
 
 import java.util.Locale
 
-enum class RuntimeLogLevel(@get:JvmName("wireValue") val wireValue: String) {
+enum class RuntimeLogLevel(val wireValue: String) {
     SILENT("silent"),
     ERROR("error"),
     WARNING("warning"),
@@ -10,7 +10,6 @@ enum class RuntimeLogLevel(@get:JvmName("wireValue") val wireValue: String) {
     DEBUG("debug");
 
     companion object {
-        @JvmStatic
         fun fromWireValue(value: String?): RuntimeLogLevel {
             val normalized = value?.trim()?.lowercase(Locale.ROOT) ?: ""
             return when (normalized) {
