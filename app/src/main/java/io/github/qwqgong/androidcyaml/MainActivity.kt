@@ -16,7 +16,8 @@ import android.widget.FrameLayout
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import android.window.OnBackInvokedCallback
+import android.window.BackEvent
+import android.window.OnBackAnimationCallback
 import android.window.OnBackInvokedDispatcher
 
 @Suppress("DEPRECATION")
@@ -53,7 +54,30 @@ class MainActivity :
     private var pendingRuntimeOverrides: RuntimeOverrideSettings? = null
     private var pendingIdentityPermissionStart = false
     private var pendingIdentityPermissionAutomatic = false
-    private var backInvokedCallback: OnBackInvokedCallback? = null
+    private var backAnimator: PredictiveBackAnimator? = null
+    private var backCallbackRegistered = false
+
+    private val backCallback = object : OnBackAnimationCallback {
+        override fun onBackStarted(backEvent: BackEvent) {
+            backAnimator?.start(backEvent)
+        }
+
+        override fun onBackProgressed(backEvent: BackEvent) {
+            backAnimator?.update(backEvent)
+        }
+
+        override fun onBackCancelled() {
+            backAnimator?.settle()
+        }
+
+        override fun onBackInvoked() {
+            val handled = dashboard.handleBack()
+            backAnimator?.settle()
+            if (!handled) {
+                finish()
+            }
+        }
+    }
 
     private val networkNodesListener = object : NetworkNodesDialog.Listener {
         override fun onMessage(message: String) {
@@ -80,7 +104,12 @@ class MainActivity :
 
         preferences = UiPreferences(this)
         taskVisibility = TaskVisibilityController(this)
-        dashboard = DashboardController(this, dashboardContainer) { message -> showToast(message) }
+        dashboard = DashboardController(
+            this,
+            dashboardContainer,
+            { message -> showToast(message) },
+            { syncBackCallback() },
+        )
         controlClient = RuntimeControlClient(this, this)
         vpnController = VpnUiController(this, REQUEST_VPN_PERMISSION, this)
 
@@ -88,18 +117,34 @@ class MainActivity :
         appTitle.setOnClickListener { showRuntimeInfo() }
         moreActions.setOnClickListener { anchor -> showActions(anchor) }
         vpnToggle.setOnCheckedChangeListener { _, checked -> onVpnToggleChanged(checked) }
-        val callback = OnBackInvokedCallback {
-            if (!dashboard.handleBack()) {
-                finish()
-            }
-        }
-        backInvokedCallback = callback
-        onBackInvokedDispatcher.registerOnBackInvokedCallback(
-            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-            callback,
-        )
+        backAnimator = PredictiveBackAnimator(dashboardContainer)
         restorePendingState(savedInstanceState)
         applySnapshot(RuntimeSnapshot.stopped(), false, false)
+    }
+
+    /**
+     * The dashboard only owns back while its WebView has in-page history. Leaving
+     * the dispatcher untouched otherwise lets the system run its own predictive
+     * animation for leaving the activity.
+     */
+    private fun syncBackCallback() {
+        setBackCallbackRegistered(dashboard.canGoBack())
+    }
+
+    private fun setBackCallbackRegistered(registered: Boolean) {
+        if (registered == backCallbackRegistered) {
+            return
+        }
+        backCallbackRegistered = registered
+        if (registered) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                backCallback,
+            )
+        } else {
+            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(backCallback)
+            backAnimator?.reset()
+        }
     }
 
     private fun restorePendingState(savedInstanceState: Bundle?) {
@@ -185,11 +230,9 @@ class MainActivity :
     }
 
     override fun onDestroy() {
-        val callback = backInvokedCallback
-        if (callback != null) {
-            onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
-            backInvokedCallback = null
-        }
+        setBackCallbackRegistered(false)
+        backAnimator?.reset()
+        backAnimator = null
         dashboard.release()
         super.onDestroy()
     }

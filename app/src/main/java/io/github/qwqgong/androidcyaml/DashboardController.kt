@@ -18,9 +18,15 @@ class DashboardController(
     private val activity: Activity,
     private val container: FrameLayout,
     private val messages: MessageSink,
+    private val history: HistoryListener = HistoryListener {},
 ) {
     fun interface MessageSink {
         fun show(message: String)
+    }
+
+    /** Notified whenever the dashboard gains or loses in-page back history. */
+    fun interface HistoryListener {
+        fun onHistoryChanged()
     }
 
     private var webView: WebView? = null
@@ -46,12 +52,19 @@ class DashboardController(
         )
         loadedUrl = url
         dashboard.loadUrl(url)
+        history.onHistoryChanged()
+    }
+
+    fun canGoBack(): Boolean {
+        val dashboard = webView
+        return dashboard != null && dashboard.canGoBack()
     }
 
     fun handleBack(): Boolean {
         val dashboard = webView
         if (dashboard != null && dashboard.canGoBack()) {
             dashboard.goBack()
+            history.onHistoryChanged()
             return true
         }
         return false
@@ -74,6 +87,7 @@ class DashboardController(
         dashboard.webViewClient = WebViewClient()
         dashboard.removeAllViews()
         dashboard.destroy()
+        history.onHistoryChanged()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -129,6 +143,10 @@ class DashboardController(
             }
             openExternal(uri)
             return true
+        }
+
+        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            history.onHistoryChanged()
         }
 
         override fun onReceivedError(

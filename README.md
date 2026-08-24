@@ -61,6 +61,10 @@ AndroidCyaml 固定使用 `qwqgong-ui/mihomo:Alpha` 的下游提交，而不是�
 - `AndroidTunManager`：应用固定接口地址、路由、DNS 和应用范围。
 - `RuntimeCoordinator`：串行化启动、停止、配置事务、IPv6 环境变化和底层网络切换。
 - `MainActivity`：运行在独立 `:ui` 进程，通过同 UID、非导出的 Binder 服务控制 VPN 进程。
+- `PredictiveBackAnimator`：面板返回手势期间跟随手指缩放、位移并圆角化面板，提供预测性返回动画。
+
+面板 WebView 存在页内历史时，`MainActivity` 才向 `OnBackInvokedDispatcher` 注册
+`OnBackAnimationCallback` 并接管返回；没有历史时不注册回调，退出应用交由系统自身的预测性返回动画处理。
 
 整个 AndroidCyaml UID 保持在 VPN 数据路径内。使用 `tun.include-package` 时，外壳会自动把自身加入
 允许列表；使用 `tun.exclude-package` 时会忽略对自身包的排除。只有 mihomo 真正建立的上游 socket
