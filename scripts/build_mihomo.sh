@@ -6,9 +6,12 @@ readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_COMMIT="f86c89238be6e98cef4e97d32b3cca911ca70f52"
 readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="22"
+readonly BUILD_RECIPE_VERSION="23"
 readonly NDK_VERSION="29.0.14206865"
-readonly NATIVE_API="35"
+readonly NATIVE_API="36"
+# minSdk 36 guarantees ARMv8.2 hardware, so the Go core is compiled against the
+# ARMv8.1 LSE atomic baseline instead of ARMv8.0 exclusive-load retry loops.
+readonly GOARM64_BASELINE="v8.2"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly MODULE_DIR="${ROOT_DIR}/.third_party/androidcyaml-mihomo-module"
 readonly TEMP_DIR="${ROOT_DIR}/.third_party/mihomo-jni-building"
@@ -41,7 +44,7 @@ wrapper_sources=("${WRAPPER_SOURCE_DIR}"/*.go)
 
 readonly PATCH_DIGEST="$(cat "${androidcyaml_patches[@]}" | sha256sum | awk '{ print $1 }')"
 readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" | sha256sum | awk '{ print $1 }')"
-readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:${PATCH_DIGEST}:${WRAPPER_DIGEST}:android-arm64-jni-c-shared-v${BUILD_RECIPE_VERSION}"
+readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:${PATCH_DIGEST}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
 if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
@@ -185,6 +188,7 @@ readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X 
         CGO_ENABLED=1 \
         GOOS=android \
         GOARCH=arm64 \
+        GOARM64="${GOARM64_BASELINE}" \
         CC="${ANDROID_CC}" \
         CXX="${ANDROID_CXX}" \
         AR="${ANDROID_AR}" \
@@ -203,6 +207,18 @@ readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X 
     echo "Go did not produce the JNI shared library and header" >&2
     exit 1
 }
+
+# The recorded build setting is the only proof that the LSE atomic baseline
+# actually reached the generated code instead of silently falling back to v8.0.
+readonly built_goarm64="$(
+    env GOWORK=off GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        go version -m "${TEMP_DIR}/libmihomo.so" \
+        | awk '$1 == "build" && $2 ~ /^GOARM64=/ { print substr($2, 9) }'
+)"
+if [[ "${built_goarm64}" != "${GOARM64_BASELINE}" ]]; then
+    echo "Go core was built for GOARM64=${built_goarm64:-unknown}, expected ${GOARM64_BASELINE}" >&2
+    exit 1
+fi
 
 mv -f "${TEMP_DIR}/libmihomo.so" "${OUTPUT_LIBRARY}"
 mv -f "${TEMP_DIR}/libmihomo.h" "${OUTPUT_HEADER}"
