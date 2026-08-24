@@ -91,7 +91,11 @@ Java MihomoNative
 ```
 
 `libandroidcyaml.so` 只按稳定 SONAME `libmihomo.so` 链接。CI 验证两个库均为 arm64、LOAD 段至少
-16 KiB 对齐、不包含构建机绝对依赖路径，也不存在 Go 核心反向引用 JNI 包装层的循环依赖。
+16 KiB 对齐、在 APK 内未压缩存储、不包含构建机绝对依赖路径，也不存在 Go 核心反向引用 JNI 包装层的
+循环依赖。
+
+两个库都以 NDK 原生 API 级别 36 构建，与 `minSdk = 36` 对齐；Go 核心额外固定 `GOARM64=v8.2`，
+使运行时原子操作走 ARMv8.1 LSE 指令而非 ARMv8.0 独占循环。
 
 ## Startup transaction
 

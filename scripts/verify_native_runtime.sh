@@ -70,6 +70,25 @@ verify_packaged_symbols_are_stripped() {
     fi
 }
 
+# 16 KiB page devices map the packaged libraries straight out of the APK, which
+# only works when they are stored uncompressed and page aligned.
+verify_uncompressed_libraries() {
+    local found=0
+    local method entry
+    while read -r method entry; do
+        found=1
+        if [[ "${method}" != "Stored" ]]; then
+            echo "${entry} is compressed in the APK: ${method}" >&2
+            exit 1
+        fi
+    done < <(
+        unzip -v "${APK}" 'lib/arm64-v8a/*.so' \
+            | awk '$NF ~ /\.so$/ { print $2, $NF }'
+    )
+    (( found > 0 )) || { echo "APK contains no arm64-v8a libraries" >&2; exit 1; }
+}
+
+verify_uncompressed_libraries
 verify_aarch64 "${WRAPPER}"
 verify_aarch64 "${CORE}"
 verify_page_alignment "${WRAPPER}"

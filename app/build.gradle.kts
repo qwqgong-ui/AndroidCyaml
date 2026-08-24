@@ -24,8 +24,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 302
-        versionName = "1.0.4"
+        versionCode = 303
+        versionName = "1.0.5"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -33,7 +33,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += "-DANDROID_PLATFORM=android-35"
+                arguments += "-DANDROID_PLATFORM=android-36"
                 cppFlags += listOf("-std=c++20")
             }
         }
@@ -86,7 +86,7 @@ android {
 
     packaging {
         jniLibs {
-            useLegacyPackaging = true
+            useLegacyPackaging = false
         }
         resources {
             excludes += setOf("META-INF/DEPENDENCIES", "META-INF/LICENSE*")

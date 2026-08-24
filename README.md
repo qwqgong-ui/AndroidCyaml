@@ -245,9 +245,17 @@ adb shell pidof io.github.qwqgong.androidcyaml:ui
 
 - JDK 17
 - Android SDK Platform 37 与 Build Tools 37.0.0
-- Android NDK `29.0.14206865` 与 CMake 3.22.1
+- Android NDK `29.0.14206865` 与 CMake 3.22.1，原生 API 级别 36
 - Go 1.26 或更高版本
 - Git、bash、unzip、readelf、sha256sum
+
+原生 ABI 基线为 **ARMv8.2**：`minSdk = 36` 意味着所有目标设备都不低于 ARMv8.2，因此 Go 核心以
+`GOARM64=v8.2` 交叉编译，用 ARMv8.1 LSE 原子指令（`CAS`、`LDADD`）替代 ARMv8.0 的
+`LDXR`/`STXR` 独占重试循环。这对 mihomo 这种高并发 Go 负载在骁龙 8 Elite 等多核大芯片上意义最大。
+`scripts/build_mihomo.sh` 在构建后读取 `go version -m` 记录的 build setting 断言该基线确实生效。
+
+原生库以未压缩方式打包（`useLegacyPackaging = false`），由 linker 直接从 APK 内 mmap，安装后不再
+额外解压一份到 `/data/app/.../lib/`。代价是 APK 下载体积等于原生库的未压缩大小。
 
 ```properties
 # local.properties
@@ -272,7 +280,8 @@ bash scripts/verify_art_optimization.sh \
   app/build/outputs/mapping/optimized/mapping.txt
 ```
 
-验证脚本检查两个原生库的架构、符号、SONAME/依赖关系、循环引用和至少 16 KiB 的 LOAD 对齐。
+验证脚本检查两个原生库的架构、符号、SONAME/依赖关系、循环引用、至少 16 KiB 的 LOAD 对齐，
+以及两个库在 APK 内以 `Stored` 未压缩方式打包。
 正式发行在 GitHub Actions 中先构建未签名 Release APK，再从四个
 `ANDROID_RELEASE_*` secrets 恢复密钥并独立执行 zipalign、签名和验证；Gradle 配置缓存因此
 不会序列化签名密码。
