@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="start_vpn"
+        android:enabled="true"
+        android:icon="@drawable/ic_vpn_key"
+        android:shortcutLongLabel="@string/shortcut_start_vpn_long"
+        android:shortcutShortLabel="@string/shortcut_start_vpn">
+        <intent
+            android:action="io.github.qwqgong.androidcyaml.action.QUICK_START_VPN"
+            android:targetClass="io.github.qwqgong.androidcyaml.QuickActionActivity"
+            android:targetPackage="io.github.qwqgong.androidcyaml" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="stop_vpn"
+        android:enabled="true"
+        android:icon="@drawable/ic_vpn_stop"
+        android:shortcutLongLabel="@string/shortcut_stop_vpn_long"
+        android:shortcutShortLabel="@string/shortcut_stop_vpn">
+        <intent
+            android:action="io.github.qwqgong.androidcyaml.action.QUICK_STOP_VPN"
+            android:targetClass="io.github.qwqgong.androidcyaml.QuickActionActivity"
+            android:targetPackage="io.github.qwqgong.androidcyaml" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="import_config"
+        android:enabled="true"
+        android:icon="@drawable/ic_config_upload"
+        android:shortcutLongLabel="@string/shortcut_import_config_long"
+        android:shortcutShortLabel="@string/shortcut_import_config">
+        <intent
+            android:action="io.github.qwqgong.androidcyaml.action.IMPORT_CONFIG"
+            android:targetClass="io.github.qwqgong.androidcyaml.MainActivity"
+            android:targetPackage="io.github.qwqgong.androidcyaml" />
+    </shortcut>
+
+</shortcuts>

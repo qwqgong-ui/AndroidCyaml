@@ -4,8 +4,11 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Application
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -120,6 +123,22 @@ class MainActivity :
         backAnimator = PredictiveBackAnimator(dashboardContainer)
         restorePendingState(savedInstanceState)
         applySnapshot(RuntimeSnapshot.stopped(), false, false)
+        if (savedInstanceState == null) {
+            handleLaunchAction()
+        }
+    }
+
+    /**
+     * The import shortcut lands here because picking and installing a config
+     * needs the bound control service and a place to report the result.
+     */
+    private fun handleLaunchAction() {
+        if (ACTION_IMPORT_CONFIG != intent?.action) {
+            return
+        }
+        // Clear the action so a configuration change does not reopen the picker.
+        setIntent(Intent(this, MainActivity::class.java))
+        chooseConfig()
     }
 
     /**
@@ -371,6 +390,24 @@ class MainActivity :
         }
     }
 
+    override fun onAddQuickSettingsTile() {
+        val statusBar = getSystemService(StatusBarManager::class.java)
+        if (statusBar == null) {
+            showToast(getString(R.string.quick_tile_add_failed))
+            return
+        }
+        try {
+            statusBar.requestAddTileService(
+                ComponentName(this, VpnTileService::class.java),
+                getString(R.string.app_name),
+                Icon.createWithResource(this, R.drawable.ic_vpn_key),
+                mainExecutor,
+            ) { result -> showToast(getString(quickTileResultMessage(result))) }
+        } catch (exception: RuntimeException) {
+            showToast(getString(R.string.quick_tile_add_failed))
+        }
+    }
+
     override fun onAutoStartChanged(enabled: Boolean) {
         preferences.setAutoStartEnabled(enabled)
         autoStartAttempted = false
@@ -594,6 +631,8 @@ class MainActivity :
     }
 
     private companion object {
+        const val ACTION_IMPORT_CONFIG = "io.github.qwqgong.androidcyaml.action.IMPORT_CONFIG"
+
         const val REQUEST_VPN_PERMISSION = 10_001
         const val REQUEST_CONFIG_FILE = 10_002
         const val REQUEST_LOCAL_NETWORK_PERMISSION = 10_003
@@ -610,5 +649,14 @@ class MainActivity :
         const val STATE_PENDING_IDENTITY_PERMISSION_START = "pending_identity_permission_start"
         const val STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC =
             "pending_identity_permission_automatic"
+
+        fun quickTileResultMessage(result: Int): Int = when (result) {
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> R.string.quick_tile_added
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
+                R.string.quick_tile_already_added
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED ->
+                R.string.quick_tile_not_added
+            else -> R.string.quick_tile_add_failed
+        }
     }
 }

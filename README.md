@@ -62,6 +62,9 @@ AndroidCyaml 固定使用 `qwqgong-ui/mihomo:Alpha` 的下游提交，而不是�
 - `RuntimeCoordinator`：串行化启动、停止、配置事务、IPv6 环境变化和底层网络切换。
 - `MainActivity`：运行在独立 `:ui` 进程，通过同 UID、非导出的 Binder 服务控制 VPN 进程。
 - `PredictiveBackAnimator`：面板返回手势期间跟随手指缩放、位移并圆角化面板，提供预测性返回动画。
+- `VpnTileService`：快捷设置磁贴，绑定同一个控制服务显示运行时状态并切换 VPN。
+- `QuickActionActivity`：桌面快捷方式与磁贴的无界面入口，只负责发起一次启停并结束。
+- `VpnQuickActions`：磁贴、快捷方式和主界面共用的启停路径。
 
 面板 WebView 存在页内历史时，`MainActivity` 才向 `OnBackInvokedDispatcher` 注册
 `OnBackAnimationCallback` 并接管返回；没有历史时不注册回调，退出应用交由系统自身的预测性返回动画处理。
@@ -69,6 +72,18 @@ AndroidCyaml 固定使用 `qwqgong-ui/mihomo:Alpha` 的下游提交，而不是�
 整个 AndroidCyaml UID 保持在 VPN 数据路径内。使用 `tun.include-package` 时，外壳会自动把自身加入
 允许列表；使用 `tun.exclude-package` 时会忽略对自身包的排除。只有 mihomo 真正建立的上游 socket
 通过 `protect(fd)` 离开 VPN，system 栈内部 TCP listener 与 NAT 回注仍留在 TUN 内。
+
+## 快捷入口
+
+快捷设置磁贴与桌面长按快捷方式都不在前台，无法承载系统 VPN 授权对话框，因此二者共用
+`VpnQuickActions`：
+
+- 已授权时直接 `startForegroundService`；磁贴不声明前台启动，避免服务误请求 location 前台类型。
+- 需要授权或后台启动被拒时，改为拉起 `QuickActionActivity`，由它以 Activity 身份完成授权再启动。
+- 系统「始终开启 VPN」生效时，磁贴跳转到 VPN 系统设置，快捷方式给出提示，均不假装能关闭。
+
+磁贴通过 `AppControlService` 订阅运行时快照显示状态，不依赖自己的点击记录；「更多操作 → 添加快捷设置磁贴」
+调用 `StatusBarManager.requestAddTileService` 一键添加。
 
 ## 固定 TUN 合约
 

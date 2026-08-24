@@ -85,4 +85,16 @@
     <string name="runtime_override_failed">运行时覆写失败：%1$s</string>
     <string name="cancel">取消</string>
     <string name="apply">应用</string>
+    <string name="add_quick_tile">添加快捷设置磁贴</string>
+    <string name="quick_tile_added">磁贴已添加到快捷设置</string>
+    <string name="quick_tile_already_added">磁贴已在快捷设置中</string>
+    <string name="quick_tile_not_added">未添加磁贴</string>
+    <string name="quick_tile_add_failed">无法请求添加磁贴</string>
+    <string name="quick_action_failed">快捷操作失败</string>
+    <string name="shortcut_start_vpn">启动 VPN</string>
+    <string name="shortcut_start_vpn_long">启动 AndroidCyaml VPN</string>
+    <string name="shortcut_stop_vpn">停止 VPN</string>
+    <string name="shortcut_stop_vpn_long">停止 AndroidCyaml VPN</string>
+    <string name="shortcut_import_config">导入配置</string>
+    <string name="shortcut_import_config_long">导入 config.yaml</string>
 </resources>

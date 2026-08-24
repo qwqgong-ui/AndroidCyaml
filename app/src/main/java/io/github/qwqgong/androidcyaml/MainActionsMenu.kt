@@ -18,6 +18,8 @@ object MainActionsMenu {
 
         fun onOpenVpnSettings()
 
+        fun onAddQuickSettingsTile()
+
         fun onAutoStartChanged(enabled: Boolean)
 
         fun onHideRecentsChanged(hidden: Boolean)
@@ -30,6 +32,7 @@ object MainActionsMenu {
     private const val AUTO_START = 5
     private const val HIDE_RECENTS = 6
     private const val NETWORK_NODES = 7
+    private const val ADD_QUICK_TILE = 8
 
     fun show(
         context: Context,
@@ -45,10 +48,11 @@ object MainActionsMenu {
         menu.add(Menu.NONE, RUNTIME_OVERRIDES, 2, R.string.runtime_overrides)
         menu.add(Menu.NONE, NETWORK_NODES, 3, R.string.network_nodes)
         menu.add(Menu.NONE, VPN_SETTINGS, 4, R.string.vpn_system_settings)
-        menu.add(Menu.NONE, AUTO_START, 5, R.string.auto_start_vpn)
+        menu.add(Menu.NONE, ADD_QUICK_TILE, 5, R.string.add_quick_tile)
+        menu.add(Menu.NONE, AUTO_START, 6, R.string.auto_start_vpn)
             .setCheckable(true)
             .isChecked = autoStartEnabled
-        menu.add(Menu.NONE, HIDE_RECENTS, 6, R.string.hide_from_recents)
+        menu.add(Menu.NONE, HIDE_RECENTS, 7, R.string.hide_from_recents)
             .setCheckable(true)
             .isChecked = hiddenFromRecents
         popup.setOnMenuItemClickListener { item -> handle(item, listener) }
@@ -62,6 +66,7 @@ object MainActionsMenu {
             RUNTIME_OVERRIDES -> listener.onOpenRuntimeOverrides()
             NETWORK_NODES -> listener.onOpenNetworkNodes()
             VPN_SETTINGS -> listener.onOpenVpnSettings()
+            ADD_QUICK_TILE -> listener.onAddQuickSettingsTile()
             AUTO_START -> {
                 val enabled = !item.isChecked
                 item.isChecked = enabled
