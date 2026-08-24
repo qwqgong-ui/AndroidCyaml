@@ -245,7 +245,7 @@ adb shell pidof io.github.qwqgong.androidcyaml:ui
 
 - JDK 17
 - Android SDK Platform 37 与 Build Tools 37.0.0
-- Android NDK `29.0.14206865` 与 CMake 3.22.1，原生 API 级别 36
+- Android NDK `29.0.14206865` 与 CMake 3.22.1
 - Go 1.26 或更高版本
 - Git、bash、unzip、readelf、sha256sum
 

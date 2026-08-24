@@ -33,7 +33,10 @@ android {
 
         externalNativeBuild {
             cmake {
-                arguments += "-DANDROID_PLATFORM=android-36"
+                // NDK 29.0.14206865 supports no higher than API 35, so the native
+                // platform stays below minSdk. Raising it makes AGP clamp back to 35
+                // and makes the Go cross build fail on a missing toolchain.
+                arguments += "-DANDROID_PLATFORM=android-35"
                 cppFlags += listOf("-std=c++20")
             }
         }
