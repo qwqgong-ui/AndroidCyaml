@@ -8,7 +8,9 @@ readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
 readonly BUILD_RECIPE_VERSION="23"
 readonly NDK_VERSION="29.0.14206865"
-readonly NATIVE_API="36"
+# NDK 29.0.14206865 ships no toolchain above API 35, so this trails minSdk 36
+# on purpose. Linking against an older platform than minSdk is safe.
+readonly NATIVE_API="35"
 # minSdk 36 guarantees ARMv8.2 hardware, so the Go core is compiled against the
 # ARMv8.1 LSE atomic baseline instead of ARMv8.0 exclusive-load retry loops.
 readonly GOARM64_BASELINE="v8.2"

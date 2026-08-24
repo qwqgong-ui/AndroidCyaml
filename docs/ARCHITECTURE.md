@@ -94,8 +94,9 @@ Java MihomoNative
 16 KiB 对齐、在 APK 内未压缩存储、不包含构建机绝对依赖路径，也不存在 Go 核心反向引用 JNI 包装层的
 循环依赖。
 
-两个库都以 NDK 原生 API 级别 36 构建，与 `minSdk = 36` 对齐；Go 核心额外固定 `GOARM64=v8.2`，
-使运行时原子操作走 ARMv8.1 LSE 指令而非 ARMv8.0 独占循环。
+两个库都以 NDK 原生 API 级别 35 构建。NDK `29.0.14206865` 不提供高于 35 的工具链，因此原生平台
+级别低于 `minSdk = 36`；链接更低的平台版本是安全的，只是不能使用 API 36 才引入的 libc 符号。
+Go 核心额外固定 `GOARM64=v8.2`，使运行时原子操作走 ARMv8.1 LSE 指令而非 ARMv8.0 独占循环。
 
 ## Startup transaction
 
