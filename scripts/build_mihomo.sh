@@ -3,10 +3,11 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
-readonly MIHOMO_COMMIT="6b14a50c20cf373c7b4a58fdbcb9554622bba9dd"
+readonly MIHOMO_SOURCE_BRANCH="dev"
+readonly MIHOMO_COMMIT="d644599ba1e2b396e6fcc1bdfdfc9906aeb2c089"
 readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="23"
+readonly BUILD_RECIPE_VERSION="24"
 readonly NDK_VERSION="29.0.14206865"
 # NDK 29.0.14206865 ships no toolchain above API 35, so this trails minSdk 36
 # on purpose. Linking against an older platform than minSdk is safe.
@@ -46,7 +47,7 @@ wrapper_sources=("${WRAPPER_SOURCE_DIR}"/*.go)
 
 readonly PATCH_DIGEST="$(cat "${androidcyaml_patches[@]}" | sha256sum | awk '{ print $1 }')"
 readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" | sha256sum | awk '{ print $1 }')"
-readonly EXPECTED_MARKER="${MIHOMO_COMMIT}:${PATCH_DIGEST}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
+readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${PATCH_DIGEST}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
 if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
@@ -111,24 +112,18 @@ git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
 
-readonly MIHOMO_PATCH_SCRIPT="${SOURCE_DIR}/patches/apply-mihomo-patches.sh"
-[[ -f "${MIHOMO_PATCH_SCRIPT}" ]] || {
-    echo "mihomo patch application script is missing: ${MIHOMO_PATCH_SCRIPT}" >&2
-    exit 1
-}
-sh "${MIHOMO_PATCH_SCRIPT}"
 git -C "${SOURCE_DIR}" diff --check
-git -C "${SOURCE_DIR}" add -A
 
 # AndroidCyaml owns these patches. The mihomo checkout remains pinned to a
-# desktop-safe commit and is modified only inside the ignored build directory.
+# tested commit from the dev branch and is modified only inside the ignored
+# build directory.
 for patch in "${androidcyaml_patches[@]}"; do
     git -C "${SOURCE_DIR}" apply --check --whitespace=error-all "${patch}"
     git -C "${SOURCE_DIR}" apply --whitespace=error-all "${patch}"
 done
 git -C "${SOURCE_DIR}" diff --check
 
-readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/process/process.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
+readonly EXPECTED_PATCH_PATHS=$'component/process/process.go\nlistener/sing_tun/server_android.go'
 readonly ACTUAL_PATCH_PATHS="$({
     git -C "${SOURCE_DIR}" diff --name-only
     git -C "${SOURCE_DIR}" ls-files --others --exclude-standard
@@ -226,4 +221,4 @@ mv -f "${TEMP_DIR}/libmihomo.so" "${OUTPUT_LIBRARY}"
 mv -f "${TEMP_DIR}/libmihomo.h" "${OUTPUT_HEADER}"
 rmdir "${TEMP_DIR}"
 printf '%s' "${EXPECTED_MARKER}" > "${MARKER_FILE}"
-echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from clean mihomo plus the AndroidCyaml-owned patches"
+echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from mihomo ${MIHOMO_SOURCE_BRANCH} plus the AndroidCyaml-owned patches"

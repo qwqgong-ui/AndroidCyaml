@@ -29,9 +29,9 @@ VPN 服务进程。
 
 ## Core isolation
 
-AndroidCyaml 固定 `qwqgong-ui/mihomo:Alpha` 的下游提交，并在自己的临时构建目录中应用 Android
-平台补丁。该下游分支已经与 `MetaCubeX/mihomo:Alpha` 分化：除协议模块裁剪外，还保留 UDP 域名
-原样转发补丁。构建不会把 JNI、VpnService 或运行时覆写代码写回 mihomo checkout。
+AndroidCyaml 固定 `qwqgong-ui/mihomo:dev` 的已测试提交，并在自己的临时构建目录中
+应用 Android 平台补丁。Mihomo 定制已展开在 `dev` 源码中，不再在 Android 构建前应用
+Mihomo 补丁链。构建不会把 JNI、VpnService 或运行时覆写代码写回 mihomo checkout。
 
 构建应用的补丁为：
 

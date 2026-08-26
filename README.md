@@ -36,9 +36,10 @@ AndroidCyaml 固定使用 `app/build.gradle.kts` 中的 mihomo 提交。构建�
 sing-tun 的 Android 包数据库。JNI 导出、固定 TUN 合约、IPv6 处理、逐 socket `protect()` 和运行时
 配置变换都由 AndroidCyaml 仓库维护。构建脚本会拒绝补丁触碰约定之外的 mihomo 文件。
 
-AndroidCyaml 固定使用 `qwqgong-ui/mihomo:Alpha` 的下游提交，而不是未经修改的上游
-`MetaCubeX/mihomo:Alpha`。该下游分支除构建裁剪外，还保留了 UDP 域名转发补丁，因此行为已经与
-上游内核分化。AndroidCyaml 的 JNI 集成仍只在自己的临时构建目录中应用，不会写回 mihomo checkout。
+AndroidCyaml 固定使用 `qwqgong-ui/mihomo:dev` 的已测试提交，而不是未经修改的
+`MetaCubeX/mihomo:Alpha`。Mihomo 下游修改已直接展开在 `dev` 源码中，包括构建裁剪、
+UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用 Mihomo 补丁链。JNI 集成
+仍只在 AndroidCyaml 的临时构建目录中应用，不会写回 mihomo checkout。
 
 ### UDP 域名原样转发
 
@@ -307,7 +308,8 @@ bash scripts/verify_art_optimization.sh \
 
 ## 固定依赖
 
-- mihomo 提交：见 `app/build.gradle.kts` 中的 `mihomoCommit`
+- mihomo 来源：`qwqgong-ui/mihomo:dev`
+- mihomo 精确提交：见 `app/build.gradle.kts` 中的 `mihomoCommit`
 - AndroidCyaml 平台补丁：`patches/mihomo/0001-androidcyaml-platform-hooks.patch`
 - AndroidCyaml Go 包装模块：`native/mihomo`
 - Zashboard：由 `scripts/fetch_zashboard.sh` 获取固定 release 资产
