@@ -7,7 +7,7 @@ readonly MIHOMO_SOURCE_BRANCH="dev"
 readonly MIHOMO_COMMIT="f3ee98951864dd562df230386d3c39a2b49fde59"
 readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="24"
+readonly BUILD_RECIPE_VERSION="25"
 readonly NDK_VERSION="29.0.14206865"
 # NDK 29.0.14206865 ships no toolchain above API 35, so this trails minSdk 36
 # on purpose. Linking against an older platform than minSdk is safe.
@@ -18,6 +18,7 @@ readonly GOARM64_BASELINE="v8.2"
 readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly MODULE_DIR="${ROOT_DIR}/.third_party/androidcyaml-mihomo-module"
 readonly TEMP_DIR="${ROOT_DIR}/.third_party/mihomo-jni-building"
+readonly DEP_PATCH_DIR="${ROOT_DIR}/.third_party/mihomo-patched-deps"
 readonly HEADER_DIR="${ROOT_DIR}/app/src/main/cpp/generated"
 readonly LIBRARY_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
 readonly OUTPUT_LIBRARY="${LIBRARY_DIR}/libmihomo.so"
@@ -123,7 +124,7 @@ for patch in "${androidcyaml_patches[@]}"; do
 done
 git -C "${SOURCE_DIR}" diff --check
 
-readonly EXPECTED_PATCH_PATHS=$'component/process/process.go\nlistener/sing_tun/server_android.go'
+readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/process/process.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
 readonly ACTUAL_PATCH_PATHS="$({
     git -C "${SOURCE_DIR}" diff --name-only
     git -C "${SOURCE_DIR}" ls-files --others --exclude-standard
@@ -145,6 +146,59 @@ case "${INSTALLED_GO_VERSION}" in
         ;;
 esac
 
+# mihomo's dev branch carries patches for its own dependencies -- sing-tun's
+# ICMP/UDP error reporting, quic-go, sing-quic and sing-mux. They live in the
+# mihomo checkout, are applied to copies of the downloaded modules, and are
+# wired in through a generated modfile. Skipping this step leaves the kernel
+# calling sing-tun APIs that no released sing-tun has.
+readonly DEP_PATCH_SCRIPT="${SOURCE_DIR}/patches/apply-dependency-patches.sh"
+[[ -f "${DEP_PATCH_SCRIPT}" ]] || {
+    echo "mihomo dependency patch script is missing: ${DEP_PATCH_SCRIPT}" >&2
+    exit 1
+}
+
+rm -rf "${DEP_PATCH_DIR}"
+mkdir -p "${DEP_PATCH_DIR}"
+dep_patch_output="$(
+    cd "${SOURCE_DIR}"
+    env \
+        GOWORK=off \
+        GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        TMPDIR="${DEP_PATCH_DIR}" \
+        sh "${DEP_PATCH_SCRIPT}" | tail -n 1
+)"
+readonly MIHOMO_MODFILE="${dep_patch_output#GOFLAGS=-modfile=}"
+if [[ "${MIHOMO_MODFILE}" == "${dep_patch_output}" || ! -f "${MIHOMO_MODFILE}" ]]; then
+    echo "mihomo dependency patches produced no usable modfile: ${dep_patch_output}" >&2
+    exit 1
+fi
+
+# Replace directives only apply to the main module, so the wrapper module below
+# cannot inherit these from mihomo's go.mod and has to repeat them verbatim.
+readonly MIHOMO_REPLACEMENTS="$(
+    cd "${SOURCE_DIR}"
+    env \
+        GOWORK=off \
+        GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        go mod edit -print -modfile="${MIHOMO_MODFILE}" \
+    | awk '
+        /^replace[[:space:]]*\(/ { block = 1; next }
+        block && /^\)/           { block = 0; next }
+        block && NF               { sub(/^[[:space:]]+/, ""); print "replace " $0; next }
+        /^replace[[:space:]]/     { print }
+    '
+)"
+if ! grep -q 'github.com/metacubex/sing-tun =>' <<<"${MIHOMO_REPLACEMENTS}"; then
+    echo "mihomo dependency patches did not replace sing-tun:" >&2
+    printf '%s\n' "${MIHOMO_REPLACEMENTS}" >&2
+    exit 1
+fi
+if grep -qE '=> \.{1,2}/' <<<"${MIHOMO_REPLACEMENTS}"; then
+    echo "mihomo declares a relative replacement the wrapper module cannot reuse:" >&2
+    printf '%s\n' "${MIHOMO_REPLACEMENTS}" >&2
+    exit 1
+fi
+
 # Compile and exercise the actual patched kernel before cross-compiling the JNI
 # library. This catches patch drift and XHTTP integration failures directly.
 (
@@ -152,13 +206,17 @@ esac
     env \
         GOWORK=off \
         GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+        GOFLAGS="-modfile=${MIHOMO_MODFILE}" \
         go test ./transport/xhttp ./adapter/outbound
 )
 
 rm -rf "${MODULE_DIR}" "${TEMP_DIR}"
 mkdir -p "${MODULE_DIR}" "${TEMP_DIR}"
 cp "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" "${MODULE_DIR}/"
-printf '\nreplace github.com/metacubex/mihomo => ../mihomo-src\n' >> "${MODULE_DIR}/go.mod"
+{
+    printf '\nreplace github.com/metacubex/mihomo => ../mihomo-src\n'
+    printf '%s\n' "${MIHOMO_REPLACEMENTS}"
+} >> "${MODULE_DIR}/go.mod"
 
 # The wrapper's host-safe lifecycle tests exercise state that would otherwise
 # only fail after a second in-process Android TUN startup.
