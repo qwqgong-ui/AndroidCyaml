@@ -16,16 +16,7 @@ It then applies every patch in this directory and verifies that they change
 exactly these files:
 
 - `adapter/outbound/vless.go`
-- `component/dialer/dialer.go`
-- `component/dialer/direct_progressive.go`
-- `component/dialer/direct_scope.go`
-- `component/dialer/direct_scope_test.go`
-- `component/dialer/tcp_concurrent_cache.go`
 - `component/process/process.go`
-- `component/resolver/resolver.go`
-- `dns/direct_candidates.go`
-- `dns/direct_candidates_test.go`
-- `dns/resolver.go`
 - `listener/sing_tun/server_android.go`
 - `transport/xhttp/browser_transport.go`
 - `transport/xhttp/browser_transport_test.go`
@@ -38,12 +29,11 @@ process-owner hook and avoids starting sing-tun's Android package database after
 transport that `native/mihomo/browser_dialer_android.go` installs through
 `xhttp.SetBrowserTransportFactory`, and routes VLESS XHTTP through it.
 
-`0003-androidcyaml-progressive-direct-network-cache.patch` makes
-`direct-nameserver` query in priority order on a cold cache, refresh the first
-two sources independently after expiry, and start TCP as soon as either source
-returns. Ordinary answers, per-source 24-hour candidates, and TCP winners are
-keyed by AndroidCyaml's privacy-preserving Wi-Fi/SIM environment identity, so
-one physical network cannot reuse another network's DIRECT cache records.
+The pinned mihomo `dev` baseline itself provides progressive
+`direct-nameserver` lookup and network-scoped DNS/TCP cache keys. AndroidCyaml's
+wrapper supplies those keys with a privacy-preserving Wi-Fi/SIM identity; no
+second downstream patch is applied to code already present in the pinned
+commit.
 
 All lifecycle, JNI exports, fixed `/30` and `/126` TUN addresses, TUN stack
 selection, IPv6 override handling, and per-socket `VpnService.protect(fd)` logic

@@ -124,7 +124,7 @@ for patch in "${androidcyaml_patches[@]}"; do
 done
 git -C "${SOURCE_DIR}" diff --check
 
-readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/dialer/dialer.go\ncomponent/dialer/direct_progressive.go\ncomponent/dialer/direct_scope.go\ncomponent/dialer/direct_scope_test.go\ncomponent/dialer/tcp_concurrent_cache.go\ncomponent/process/process.go\ncomponent/resolver/resolver.go\ndns/direct_candidates.go\ndns/direct_candidates_test.go\ndns/resolver.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
+readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/process/process.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
 readonly ACTUAL_PATCH_PATHS="$({
     git -C "${SOURCE_DIR}" diff --name-only
     git -C "${SOURCE_DIR}" ls-files --others --exclude-standard
