@@ -66,6 +66,26 @@ class NetworkAddressParserTest {
         assertEquals("home", wifiIpv6.selectionIdentity)
         assertFalse(mobileIpv6.wifi)
         assertFalse(Ipv6EnvironmentMonitor.State.unavailable().available())
+        assertEquals("home", wifiIpv6.cacheIdentity())
+        assertEquals("mobile", mobileIpv6.cacheIdentity())
+    }
+
+    @Test
+    fun cacheIdentityFallsBackToHashedPhysicalPath() {
+        val first = Ipv6EnvironmentMonitor.State.of(
+            100L, "if=wlan0|addr=192.168.1.2/24", true, true, emptyList(), "",
+        )
+        val samePathNewHandle = Ipv6EnvironmentMonitor.State.of(
+            200L, "if=wlan0|addr=192.168.1.2/24", true, true, emptyList(), "",
+        )
+        val otherPath = Ipv6EnvironmentMonitor.State.of(
+            300L, "if=wlan0|addr=192.168.2.2/24", true, true, emptyList(), "",
+        )
+
+        assertTrue(first.cacheIdentity().isNotBlank())
+        assertEquals(first.cacheIdentity(), samePathNewHandle.cacheIdentity())
+        assertNotEquals(first.cacheIdentity(), otherPath.cacheIdentity())
+        assertEquals("", Ipv6EnvironmentMonitor.State.unavailable().cacheIdentity())
     }
 
     @Test

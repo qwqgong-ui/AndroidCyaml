@@ -38,6 +38,7 @@ object MihomoNative {
         ipv6Enabled: Boolean,
         tunFileDescriptor: Int,
         callbacks: NativePlatformCallbacks,
+        networkEnvironment: String,
     ): String {
         requireSuccess(
             nativeSetWebViewXhttpEnabled(
@@ -58,6 +59,7 @@ object MihomoNative {
                     settings.processMatchingMode.wireValue,
                     settings.lanWebUiPublic,
                     callbacks,
+                    networkEnvironment,
                 ),
             )
         } catch (startFailure: IOException) {
@@ -85,6 +87,10 @@ object MihomoNative {
 
     fun notifyNetworkChanged() {
         requireSuccess(nativeNotifyNetworkChanged())
+    }
+
+    fun updateNetworkEnvironment(networkEnvironment: String) {
+        requireSuccess(nativeUpdateNetworkEnvironment(networkEnvironment))
     }
 
     fun updateSystemDns(servers: List<String>?) {
@@ -162,6 +168,7 @@ object MihomoNative {
         processMatchingMode: String,
         lanWebUiPublic: Boolean,
         callbacks: NativePlatformCallbacks,
+        networkEnvironment: String,
     ): String?
 
     private external fun nativeSetTcpConcurrent(enabled: Boolean): String?
@@ -169,6 +176,8 @@ object MihomoNative {
     private external fun nativeStop(): String?
 
     private external fun nativeNotifyNetworkChanged(): String?
+
+    private external fun nativeUpdateNetworkEnvironment(networkEnvironment: String): String?
 
     private external fun nativeUpdateSystemDns(serversJson: String): String?
 

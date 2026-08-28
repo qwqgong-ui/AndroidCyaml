@@ -203,7 +203,10 @@ class NetworkReconciler(
             return
         }
         try {
-            currentRuntime.onUnderlyingNetworkChanged(currentState.dnsServers)
+            currentRuntime.onUnderlyingNetworkChanged(
+                currentState.dnsServers,
+                currentState.cacheIdentity(),
+            )
             Log.i(
                 TAG,
                 "Refreshed mihomo after underlying network change: " +

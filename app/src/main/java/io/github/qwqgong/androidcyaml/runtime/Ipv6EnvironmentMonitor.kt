@@ -36,6 +36,17 @@ class Ipv6EnvironmentMonitor(context: Context) {
     ) {
         fun available(): Boolean = networkHandle != 0L
 
+        fun cacheIdentity(): String {
+            if (!available()) {
+                return ""
+            }
+            if (selectionIdentity.isNotBlank()) {
+                return selectionIdentity
+            }
+            val fallbackKind = selectionKind.ifBlank { if (wifi) "wifi" else "cellular" }
+            return NetworkIdentityResolver.pathFingerprint(fallbackKind, linkSignature)
+        }
+
         fun pathChangedFrom(previous: State?): Boolean = previous == null ||
             networkHandle != previous.networkHandle ||
             linkSignature != previous.linkSignature

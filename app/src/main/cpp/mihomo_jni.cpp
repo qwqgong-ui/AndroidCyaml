@@ -600,7 +600,8 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
         jboolean ipv6_enabled,
         jstring process_matching_mode,
         jboolean lan_web_ui_public,
-        jobject callbacks
+        jobject callbacks,
+        jstring network_environment
 ) {
     if (!installCallback(env, callbacks)) {
         return env->NewStringUTF(
@@ -613,6 +614,7 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
     std::string controller_value = stringFromJava(env, controller_address);
     std::string log_level_value = stringFromJava(env, log_level);
     std::string process_matching_mode_value = stringFromJava(env, process_matching_mode);
+    std::string network_environment_value = stringFromJava(env, network_environment);
     return stringFromNative(env, AndroidCyamlStart(
             const_cast<char*>(home_value.c_str()),
             const_cast<char*>(config_value.c_str()),
@@ -620,6 +622,7 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
             const_cast<char*>(controller_value.c_str()),
             const_cast<char*>(log_level_value.c_str()),
             const_cast<char*>(process_matching_mode_value.c_str()),
+            const_cast<char*>(network_environment_value.c_str()),
             static_cast<int>(tun_file_descriptor),
             ipv6_enabled == JNI_TRUE ? 1 : 0,
             lan_web_ui_public == JNI_TRUE ? 1 : 0
@@ -655,6 +658,18 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged(
         jclass
 ) {
     return stringFromNative(env, AndroidCyamlNotifyNetworkChanged());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateNetworkEnvironment(
+        JNIEnv* env,
+        jclass,
+        jstring network_environment
+) {
+    std::string network_environment_value = stringFromJava(env, network_environment);
+    return stringFromNative(env, AndroidCyamlUpdateNetworkEnvironment(
+            const_cast<char*>(network_environment_value.c_str())
+    ));
 }
 
 extern "C" JNIEXPORT jstring JNICALL

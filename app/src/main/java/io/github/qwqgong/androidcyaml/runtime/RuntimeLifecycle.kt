@@ -168,6 +168,7 @@ class RuntimeLifecycle(
             ipv6Enabled,
             tcpConcurrentEnabled,
             networkState.dnsServers,
+            networkState.cacheIdentity(),
         )
         runtime = candidate
         try {

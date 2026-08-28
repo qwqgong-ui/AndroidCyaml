@@ -172,6 +172,15 @@ class NetworkIdentityResolver(context: Context) {
             return fingerprint("cellular:v2|subscription=$subscriptionId|$carrierComponent")
         }
 
+        fun pathFingerprint(kind: String?, linkSignature: String?): String {
+            val stableKind = kind?.trim()?.ifEmpty { "physical" } ?: "physical"
+            val stablePath = linkSignature?.trim() ?: ""
+            if (stablePath.isEmpty()) {
+                return ""
+            }
+            return fingerprint("cache:v1|kind=" + component(stableKind) + "|path=" + component(stablePath))
+        }
+
         private fun fingerprint(canonicalIdentity: String): String {
             try {
                 val digest = MessageDigest.getInstance("SHA-256").digest(

@@ -189,6 +189,7 @@ func AndroidCyamlStart(
 	controllerValue,
 	logLevelValue,
 	processMatchingValue *C.char,
+	networkEnvironmentValue *C.char,
 	fileDescriptor,
 	ipv6Value,
 	lanWebUiPublicValue C.int,
@@ -202,6 +203,7 @@ func AndroidCyamlStart(
 	if !callbacksInstalled() {
 		return respond(nil, errors.New("Android JNI callbacks are not installed"))
 	}
+	dialer.SetDirectNetworkEnvironment(C.GoString(networkEnvironmentValue))
 
 	home := C.GoString(homeValue)
 	configPath := C.GoString(configValue)
@@ -264,6 +266,15 @@ func AndroidCyamlStart(
 	return respond(payload, nil)
 }
 
+//export AndroidCyamlUpdateNetworkEnvironment
+func AndroidCyamlUpdateNetworkEnvironment(environmentValue *C.char) *C.char {
+	runtimeMu.Lock()
+	defer runtimeMu.Unlock()
+
+	dialer.SetDirectNetworkEnvironment(C.GoString(environmentValue))
+	return respond(nil, nil)
+}
+
 //export AndroidCyamlSetTcpConcurrent
 func AndroidCyamlSetTcpConcurrent(enabledValue C.int) *C.char {
 	runtimeMu.Lock()
@@ -291,7 +302,7 @@ func AndroidCyamlNotifyNetworkChanged() *C.char {
 
 	if active {
 		iface.FlushCache()
-		resolver.ClearCache()
+		resolver.ClearVolatileCache()
 		resolver.ResetConnection()
 		statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
 			_ = connection.Close()
@@ -312,7 +323,7 @@ func AndroidCyamlUpdateSystemDNS(serversValue *C.char) *C.char {
 	}
 	MDNS.UpdateSystemDNS(servers)
 	if active {
-		resolver.ClearCache()
+		resolver.ClearVolatileCache()
 		resolver.ResetConnection()
 	}
 	return respond(nil, nil)
@@ -618,6 +629,7 @@ func stopLocked() {
 	}
 	clearPlatformHooks()
 	MDNS.UpdateSystemDNS(nil)
+	dialer.SetDirectNetworkEnvironment("")
 	active = false
 	releaseRebuildableMemory(false)
 }

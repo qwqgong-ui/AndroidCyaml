@@ -14,6 +14,7 @@ class MihomoRuntime(
     private val ipv6Enabled: Boolean,
     private val tcpConcurrentEnabled: Boolean,
     systemDnsServers: List<String>?,
+    private val networkEnvironment: String,
 ) : AutoCloseable {
     private val settings: RuntimeOverrideSettings = settings ?: RuntimeOverrideSettings.defaults()
     private val systemDnsServers: List<String> = systemDnsServers?.toList() ?: emptyList()
@@ -40,6 +41,7 @@ class MihomoRuntime(
                 ipv6Enabled,
                 nativeFd,
                 platformCallbacks,
+                networkEnvironment,
             )
             nativeAcceptedDescriptor = true
             MihomoNative.setTcpConcurrent(tcpConcurrentEnabled)
@@ -95,8 +97,9 @@ class MihomoRuntime(
         }
     }
 
-    fun onUnderlyingNetworkChanged(dnsServers: List<String>) {
+    fun onUnderlyingNetworkChanged(dnsServers: List<String>, networkEnvironment: String) {
         if (started && MihomoNative.isRunning()) {
+            MihomoNative.updateNetworkEnvironment(networkEnvironment)
             MihomoNative.updateSystemDns(dnsServers)
             MihomoNative.notifyNetworkChanged()
         }

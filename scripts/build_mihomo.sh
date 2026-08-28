@@ -7,7 +7,7 @@ readonly MIHOMO_SOURCE_BRANCH="dev"
 readonly MIHOMO_COMMIT="f3ee98951864dd562df230386d3c39a2b49fde59"
 readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="25"
+readonly BUILD_RECIPE_VERSION="26"
 readonly NDK_VERSION="29.0.14206865"
 # NDK 29.0.14206865 ships no toolchain above API 35, so this trails minSdk 36
 # on purpose. Linking against an older platform than minSdk is safe.
@@ -124,7 +124,7 @@ for patch in "${androidcyaml_patches[@]}"; do
 done
 git -C "${SOURCE_DIR}" diff --check
 
-readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/process/process.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
+readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/dialer/dialer.go\ncomponent/dialer/direct_progressive.go\ncomponent/dialer/direct_scope.go\ncomponent/dialer/direct_scope_test.go\ncomponent/dialer/tcp_concurrent_cache.go\ncomponent/process/process.go\ncomponent/resolver/resolver.go\ndns/direct_candidates.go\ndns/direct_candidates_test.go\ndns/resolver.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
 readonly ACTUAL_PATCH_PATHS="$({
     git -C "${SOURCE_DIR}" diff --name-only
     git -C "${SOURCE_DIR}" ls-files --others --exclude-standard
@@ -207,7 +207,7 @@ fi
         GOWORK=off \
         GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
         GOFLAGS="-modfile=${MIHOMO_MODFILE}" \
-        go test ./transport/xhttp ./adapter/outbound
+        go test ./transport/xhttp ./adapter/outbound ./dns ./component/dialer ./component/resolver
 )
 
 rm -rf "${MODULE_DIR}" "${TEMP_DIR}"
