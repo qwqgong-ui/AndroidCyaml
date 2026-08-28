@@ -29,20 +29,10 @@ VPN 服务进程。
 
 ## Core isolation
 
-AndroidCyaml 固定 `qwqgong-ui/mihomo:dev` 的已测试提交，并在自己的临时构建目录中
-应用 Android 平台补丁。Mihomo 定制已展开在 `dev` 源码中，不再在 Android 构建前应用
-Mihomo 补丁链。构建不会把 JNI、VpnService 或运行时覆写代码写回 mihomo checkout。
-
-构建应用的补丁为：
-
-```text
-patches/mihomo/0001-androidcyaml-platform-hooks.patch
-├── component/process/process.go
-└── listener/sing_tun/server_android.go
-```
-
-第一个修改增加 endpoint-aware 的 Android 进程解析回调；第二个修改在应用范围已由
-`VpnService.Builder` 处理时跳过 sing-tun Android 包数据库。构建脚本会验证补丁路径并拒绝额外修改。
+AndroidCyaml 固定 `qwqgong-ui/mihomo:dev` 的已测试提交，不再在临时构建目录中应用 Android
+源码补丁。dev 内核提供中性的 endpoint-aware 进程解析与 XHTTP transport 扩展点，并通过
+`mihomo/androidcyaml` 薄 facade 供本项目注册平台实现。构建不会把 JNI、VpnService、WebView
+或运行时覆写代码写回 mihomo checkout；未注册 facade 回调时，普通 mihomo 行为保持不变。
 
 较大的 Android 行为全部位于 AndroidCyaml：
 

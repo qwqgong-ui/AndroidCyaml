@@ -4,10 +4,9 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_SOURCE_BRANCH="dev"
-readonly MIHOMO_COMMIT="f3ba2c27cc82ab6d4a8780478328c62f10eb8016"
-readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
+readonly MIHOMO_COMMIT="eeb9f0c410bcdc7a600e059d7cfd79438c474d9c"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="26"
+readonly BUILD_RECIPE_VERSION="27"
 readonly NDK_VERSION="29.0.14206865"
 # NDK 29.0.14206865 ships no toolchain above API 35, so this trails minSdk 36
 # on purpose. Linking against an older platform than minSdk is safe.
@@ -28,31 +27,24 @@ readonly MARKER_FILE="${ROOT_DIR}/.third_party/mihomo.commit"
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
 command -v go >/dev/null || { echo "Go 1.26+ is required" >&2; exit 1; }
 command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 1; }
-[[ -d "${PATCH_DIR}" ]] || { echo "mihomo patch directory is missing: ${PATCH_DIR}" >&2; exit 1; }
 [[ -f "${WRAPPER_SOURCE_DIR}/go.mod" ]] || {
     echo "AndroidCyaml Go wrapper module is incomplete" >&2
     exit 1
 }
 
 shopt -s nullglob
-androidcyaml_patches=("${PATCH_DIR}"/*.patch)
 wrapper_sources=("${WRAPPER_SOURCE_DIR}"/*.go)
-(( ${#androidcyaml_patches[@]} > 0 )) || {
-    echo "No AndroidCyaml-owned mihomo patches found in ${PATCH_DIR}" >&2
-    exit 1
-}
 (( ${#wrapper_sources[@]} > 0 )) || {
     echo "No AndroidCyaml Go wrapper sources found in ${WRAPPER_SOURCE_DIR}" >&2
     exit 1
 }
 
-readonly PATCH_DIGEST="$(cat "${androidcyaml_patches[@]}" | sha256sum | awk '{ print $1 }')"
 readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" | sha256sum | awk '{ print $1 }')"
-readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${PATCH_DIGEST}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
+readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
 if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
-    echo "mihomo ${MIHOMO_COMMIT:0:8} with AndroidCyaml patches ${PATCH_DIGEST:0:8} is already built."
+    echo "mihomo ${MIHOMO_COMMIT:0:8} with the AndroidCyaml wrapper is already built."
     exit 0
 fi
 
@@ -114,26 +106,6 @@ git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
 
 git -C "${SOURCE_DIR}" diff --check
-
-# AndroidCyaml owns these patches. The mihomo checkout remains pinned to a
-# tested commit from the dev branch and is modified only inside the ignored
-# build directory.
-for patch in "${androidcyaml_patches[@]}"; do
-    git -C "${SOURCE_DIR}" apply --check --whitespace=error-all "${patch}"
-    git -C "${SOURCE_DIR}" apply --whitespace=error-all "${patch}"
-done
-git -C "${SOURCE_DIR}" diff --check
-
-readonly EXPECTED_PATCH_PATHS=$'adapter/outbound/vless.go\ncomponent/process/process.go\nlistener/sing_tun/server_android.go\ntransport/xhttp/browser_transport.go\ntransport/xhttp/browser_transport_test.go'
-readonly ACTUAL_PATCH_PATHS="$({
-    git -C "${SOURCE_DIR}" diff --name-only
-    git -C "${SOURCE_DIR}" ls-files --others --exclude-standard
-} | sort -u)"
-if [[ "${ACTUAL_PATCH_PATHS}" != "${EXPECTED_PATCH_PATHS}" ]]; then
-    echo "AndroidCyaml patches touched unexpected mihomo files:" >&2
-    printf '%s\n' "${ACTUAL_PATCH_PATHS}" >&2
-    exit 1
-fi
 
 readonly INSTALLED_GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION)"
 case "${INSTALLED_GO_VERSION}" in
@@ -199,8 +171,8 @@ if grep -qE '=> \.{1,2}/' <<<"${MIHOMO_REPLACEMENTS}"; then
     exit 1
 fi
 
-# Compile and exercise the actual patched kernel before cross-compiling the JNI
-# library. This catches patch drift and XHTTP integration failures directly.
+# Compile and exercise the pinned dev kernel before cross-compiling the JNI
+# library. AndroidCyaml integration is provided by dev APIs, not source patches.
 (
     cd "${SOURCE_DIR}"
     env \
@@ -232,7 +204,7 @@ cp "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" "${MODULE_DIR}/"
 )
 
 readonly BUILD_TIME="$(git -C "${SOURCE_DIR}" show -s --format=%cI "${MIHOMO_COMMIT}")"
-readonly VERSION="androidcyaml-${MIHOMO_COMMIT:0:8}-p${PATCH_DIGEST:0:8}"
+readonly VERSION="androidcyaml-${MIHOMO_COMMIT:0:8}"
 readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME} -w -buildid="
 
 (
@@ -279,4 +251,4 @@ mv -f "${TEMP_DIR}/libmihomo.so" "${OUTPUT_LIBRARY}"
 mv -f "${TEMP_DIR}/libmihomo.h" "${OUTPUT_HEADER}"
 rmdir "${TEMP_DIR}"
 printf '%s' "${EXPECTED_MARKER}" > "${MARKER_FILE}"
-echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from mihomo ${MIHOMO_SOURCE_BRANCH} plus the AndroidCyaml-owned patches"
+echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from the pinned mihomo ${MIHOMO_SOURCE_BRANCH} kernel"

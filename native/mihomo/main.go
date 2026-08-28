@@ -58,6 +58,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	androidcyamlcore "github.com/metacubex/mihomo/androidcyaml"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/geodata"
 	"github.com/metacubex/mihomo/component/iface"
@@ -548,12 +549,12 @@ func installPlatformHooks() {
 		}
 		return nil
 	}
-	process.DefaultProcessNameResolver = resolveProcess
+	androidcyamlcore.SetProcessResolver(resolveProcess)
 }
 
 func clearPlatformHooks() {
 	dialer.DefaultSocketHook = nil
-	process.DefaultProcessNameResolver = nil
+	androidcyamlcore.ResetProcessResolver()
 }
 
 func resolveProcess(network string, source, destination netip.AddrPort) (uint32, string, error) {

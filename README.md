@@ -21,25 +21,23 @@ AndroidCyaml 当前只编译和使用 **system TUN 栈**。gVisor 与 mixed 不�
 
 ## 核心隔离与构建边界
 
-AndroidCyaml 固定使用 `app/build.gradle.kts` 中的 mihomo 提交。构建流程：
+AndroidCyaml 固定使用 `scripts/build_mihomo.sh` 中的 mihomo `dev` 提交。构建流程：
 
 1. 在 `.third_party/mihomo-src` 检出指定提交；
-2. 校验并应用 `patches/mihomo/0001-androidcyaml-platform-hooks.patch`；
-3. 确认补丁只修改：
-   - `component/process/process.go`
-   - `listener/sing_tun/server_android.go`
-4. 使用 `native/mihomo` 包装模块，以 Android arm64、CGO、`no_tailscale no_zerotier` 和
+2. 验证 dev 内核及其依赖补丁链；
+3. 使用 `native/mihomo` 包装模块，通过 mihomo 的 `androidcyaml` 专用 facade 注册平台回调；
+4. 以 Android arm64、CGO、裁剪 build tags 和
    `-buildmode=c-shared` 生成 `libmihomo.so`；
 5. CMake 构建 JNI 包装库 `libandroidcyaml.so`。
 
-补丁只增加 Android 连接所有者回调入口，并在应用范围已经由 `VpnService.Builder` 处理时跳过
-sing-tun 的 Android 包数据库。JNI 导出、固定 TUN 合约、IPv6 处理、逐 socket `protect()` 和运行时
-配置变换都由 AndroidCyaml 仓库维护。构建脚本会拒绝补丁触碰约定之外的 mihomo 文件。
+AndroidCyaml 不再对检出的 mihomo 源码应用二次补丁。dev 只保留中性的进程解析和 XHTTP transport
+扩展点，以及薄的 `androidcyaml` facade；JNI 导出、固定 TUN 合约、IPv6 处理、逐 socket
+`protect()`、WebView 实现和运行时配置变换仍由 AndroidCyaml 仓库维护。
 
 AndroidCyaml 固定使用 `qwqgong-ui/mihomo:dev` 的已测试提交，而不是未经修改的
 `MetaCubeX/mihomo:Alpha`。Mihomo 下游修改已直接展开在 `dev` 源码中，包括构建裁剪、
-UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用 Mihomo 补丁链。JNI 集成
-仍只在 AndroidCyaml 的临时构建目录中应用，不会写回 mihomo checkout。
+UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用源码补丁。JNI 集成由
+`native/mihomo` 包装模块完成，不会修改 mihomo checkout。
 
 ### UDP 域名原样转发
 
@@ -309,8 +307,8 @@ bash scripts/verify_art_optimization.sh \
 ## 固定依赖
 
 - mihomo 来源：`qwqgong-ui/mihomo:dev`
-- mihomo 精确提交：见 `app/build.gradle.kts` 中的 `mihomoCommit`
-- AndroidCyaml 平台补丁：`patches/mihomo/0001-androidcyaml-platform-hooks.patch`
+- mihomo 精确提交：见 `scripts/build_mihomo.sh` 中的 `MIHOMO_COMMIT`
+- AndroidCyaml 核心 facade：`qwqgong-ui/mihomo/androidcyaml`
 - AndroidCyaml Go 包装模块：`native/mihomo`
 - Zashboard：由 `scripts/fetch_zashboard.sh` 获取固定 release 资产
 

@@ -69,7 +69,7 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/libmihomo.so
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
+          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go') }}
 
       - name: Restore weekly Go build cache
         id: go-cache

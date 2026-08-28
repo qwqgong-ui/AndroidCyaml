@@ -4,11 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "f3ba2c27cc82ab6d4a8780478328c62f10eb8016"
-val mihomoPatchDir = rootProject.file("patches/mihomo")
-val mihomoPatchFiles = fileTree(mihomoPatchDir) {
-    include("*.patch")
-}
+val mihomoCommit = "eeb9f0c410bcdc7a600e059d7cfd79438c474d9c"
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
 val mihomoWrapperSources = fileTree(rootProject.file("native/mihomo")) {
     include("*.go")
@@ -129,7 +125,6 @@ val buildMihomo by tasks.registering(Exec::class) {
     workingDir(rootProject.projectDir)
     commandLine("bash", "scripts/build_mihomo.sh")
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
-    inputs.files(mihomoPatchFiles)
     inputs.file(mihomoWrapperGoMod)
     inputs.files(mihomoWrapperSources)
     inputs.property("mihomoCommit", mihomoCommit)
