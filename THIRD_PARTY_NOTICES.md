@@ -6,11 +6,11 @@ AndroidCyaml packages and launches the following upstream works.
 
 - Project: <https://github.com/qwqgong-ui/mihomo>
 - Source branch: `qwqgong-ui/mihomo:dev`
-- Exact commit: `MIHOMO_COMMIT` in [`scripts/build_mihomo.sh`](scripts/build_mihomo.sh)
+- Revision: latest `dev` commit resolved at build time; the fetched commit is recorded in `.third_party/mihomo.commit`
 - License: GNU General Public License v3.0
 - Local license copy: [`LICENSES/mihomo-GPL-3.0.txt`](LICENSES/mihomo-GPL-3.0.txt)
 
-[`scripts/build_mihomo.sh`](scripts/build_mihomo.sh) checks out the pinned mihomo dev commit without applying
+[`scripts/build_mihomo.sh`](scripts/build_mihomo.sh) resolves and checks out the latest mihomo dev commit without applying
 an AndroidCyaml source patch, verifies the dev dependency patch chain, and then compiles
 [`native/mihomo`](native/mihomo) with Android NDK 29, CGO, Go `-buildmode=c-shared`, and the
 AndroidCyaml build tags. The generated `libmihomo.so` is packaged next to the C++ JNI wrapper

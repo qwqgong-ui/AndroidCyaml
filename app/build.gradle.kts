@@ -4,7 +4,6 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "b16858f915504746ecf69f42625e932794e6deba"
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
 val mihomoWrapperSources = fileTree(rootProject.file("native/mihomo")) {
     include("*.go")
@@ -37,7 +36,7 @@ android {
             }
         }
 
-        buildConfigField("String", "MIHOMO_COMMIT", "\"$mihomoCommit\"")
+        buildConfigField("String", "MIHOMO_CHANNEL", "\"dev\"")
     }
 
     buildFeatures {
@@ -127,9 +126,11 @@ val buildMihomo by tasks.registering(Exec::class) {
     inputs.file(rootProject.file("scripts/build_mihomo.sh"))
     inputs.file(mihomoWrapperGoMod)
     inputs.files(mihomoWrapperSources)
-    inputs.property("mihomoCommit", mihomoCommit)
     inputs.property("androidNdkVersion", androidNdkVersion)
     outputs.files(mihomoLibrary, mihomoHeader)
+    // The remote dev ref is a moving input that Gradle cannot fingerprint.
+    // Always invoke the script; its fetched-commit marker makes unchanged runs cheap.
+    outputs.upToDateWhen { false }
 }
 
 tasks.configureEach {

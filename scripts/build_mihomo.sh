@@ -4,7 +4,6 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_SOURCE_BRANCH="dev"
-readonly MIHOMO_COMMIT="b16858f915504746ecf69f42625e932794e6deba"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
 readonly BUILD_RECIPE_VERSION="27"
 readonly NDK_VERSION="29.0.14206865"
@@ -40,11 +39,37 @@ wrapper_sources=("${WRAPPER_SOURCE_DIR}"/*.go)
 }
 
 readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" | sha256sum | awk '{ print $1 }')"
+
+mkdir -p "${ROOT_DIR}/.third_party" "${HEADER_DIR}" "${LIBRARY_DIR}"
+
+if [[ ! -d "${SOURCE_DIR}/.git" ]]; then
+    if [[ -e "${SOURCE_DIR}" ]]; then
+        echo "Refusing to replace non-git path: ${SOURCE_DIR}" >&2
+        exit 1
+    fi
+    git clone --filter=blob:none --no-checkout "${SOURCE_URL}" "${SOURCE_DIR}"
+fi
+
+actual_origin="$(git -C "${SOURCE_DIR}" remote get-url origin)"
+if [[ "${actual_origin}" != "${SOURCE_URL}" ]]; then
+    echo "Unexpected mihomo origin: ${actual_origin}" >&2
+    exit 1
+fi
+
+# Resolve the moving dev branch on every invocation. The exact fetched commit
+# is still recorded in the marker and native version for reproducibility and
+# diagnostics, but it is deliberately not pinned in this repository.
+git -C "${SOURCE_DIR}" fetch --depth=1 origin "refs/heads/${MIHOMO_SOURCE_BRANCH}"
+readonly MIHOMO_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse --verify FETCH_HEAD^{commit})"
+git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
+git -C "${SOURCE_DIR}" clean -ffdqx
+git -C "${SOURCE_DIR}" diff --check
+
 readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
 if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
-    echo "mihomo ${MIHOMO_COMMIT:0:8} with the AndroidCyaml wrapper is already built."
+    echo "mihomo ${MIHOMO_SOURCE_BRANCH} at ${MIHOMO_COMMIT:0:8} with the AndroidCyaml wrapper is already built."
     exit 0
 fi
 
@@ -84,28 +109,6 @@ readonly ANDROID_AR="${TOOLCHAIN}/bin/llvm-ar"
     echo "NDK arm64 API ${NATIVE_API} toolchain is incomplete" >&2
     exit 1
 }
-
-mkdir -p "${ROOT_DIR}/.third_party" "${HEADER_DIR}" "${LIBRARY_DIR}"
-
-if [[ ! -d "${SOURCE_DIR}/.git" ]]; then
-    if [[ -e "${SOURCE_DIR}" ]]; then
-        echo "Refusing to replace non-git path: ${SOURCE_DIR}" >&2
-        exit 1
-    fi
-    git clone --filter=blob:none --no-checkout "${SOURCE_URL}" "${SOURCE_DIR}"
-fi
-
-actual_origin="$(git -C "${SOURCE_DIR}" remote get-url origin)"
-if [[ "${actual_origin}" != "${SOURCE_URL}" ]]; then
-    echo "Unexpected mihomo origin: ${actual_origin}" >&2
-    exit 1
-fi
-
-git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_COMMIT}"
-git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
-git -C "${SOURCE_DIR}" clean -ffdqx
-
-git -C "${SOURCE_DIR}" diff --check
 
 readonly INSTALLED_GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION)"
 case "${INSTALLED_GO_VERSION}" in
@@ -251,4 +254,4 @@ mv -f "${TEMP_DIR}/libmihomo.so" "${OUTPUT_LIBRARY}"
 mv -f "${TEMP_DIR}/libmihomo.h" "${OUTPUT_HEADER}"
 rmdir "${TEMP_DIR}"
 printf '%s' "${EXPECTED_MARKER}" > "${MARKER_FILE}"
-echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from the pinned mihomo ${MIHOMO_SOURCE_BRANCH} kernel"
+echo "Built ${OUTPUT_LIBRARY} and ${OUTPUT_HEADER} from mihomo ${MIHOMO_SOURCE_BRANCH} at ${MIHOMO_COMMIT:0:8}"

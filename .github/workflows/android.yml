@@ -50,6 +50,12 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "release=${release}" >> "${GITHUB_OUTPUT}"
           echo "go-cache-generation=$(date -u +%G-%V)" >> "${GITHUB_OUTPUT}"
+          mihomo_commit="$(
+            git ls-remote https://github.com/qwqgong-ui/mihomo.git refs/heads/dev \
+              | awk 'NR == 1 { print $1 }'
+          )"
+          [[ "${mihomo_commit}" =~ ^[0-9a-f]{40}$ ]]
+          echo "mihomo-commit=${mihomo_commit}" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/setup-java@v5
         with:
@@ -61,7 +67,7 @@ jobs:
           go-version: "1.27.x"
           cache: false
 
-      - name: Restore pinned mihomo JNI output
+      - name: Restore mihomo dev JNI output
         id: native-cache
         uses: actions/cache/restore@v5
         with:
@@ -69,7 +75,7 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/libmihomo.so
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go') }}
+          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ steps.build.outputs.mihomo-commit }}-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go') }}
 
       - name: Restore weekly Go build cache
         id: go-cache
@@ -167,7 +173,7 @@ jobs:
           path: .gradle/configuration-cache
           key: ${{ steps.gradle-config-cache.outputs.cache-primary-key }}
 
-      - name: Save pinned mihomo JNI output
+      - name: Save mihomo dev JNI output
         if: success() && github.ref == 'refs/heads/main' && steps.native-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:

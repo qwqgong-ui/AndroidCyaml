@@ -115,6 +115,22 @@ Go RawConn FD → NativePlatformCallbacks.protectSocket(fd)
 更新 mihomo 非 CMFA Android 路径的 `UpdateSystemDNS`。因此配置中的 `system://` 始终表示
 当前 Wi-Fi/移动网络提供的 DNS，查询 socket 自身经 protect 并绑定该底层 Network。
 
+### 按物理网络隔离的长期 DNS 候选缓存
+
+direct DNS 的长期来源候选按物理网络身份分桶，不只按“Wi-Fi / 移动数据”
+粗略分类。Wi-Fi 优先使用 SSID，无法取得时回退到 BSSID；蜂窝网络使用订阅、
+SIM 运营商与 carrier 等稳定信息。原始身份只在内存中组合，mihomo 缓存键中使用的
+是 SHA-256 指纹，不会持久化 SSID、BSSID 或 SIM 原始身份。
+
+每个 direct nameserver 的候选分开保存，最低保留 24 小时，不会被其他 DNS 来源覆盖。
+缓存写入 `cache.db`，每小时及 core 正常关闭时保存，启动时按原始过期时间恢复；
+已过期结果仅作为 stale 候选，由乐观缓存机制在后台刷新。TCP 实际连接胜出的地址
+可作为当前优选，但不会改写各 DNS 来源的长期原始候选。
+
+切换底层网络时，AndroidCyaml 更新网络指纹和系统 DNS，清理普通易失应答缓存，
+重置 resolver 连接并关闭旧连接。按网络指纹隔离的 direct DNS 来源候选会保留，
+但不会被新网络误用；重回原网络时可继续使用该网络之前的候选。
+
 ## 运行时覆写
 
 覆写面板当前提供：
@@ -158,7 +174,8 @@ IPv6 开关表示用户意愿。实际启用还要求当前最佳非 VPN 网络�
 - IPv6 默认路由。
 
 环境不满足时保留用户开关，但运行 IPv4-only。Wi-Fi 与移动网络切换且协议族不变时，应用复用现有
-TUN，只关闭旧连接并清理接口、DNS 缓存和持久解析连接。若 IPv6 模式启动失败，会停止失败实例并
+TUN，只关闭旧连接并清理接口、普通易失 DNS 缓存和持久解析连接；按网络指纹隔离的
+direct DNS 长期来源候选会保留。若 IPv6 模式启动失败，会停止失败实例并
 以 IPv4-only 重试一次。
 
 ### 按网络记忆策略组
@@ -304,10 +321,10 @@ bash scripts/verify_art_optimization.sh \
 `ANDROID_RELEASE_*` secrets 恢复密钥并独立执行 zipalign、签名和验证；Gradle 配置缓存因此
 不会序列化签名密码。
 
-## 固定依赖
+## 上游依赖
 
-- mihomo 来源：`qwqgong-ui/mihomo:dev`
-- mihomo 精确提交：见 `scripts/build_mihomo.sh` 中的 `MIHOMO_COMMIT`
+- mihomo 来源：构建时实时解析 `qwqgong-ui/mihomo:dev` 的最新提交，不固定 SHA
+- mihomo 实际构建提交：记录在 `.third_party/mihomo.commit` 和原生版本字符串中
 - AndroidCyaml 核心 facade：`qwqgong-ui/mihomo/androidcyaml`
 - AndroidCyaml Go 包装模块：`native/mihomo`
 - Zashboard：由 `scripts/fetch_zashboard.sh` 获取固定 release 资产

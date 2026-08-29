@@ -49,7 +49,7 @@ class MihomoRuntime(
             activeController.awaitReady(90, TimeUnit.SECONDS)
             activeController.awaitTun(10, TimeUnit.SECONDS)
             started = true
-            return "mihomo " + shortCommit() +
+            return "mihomo " + BuildConfig.MIHOMO_CHANNEL +
                 " · JNI/CGO" +
                 " · system 全栈" +
                 " · 进程匹配 " + settings.processMatchingMode.wireValue +
@@ -171,9 +171,5 @@ class MihomoRuntime(
             }
         }
 
-        fun shortCommit(): String {
-            val commit = BuildConfig.MIHOMO_COMMIT
-            return if (commit.length <= 8) commit else commit.substring(0, 8)
-        }
     }
 }
