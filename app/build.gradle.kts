@@ -4,7 +4,7 @@ plugins {
     id("com.android.application")
 }
 
-val mihomoCommit = "fa36db95218a5af774166e5ae8889087008f38ee"
+val mihomoCommit = "5f9c9bdfe7872c11f5fffa575579b462bea3150f"
 val mihomoWrapperGoMod = rootProject.file("native/mihomo/go.mod")
 val mihomoWrapperSources = fileTree(rootProject.file("native/mihomo")) {
     include("*.go")
@@ -20,8 +20,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 330
-        versionName = "1.0.32"
+        versionCode = 331
+        versionName = "1.0.33"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

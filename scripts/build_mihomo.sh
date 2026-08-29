@@ -4,7 +4,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_SOURCE_BRANCH="dev"
-readonly MIHOMO_COMMIT="fa36db95218a5af774166e5ae8889087008f38ee"
+readonly MIHOMO_COMMIT="5f9c9bdfe7872c11f5fffa575579b462bea3150f"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
 readonly BUILD_RECIPE_VERSION="27"
 readonly NDK_VERSION="29.0.14206865"
