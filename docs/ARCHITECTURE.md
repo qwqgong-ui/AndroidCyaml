@@ -120,16 +120,23 @@ TUN 栈不再属于运行时覆写，也不采用 YAML 中的 `stack`。旧版�
 整个应用 UID 保持在 VPN 路由内。每个真实 mihomo 上游 socket：
 
 1. `dialer.DefaultSocketHook` 在 connect 前获得 raw FD；
-2. Go 调用已注册的 C function pointer；
-3. C++ 在需要时把 Go thread attach 到 JVM；
+2. Go 连接 app 私有目录中的 unix socket endpoint，用 `SCM_RIGHTS` 传递该 FD；
+3. `SocketProtectService` 的 worker 线程收下 FD，校验对端 uid 属于本进程；
 4. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`；
 5. 已 protect 的 socket 再经当前 underlying `Network.bindSocket(fd)` 锁定物理网络；
-6. protect/bind 被拒绝时直接让拨号失败。
+6. worker 回写一字节裁决，protect/bind 被拒绝时直接让拨号失败。
 
-protect/bind 与进程归属查询共享一个 16 并发的 Go 侧入口。限流发生在进入 cgo 之前，因此弱网重拨
-风暴中的多余 goroutine 会停在 Go 调度器中，不会各自占住一个等待 JNI/Binder 的 OS thread。System
-WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消与限流
-互相等待。
+`VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect fwmark 位，所以请求
+必须到达 JVM；但它不必作为 JNI upcall 从 Go 线程发出。goroutine 阻塞在 cgo 期间独占其 OS thread，
+且进入 JNI 的线程会被 attach 到 ART——这正是弱网重拨风暴留下大量 `Thread-N` 的原因。改走 unix
+socket 后，等待裁决的 goroutine 停在 Go netpoller 上，拨号热路径不再创建或 attach 任何线程；Java
+侧的并发上限由固定 8 个 worker 的线程池决定。endpoint 位于 `no_backup` 私有目录而非 abstract
+namespace，因为设备上所有 app 共享同一 network namespace。endpoint 创建失败或运行中失效时，Go 侧
+自动回退到原 JNI 回调。
+
+进程归属查询是真正的 Binder 调用，仍走 JNI，并保留 16 并发的 Go 侧入口；限流发生在进入 cgo 之前。
+System WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消
+与限流互相等待。
 
 system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处于 TUN 数据路径中。
 

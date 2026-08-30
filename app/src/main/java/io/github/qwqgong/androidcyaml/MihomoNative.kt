@@ -60,6 +60,7 @@ object MihomoNative {
                     settings.lanWebUiPublic,
                     callbacks,
                     networkEnvironment,
+                    callbacks.protectEndpointPath(),
                 ),
             )
         } catch (startFailure: IOException) {
@@ -169,6 +170,7 @@ object MihomoNative {
         lanWebUiPublic: Boolean,
         callbacks: NativePlatformCallbacks,
         networkEnvironment: String,
+        protectEndpoint: String,
     ): String?
 
     private external fun nativeSetTcpConcurrent(enabled: Boolean): String?

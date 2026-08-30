@@ -1,17 +1,38 @@
-# AndroidCyaml v1.0.37 发布说明
+# AndroidCyaml v1.0.38 发布说明
 
-## JNI/cgo 线程高水位修复
+## socket protect 移出 JNI 热路径
 
-本版限制进入 Android JNI/Binder 的同步回调并发，避免弱网重拨风暴让 Go runtime
-持续创建 OS thread：
+`VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect
+fwmark 位，所以请求必须到达 JVM；但它不必以 JNI upcall 的形式从 Go 线程发出。
+上一版只是给这条路径加了并发上限：goroutine 阻塞在 cgo 期间独占其 OS thread，
+每个进入 JNI 的线程还会被 attach 到 ART，限流只是把高水位压住，没有消除成因。
 
-- socket `protect()`/底层 `Network.bindSocket()` 与进程归属查询共享 16 并发入口；
-- System WebView XHTTP 的阻塞式响应头回调使用独立的 16 并发入口；
-- 限流发生在进入 cgo 前，多余连接只停在轻量 Go goroutine，不占用额外 OS thread；
-- WebView 请求取消不受响应头并发上限约束，不会因限流阻塞取消路径。
+本版把拨号热路径整体移出 JNI：
 
-设备验证中，修复前 VPN 主进程为 467 个线程，其中 439 个为 JNI attach 后留下的
-`Thread-N`；修复版在 64 路并发、256 次 HTTPS 新连接期间保持 31 个线程。
+- Go 侧连接 app 私有目录中的 unix socket endpoint，用 `SCM_RIGHTS` 把 socket fd
+  交给 Java，等待裁决的 goroutine 停在 Go netpoller 上；
+- 拨号路径因此不再进入 cgo，不创建 OS thread，也不再有 attach/detach 到 ART 的
+  每次拨号开销；
+- Java 侧由上限 8 个 worker 的线程池执行 `protect()` 与 `Network.bindSocket()`；
+- endpoint 位于 `no_backup` 私有目录而非 abstract namespace（设备上所有 app 共享
+  同一 network namespace），并校验对端 uid 属于本进程；
+- endpoint 创建失败或运行中失效时自动回退到原 JNI 回调，拨号不会因此失败。
+
+回退路径会让"端点没生效"和"端点工作正常"看起来一样，因此本版把实际生效的路径显式
+暴露出来：运行状态行显示 `protect unix socket`，回退时显示 `protect JNI 回退`；core
+日志在启动时也会记录一行。设备侧核对方法是读 `/proc/<pid>/task/*/comm` 中 `Thread-N`
+的最大编号——它是累计 ART attach 次数，新版在拨号压测中不应继续增长。上述线程/内存
+对比数据尚未在本版实测。
+
+需要说明的是，这条改动解决的是 JNI attach 与 cgo 线程占用，不是 RSS 大头：1.0.37 实测
+中线程栈合计只有 572 KB，而进程 PSS 为 102 MB，其中 Go 运行时（`Unknown` 段）占 68 MB。
+
+## JNI/cgo 线程高水位限制
+
+进程归属查询（`getConnectionOwnerUid`）是真正的 Binder 调用，仍走 JNI，保留 16
+并发的 Go 侧入口；System WebView XHTTP 的阻塞式响应头回调使用独立的 16 并发入口；
+WebView 请求取消不受该上限约束，不会因限流阻塞取消路径。限流发生在进入 cgo 前，
+多余连接只停在轻量 Go goroutine，不占用额外 OS thread。
 
 ## 网络切换修复
 

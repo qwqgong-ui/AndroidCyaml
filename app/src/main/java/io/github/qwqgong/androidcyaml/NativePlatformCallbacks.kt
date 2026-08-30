@@ -6,6 +6,8 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.File
+import java.io.FileDescriptor
 import java.io.IOException
 
 class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseable {
@@ -15,6 +17,21 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
     private var underlyingNetwork: Network? = null
 
     private var webViewXhttpDialer: WebViewXhttpDialer? = null
+
+    // Sockets reach protect() through this unix endpoint, so the Go core never
+    // attaches one of its own threads to ART just to dial. protectSocket(Int)
+    // below stays as the JNI fallback for when the endpoint cannot be created.
+    private val protectService: SocketProtectService? = try {
+        SocketProtectService(File(vpnService.noBackupFilesDir, PROTECT_ENDPOINT_NAME)) {
+            protectSocket(it)
+        }
+    } catch (failure: IOException) {
+        Log.w(TAG, "Unable to open the socket protect endpoint; falling back to JNI", failure)
+        null
+    }
+
+    /** Empty when the endpoint is unavailable and the JNI fallback must be used. */
+    fun protectEndpointPath(): String = protectService?.endpointPath().orEmpty()
 
     @Synchronized
     fun configureWebViewXhttp(enabled: Boolean) {
@@ -40,24 +57,40 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
         if (fileDescriptor < 0) {
             return false
         }
-        return try {
-            if (!vpnService.protect(fileDescriptor)) {
-                return false
+        return protect(fileDescriptor) {
+            ParcelFileDescriptor.fromFd(fileDescriptor).use { duplicate ->
+                bindToUnderlyingNetwork(duplicate.fileDescriptor)
             }
-            val network = underlyingNetwork
-            if (network != null) {
-                ParcelFileDescriptor.fromFd(fileDescriptor).use { duplicate ->
-                    network.bindSocket(duplicate.fileDescriptor)
-                }
-            }
+        }
+    }
+
+    /** Protects a descriptor received over the socket endpoint. */
+    fun protectSocket(descriptor: FileDescriptor): Boolean = try {
+        ParcelFileDescriptor.dup(descriptor).use { duplicate ->
+            protect(duplicate.fd) { bindToUnderlyingNetwork(descriptor) }
+        }
+    } catch (exception: IOException) {
+        Log.w(TAG, "Unable to duplicate a received socket descriptor", exception)
+        false
+    }
+
+    private fun protect(fileDescriptor: Int, bind: () -> Unit): Boolean = try {
+        if (vpnService.protect(fileDescriptor)) {
+            bind()
             true
-        } catch (exception: IOException) {
-            Log.w(TAG, "Unable to protect/bind socket fd=$fileDescriptor", exception)
-            false
-        } catch (exception: RuntimeException) {
-            Log.w(TAG, "Unable to protect/bind socket fd=$fileDescriptor", exception)
+        } else {
             false
         }
+    } catch (exception: IOException) {
+        Log.w(TAG, "Unable to protect/bind socket fd=$fileDescriptor", exception)
+        false
+    } catch (exception: RuntimeException) {
+        Log.w(TAG, "Unable to protect/bind socket fd=$fileDescriptor", exception)
+        false
+    }
+
+    private fun bindToUnderlyingNetwork(descriptor: FileDescriptor) {
+        underlyingNetwork?.bindSocket(descriptor)
     }
 
     fun resolveProcessOwner(
@@ -122,6 +155,7 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
 
     @Synchronized
     override fun close() {
+        protectService?.close()
         closeWebViewXhttp()
     }
 
@@ -135,6 +169,7 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
 
     private companion object {
         const val TAG = "AndroidCyaml/JNI"
+        const val PROTECT_ENDPOINT_NAME = "protect.sock"
 
         fun browserError(message: String?): String = try {
             JSONObject()
