@@ -19,6 +19,12 @@ class UiPreferences(context: Context) {
         preferences.edit().putBoolean(HIDE_RECENTS_KEY, hidden).apply()
     }
 
+    fun diagnosticsEnabled(): Boolean = preferences.getBoolean(DIAGNOSTICS_KEY, false)
+
+    fun setDiagnosticsEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(DIAGNOSTICS_KEY, enabled).apply()
+    }
+
     fun networkIdentityPermissionRequested(): Boolean =
         preferences.getBoolean(NETWORK_IDENTITY_PERMISSION_REQUESTED, false)
 
@@ -30,6 +36,7 @@ class UiPreferences(context: Context) {
         const val PREFERENCES = "androidcyaml_ui"
         const val AUTO_START_KEY = "auto_start_vpn"
         const val HIDE_RECENTS_KEY = "hide_from_recents"
+        const val DIAGNOSTICS_KEY = "diagnostics_sampling"
         const val NETWORK_IDENTITY_PERMISSION_REQUESTED = "network_identity_permission_requested"
     }
 }

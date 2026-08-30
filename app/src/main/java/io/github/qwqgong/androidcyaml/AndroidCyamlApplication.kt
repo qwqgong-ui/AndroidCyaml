@@ -14,6 +14,10 @@ class AndroidCyamlApplication : Application() {
             // enabled. Do not call WebView.disableWebView(): that API is
             // irreversible for the lifetime of this VPN process.
             fairMemoryManager = FairMemoryManager.start(this)
+            // Restore log mode across process restarts. That is exactly when
+            // the interesting evidence exists: a low-memory kill has just
+            // happened and its exit record is waiting to be read.
+            DiagnosticsSampler.setEnabled(this, UiPreferences(this).diagnosticsEnabled())
         } else {
             // Dashboard and Browser Dialer may coexist in different app
             // processes. Chromium requires a separate data directory for each.

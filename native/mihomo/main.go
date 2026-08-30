@@ -101,6 +101,11 @@ type embeddedOptions struct {
 	ProcessMatching string
 }
 
+type diagnosticsSample struct {
+	Metrics     map[string]uint64 `json:"metrics"`
+	Unavailable []string          `json:"unavailable,omitempty"`
+}
+
 type startPayload struct {
 	ControllerSecret string `json:"controllerSecret"`
 	PrimarySelector  string `json:"primarySelector"`
@@ -363,6 +368,37 @@ func AndroidCyamlIsRunning() C.int {
 //export AndroidCyamlTrimMemory
 func AndroidCyamlTrimMemory() C.int {
 	return C.int(releaseRebuildableMemory(true))
+}
+
+// AndroidCyamlRuntimeMetrics answers one diagnostics sample. It deliberately
+// takes no lock: runtimeMu is held across a full hub.ApplyConfig during start,
+// and a sampler on a timer must never wait on that. Everything read here is
+// either lock-free in the Go runtime or already synchronised by mihomo.
+//
+//export AndroidCyamlRuntimeMetrics
+func AndroidCyamlRuntimeMetrics() *C.char {
+	sample := collectRuntimeMetrics()
+	var connections uint64
+	statistic.DefaultManager.Range(func(statistic.Tracker) bool {
+		connections++
+		return true
+	})
+	sample["connections"] = connections
+	uploaded, downloaded := statistic.DefaultManager.Total()
+	sample["uploadedBytes"] = nonNegative(uploaded)
+	sample["downloadedBytes"] = nonNegative(downloaded)
+	payload, err := json.Marshal(diagnosticsSample{
+		Metrics:     sample,
+		Unavailable: unavailableRuntimeMetrics(),
+	})
+	return respond(payload, err)
+}
+
+func nonNegative(value int64) uint64 {
+	if value < 0 {
+		return 0
+	}
+	return uint64(value)
 }
 
 func initializeRuntimePaths(home, configPath string) error {

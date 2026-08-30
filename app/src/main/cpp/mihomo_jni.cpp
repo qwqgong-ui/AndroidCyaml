@@ -698,6 +698,14 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning(
     return AndroidCyamlIsRunning() != 0 ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeRuntimeMetrics(
+        JNIEnv* env,
+        jclass
+) {
+    return stringFromNative(env, AndroidCyamlRuntimeMetrics());
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeTrimMemory(
         JNIEnv*,

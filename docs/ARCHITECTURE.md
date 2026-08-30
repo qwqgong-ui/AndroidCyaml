@@ -210,6 +210,29 @@ UI 通过同 UID Binder 向 `RuntimeCoordinator` 查询网络档案和第一个 
 APK 离线只包含 Zashboard，不打包或安装 `GeoIP.dat` 与 `GeoSite.dat`。使用 GeoIP/GeoSite 的配置
 需要自行提供数据，允许 mihomo 按导入配置获取数据，或改用 rule-provider/MRS。
 
+## Diagnostics sampling
+
+二级菜单中的「诊断采样日志」开关持久化在 `UiPreferences`，服务进程启动时恢复——进程刚被
+系统杀掉重启的那一刻正是证据最完整的时候。开关与 `AndroidVpnService` 同进程（只有 dashboard
+WebView 在 `:ui`），所以切换立即生效，且不依赖运行时是否已启动。
+
+`DiagnosticsSampler` 用一个后台 `HandlerThread` 上的 `postDelayed` 每分钟采一次。该 API 走
+uptime 时钟，设备挂起期间不推进，因此采样器不会唤醒 CPU：doze 中自动暂停，设备因其他原因醒来
+后继续。整个特性不使用 AlarmManager、JobScheduler 或 wake lock。
+
+单次采样成本是一次 `/proc/self/status` 读取、一次 `/proc/self/task` 遍历，加一次进入 Go 的
+`AndroidCyamlRuntimeMetrics`。后者用 `runtime/metrics` 取运行时已维护的快照，不像
+`runtime.ReadMemStats` 那样 stop-the-world；它不持有 `runtimeMu`，因为该锁在启动时会跨整个
+`hub.ApplyConfig` 持有，定时器绝不能等在它后面。要采的指标名在初始化时与 `metrics.All()` 求交集，
+缺失项单独记录，并由 host 端单元测试断言全部可解析。
+
+`DiagnosticsLog` 在 app 私有 `no_backup` 目录下轮转两代 2 MiB 文件。每行 `key=value`，前缀是
+wall/boot/awake 三个时钟——`boot - awake` 即休眠时长，使序列中的空档可解释。关闭时 `append`
+只做一次 volatile 读，因此低频事件标记（运行时状态、网络切换、内存 trim/kill、历史进程退出）
+可以直接埋在原路径上。日志只记聚合计数，不写域名、IP、SNI 或网络指纹。
+
+导出走 `ACTION_CREATE_DOCUMENT`，不需要 FileProvider；写入在后台线程完成。
+
 ## Removed architecture
 
 以下组件或能力已明确移除：

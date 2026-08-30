@@ -10,6 +10,7 @@ import android.os.Looper
 import android.util.Log
 import org.json.JSONException
 import java.io.IOException
+import java.util.Locale
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -283,6 +284,10 @@ class RuntimeCoordinator private constructor(context: Context) :
         stateBus.publish(snapshot)
     }
 
+    override fun diagnostic(event: String, detail: String) {
+        DiagnosticsLog.append(context, event, detail)
+    }
+
     override fun publish(state: RuntimeState, detail: String) {
         val current = lifecycle.runtime()
         val running = state == RuntimeState.RUNNING && current != null
@@ -293,6 +298,11 @@ class RuntimeCoordinator private constructor(context: Context) :
                 if (running) current!!.dashboardUrl() else "",
                 if (running) current!!.controllerPort() else 0,
             ),
+        )
+        DiagnosticsLog.append(
+            context,
+            "runtime." + state.name.lowercase(Locale.ROOT),
+            "detail=" + DiagnosticsLog.oneLine(detail.take(MAX_DIAGNOSTIC_DETAIL)),
         )
     }
 
@@ -311,6 +321,7 @@ class RuntimeCoordinator private constructor(context: Context) :
     companion object {
         private const val TAG = "AndroidCyaml/Coordinator"
         private const val ANDROID_17_API = 37
+        private const val MAX_DIAGNOSTIC_DETAIL = 200
 
         @Volatile
         private var instance: RuntimeCoordinator? = null

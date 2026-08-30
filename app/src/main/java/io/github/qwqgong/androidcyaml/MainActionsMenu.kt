@@ -23,6 +23,10 @@ object MainActionsMenu {
         fun onAutoStartChanged(enabled: Boolean)
 
         fun onHideRecentsChanged(hidden: Boolean)
+
+        fun onDiagnosticsChanged(enabled: Boolean)
+
+        fun onExportDiagnostics()
     }
 
     private const val UPLOAD = 1
@@ -33,12 +37,15 @@ object MainActionsMenu {
     private const val HIDE_RECENTS = 6
     private const val NETWORK_NODES = 7
     private const val ADD_QUICK_TILE = 8
+    private const val DIAGNOSTICS = 9
+    private const val EXPORT_DIAGNOSTICS = 10
 
     fun show(
         context: Context,
         anchor: View,
         autoStartEnabled: Boolean,
         hiddenFromRecents: Boolean,
+        diagnosticsEnabled: Boolean,
         listener: Listener,
     ) {
         val popup = PopupMenu(context, anchor)
@@ -55,6 +62,12 @@ object MainActionsMenu {
         menu.add(Menu.NONE, HIDE_RECENTS, 7, R.string.hide_from_recents)
             .setCheckable(true)
             .isChecked = hiddenFromRecents
+        menu.add(Menu.NONE, DIAGNOSTICS, 8, R.string.diagnostics_sampling)
+            .setCheckable(true)
+            .isChecked = diagnosticsEnabled
+        if (diagnosticsEnabled) {
+            menu.add(Menu.NONE, EXPORT_DIAGNOSTICS, 9, R.string.diagnostics_export)
+        }
         popup.setOnMenuItemClickListener { item -> handle(item, listener) }
         popup.show()
     }
@@ -77,6 +90,12 @@ object MainActionsMenu {
                 item.isChecked = hidden
                 listener.onHideRecentsChanged(hidden)
             }
+            DIAGNOSTICS -> {
+                val enabled = !item.isChecked
+                item.isChecked = enabled
+                listener.onDiagnosticsChanged(enabled)
+            }
+            EXPORT_DIAGNOSTICS -> listener.onExportDiagnostics()
             else -> return false
         }
         return true

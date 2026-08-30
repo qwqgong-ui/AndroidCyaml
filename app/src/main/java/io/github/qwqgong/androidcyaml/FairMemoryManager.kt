@@ -66,6 +66,17 @@ class FairMemoryManager private constructor(context: Context) {
                 handled = statePersisted
             }
             val snapshot = snapshotMemory()
+            DiagnosticsLog.append(
+                context,
+                "memory." + (if (ACTION_KILL == receivedAction) "kill" else "trim"),
+                "reason=" + DiagnosticsLog.oneLine(reason) +
+                    " request=" + DiagnosticsLog.oneLine(requestedAction) +
+                    " throttled=" + throttled +
+                    " handled=" + handled +
+                    " clearedCacheGroups=" + clearedCacheGroups +
+                    " javaHeapKb=" + snapshot.heapAllocatedKb +
+                    " pssKb=" + snapshot.pssKb,
+            )
             Log.i(
                 TAG,
                 "action=" + receivedAction +

@@ -25,6 +25,8 @@ class NetworkReconciler(
         fun publish(state: RuntimeState, detail: String)
 
         fun failActiveService(message: String)
+
+        fun diagnostic(event: String, detail: String)
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -88,6 +90,16 @@ class NetworkReconciler(
         }
         underlyingNetworkState = state
         lifecycle.updateUnderlyingNetwork(state.networkHandle)
+        // Handovers are the events a memory curve most often bends around, so
+        // record the coarse facts. Never the network's identity: the fingerprint
+        // is hashed precisely so it does not get written down.
+        host.diagnostic(
+            "network.handover",
+            "handle=" + state.networkHandle +
+                " pathChanged=" + state.pathChangedFrom(previous) +
+                " ipv6Usable=" + state.ipv6Usable +
+                " dnsCount=" + state.dnsServers.size,
+        )
         val settings = overrideStore.settings()
         val targetTcpConcurrent = settings.adaptiveTcpConcurrent
         if (!lifecycle.hasActiveService()) {

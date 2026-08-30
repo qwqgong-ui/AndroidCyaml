@@ -1,3 +1,39 @@
+# AndroidCyaml v1.0.39 发布说明
+
+## 诊断采样日志
+
+RSS 持续增长这类问题只有长时间序列能定位，之前没有任何手段观察：mihomo 没有编进
+pprof，`/memory` 端点只给瞬时值。本版加入可长期开启的采样日志。
+
+右上角二级菜单里新增「诊断采样日志」开关，开启后菜单里出现「导出诊断日志」。
+
+**不耗电是硬约束**：采样不使用 AlarmManager、JobScheduler 或 wake lock。
+`Handler.postDelayed` 走的是 uptime 时钟，设备休眠时该时钟不推进，因此采样器
+不可能唤醒 CPU——它在 doze 期间自动暂停，等设备因为别的原因醒来时才继续。
+
+每分钟一条采样行，每行包含：
+
+- 三个时钟：wall（墙钟）、boot（含休眠）、awake（不含休眠）。`boot - awake`
+  就是设备休眠时长，所以序列中的空档可解释，不会被误读成内存跳变；
+- 进程侧：`rssKb`、`swapKb`、`threads`、Java 堆已用/上限；
+- `artAttachFloor`：存活线程中 `Thread-N` 的最大编号。ART 在 attach 时给线程命名，
+  所以它能回答"还在不在发生 attach"，但高编号线程退出后不可见，只是下界；
+- Go 运行时：`goTotal`（运行时映射总量，对应 `dumpsys meminfo` 的 `Unknown` 行）、
+  堆的 objects/unused/free/released 拆分、goroutine 栈、`goGcLive`、GC 周期数、
+  goroutine 数、`cgoCalls`（累计 cgo 调用数，可直接验证拨号路径是否还进 cgo）；
+- mihomo：连接数、累计上下行字节。
+
+Go 侧用 `runtime/metrics` 而不是 `runtime.ReadMemStats`，后者会 stop-the-world；
+读取不加 `runtimeMu`，避免采样定时器等在启动流程后面。指标名在编译期由单元测试
+校验，Go 版本改名不会变成一堆静默的空字段。
+
+除了周期采样，以下低频事件也会各记一行：运行时状态变化、底层网络切换、内存压力
+trim/kill；开启采样时还会把系统记录的历史进程退出原因（含被杀时的 PSS/RSS）
+写入，这正是"被 low memory kill"的第一手证据。
+
+日志写在 app 私有 `no_backup` 目录，两代各 2 MiB 轮转，约两周量。只记聚合计数，
+不记域名、IP、SNI 或网络指纹——这个文件是拿来分享的。关闭开关后不再写入任何一行。
+
 # AndroidCyaml v1.0.38 发布说明
 
 ## socket protect 移出 JNI 热路径

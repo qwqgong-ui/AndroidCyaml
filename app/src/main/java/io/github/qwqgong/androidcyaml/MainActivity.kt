@@ -22,6 +22,7 @@ import android.widget.Toast
 import android.window.BackEvent
 import android.window.OnBackAnimationCallback
 import android.window.OnBackInvokedDispatcher
+import java.io.IOException
 
 @Suppress("DEPRECATION")
 class MainActivity :
@@ -272,6 +273,13 @@ class MainActivity :
             if (source != null) {
                 importConfig(source)
             }
+            return
+        }
+        if (requestCode == REQUEST_DIAGNOSTICS_EXPORT && resultCode == RESULT_OK) {
+            val destination = data?.data
+            if (destination != null) {
+                exportDiagnostics(destination)
+            }
         }
     }
 
@@ -421,6 +429,63 @@ class MainActivity :
         taskVisibility.setHiddenFromRecents(hidden)
     }
 
+    override fun onDiagnosticsChanged(enabled: Boolean) {
+        preferences.setDiagnosticsEnabled(enabled)
+        // The activity and the VPN service share this process, so the sampler
+        // starts and stops immediately, with or without a running runtime.
+        DiagnosticsSampler.setEnabled(this, enabled)
+        showToast(
+            getString(
+                if (enabled) R.string.diagnostics_enabled else R.string.diagnostics_disabled,
+            ),
+        )
+    }
+
+    override fun onExportDiagnostics() {
+        if (DiagnosticsLog.retainedBytes(this) == 0L) {
+            showToast(getString(R.string.diagnostics_empty))
+            return
+        }
+        val name = "androidcyaml-diagnostics-" + System.currentTimeMillis() + ".log"
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("text/plain")
+            .putExtra(Intent.EXTRA_TITLE, name)
+        try {
+            startActivityForResult(intent, REQUEST_DIAGNOSTICS_EXPORT)
+        } catch (exception: RuntimeException) {
+            showToast(
+                getString(
+                    R.string.diagnostics_export_failed,
+                    Exceptions.usefulMessage(exception),
+                ),
+            )
+        }
+    }
+
+    private fun exportDiagnostics(destination: Uri) {
+        val application = applicationContext
+        val worker = Thread({
+            val outcome = try {
+                val written = contentResolver.openOutputStream(destination)?.use { output ->
+                    DiagnosticsLog.exportTo(application, output)
+                }
+                if (written == null) {
+                    getString(R.string.diagnostics_export_failed, "no output stream")
+                } else {
+                    getString(R.string.diagnostics_exported, (written / 1024L).toString())
+                }
+            } catch (failure: IOException) {
+                getString(R.string.diagnostics_export_failed, Exceptions.usefulMessage(failure))
+            } catch (failure: RuntimeException) {
+                getString(R.string.diagnostics_export_failed, Exceptions.usefulMessage(failure))
+            }
+            runOnUiThread { showToast(outcome) }
+        }, "AndroidCyaml-diagnostics-export")
+        worker.isDaemon = true
+        worker.start()
+    }
+
     override fun onToggleRequested(checked: Boolean) {
         setVpnToggle(checked)
     }
@@ -496,6 +561,7 @@ class MainActivity :
             anchor,
             preferences.autoStartEnabled(),
             preferences.hideFromRecents(),
+            preferences.diagnosticsEnabled(),
             this,
         )
     }
@@ -637,6 +703,7 @@ class MainActivity :
         const val REQUEST_CONFIG_FILE = 10_002
         const val REQUEST_LOCAL_NETWORK_PERMISSION = 10_003
         const val REQUEST_NETWORK_IDENTITY_PERMISSIONS = 10_004
+        const val REQUEST_DIAGNOSTICS_EXPORT = 10_005
         const val ANDROID_17_API = 37
 
         const val STATE_PENDING_OVERRIDES_PRESENT = "pending_overrides_present"

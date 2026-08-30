@@ -86,6 +86,13 @@
     <string name="cancel">取消</string>
     <string name="apply">应用</string>
     <string name="add_quick_tile">添加快捷设置磁贴</string>
+    <string name="diagnostics_sampling">诊断采样日志</string>
+    <string name="diagnostics_export">导出诊断日志</string>
+    <string name="diagnostics_enabled">诊断采样已开启，每分钟记录一次；设备休眠时自动暂停</string>
+    <string name="diagnostics_disabled">诊断采样已关闭</string>
+    <string name="diagnostics_empty">还没有诊断记录</string>
+    <string name="diagnostics_exported">已导出 %1$s KiB 诊断日志</string>
+    <string name="diagnostics_export_failed">导出诊断日志失败：%1$s</string>
     <string name="quick_tile_added">磁贴已添加到快捷设置</string>
     <string name="quick_tile_already_added">磁贴已在快捷设置中</string>
     <string name="quick_tile_not_added">未添加磁贴</string>

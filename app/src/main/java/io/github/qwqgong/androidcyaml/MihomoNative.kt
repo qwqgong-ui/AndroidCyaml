@@ -102,6 +102,9 @@ object MihomoNative {
 
     fun trimMemory(): Int = nativeTrimMemory()
 
+    /** One diagnostics sample of Go runtime and mihomo counters. */
+    fun runtimeMetrics(): JSONObject? = requireSuccess(nativeRuntimeMetrics())
+
     fun readBrowserRequestBody(bodyId: Long, destination: ByteArray): Int =
         nativeReadBrowserRequestBody(bodyId, destination)
 
@@ -186,4 +189,6 @@ object MihomoNative {
     private external fun nativeIsRunning(): Boolean
 
     private external fun nativeTrimMemory(): Int
+
+    private external fun nativeRuntimeMetrics(): String?
 }
