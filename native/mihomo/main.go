@@ -297,7 +297,7 @@ func AndroidCyamlStop() *C.char {
 }
 
 //export AndroidCyamlNotifyNetworkChanged
-func AndroidCyamlNotifyNetworkChanged() *C.char {
+func AndroidCyamlNotifyNetworkChanged(closeConnectionsValue C.int) *C.char {
 	runtimeMu.Lock()
 	defer runtimeMu.Unlock()
 
@@ -305,10 +305,13 @@ func AndroidCyamlNotifyNetworkChanged() *C.char {
 		iface.FlushCache()
 		resolver.ClearVolatileCache()
 		resolver.ResetConnection()
-		statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
-			_ = connection.Close()
-			return true
-		})
+		if closeConnectionsValue != 0 {
+			dialer.ClearTCPConcurrentCache()
+			statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
+				_ = connection.Close()
+				return true
+			})
+		}
 	}
 	return respond(nil, nil)
 }

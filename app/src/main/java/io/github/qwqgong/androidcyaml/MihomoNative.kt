@@ -85,8 +85,8 @@ object MihomoNative {
         requireSuccess(nativeStop())
     }
 
-    fun notifyNetworkChanged() {
-        requireSuccess(nativeNotifyNetworkChanged())
+    fun notifyNetworkChanged(closeConnections: Boolean) {
+        requireSuccess(nativeNotifyNetworkChanged(closeConnections))
     }
 
     fun updateNetworkEnvironment(networkEnvironment: String) {
@@ -175,7 +175,7 @@ object MihomoNative {
 
     private external fun nativeStop(): String?
 
-    private external fun nativeNotifyNetworkChanged(): String?
+    private external fun nativeNotifyNetworkChanged(closeConnections: Boolean): String?
 
     private external fun nativeUpdateNetworkEnvironment(networkEnvironment: String): String?
 

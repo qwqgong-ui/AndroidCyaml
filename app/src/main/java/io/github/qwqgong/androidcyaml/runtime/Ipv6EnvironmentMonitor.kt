@@ -419,7 +419,10 @@ class Ipv6EnvironmentMonitor(context: Context) {
     private companion object {
         const val TAG = "AndroidCyaml/Network"
         const val READY_DEBOUNCE_MILLIS = 100L
-        const val LOST_HANDOVER_GRACE_MILLIS = 650L
+        // VALIDATED can briefly disappear while Android re-checks an otherwise
+        // healthy path. Keep the last usable path long enough to avoid tearing
+        // down all proxy connections during that harmless validation flap.
+        const val LOST_HANDOVER_GRACE_MILLIS = 2_000L
 
         fun isUsableUnderlying(capabilities: NetworkCapabilities?): Boolean =
             capabilities != null &&

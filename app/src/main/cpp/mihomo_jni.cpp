@@ -655,9 +655,12 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop(
 extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged(
         JNIEnv* env,
-        jclass
+        jclass,
+        jboolean close_connections
 ) {
-    return stringFromNative(env, AndroidCyamlNotifyNetworkChanged());
+    return stringFromNative(env, AndroidCyamlNotifyNetworkChanged(
+            close_connections == JNI_TRUE ? 1 : 0
+    ));
 }
 
 extern "C" JNIEXPORT jstring JNICALL

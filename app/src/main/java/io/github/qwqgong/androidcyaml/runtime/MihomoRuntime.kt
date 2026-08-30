@@ -97,11 +97,15 @@ class MihomoRuntime(
         }
     }
 
-    fun onUnderlyingNetworkChanged(dnsServers: List<String>, networkEnvironment: String) {
+    fun onUnderlyingNetworkChanged(
+        dnsServers: List<String>,
+        networkEnvironment: String,
+        closeConnections: Boolean,
+    ) {
         if (started && MihomoNative.isRunning()) {
             MihomoNative.updateNetworkEnvironment(networkEnvironment)
             MihomoNative.updateSystemDns(dnsServers)
-            MihomoNative.notifyNetworkChanged()
+            MihomoNative.notifyNetworkChanged(closeConnections)
         }
     }
 

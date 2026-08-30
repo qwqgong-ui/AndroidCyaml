@@ -206,6 +206,7 @@ class NetworkReconciler(
             currentRuntime.onUnderlyingNetworkChanged(
                 currentState.dnsServers,
                 currentState.cacheIdentity(),
+                requiresConnectionReset(previous, currentState),
             )
             Log.i(
                 TAG,
@@ -234,3 +235,14 @@ class NetworkReconciler(
             }
     }
 }
+
+/**
+ * LinkProperties changes frequently on an otherwise unchanged Android network
+ * (DHCP renewal, DNS rotation, route metric updates). Those changes need cache
+ * refreshes, but closing every proxied connection is only justified when
+ * traffic must move to another Network object.
+ */
+internal fun requiresConnectionReset(
+    previous: Ipv6EnvironmentMonitor.State?,
+    current: Ipv6EnvironmentMonitor.State,
+): Boolean = previous == null || previous.networkHandle != current.networkHandle
