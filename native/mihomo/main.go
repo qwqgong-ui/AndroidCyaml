@@ -272,6 +272,9 @@ func AndroidCyamlUpdateNetworkEnvironment(environmentValue *C.char) *C.char {
 	runtimeMu.Lock()
 	defer runtimeMu.Unlock()
 
+	// Changing this value selects another network-scoped direct-DNS branch.
+	// Do not clear either the ordinary or the long-lived per-source DNS caches:
+	// their scoped keys keep answers from different physical networks isolated.
 	dialer.SetDirectNetworkEnvironment(C.GoString(environmentValue))
 	return respond(nil, nil)
 }
@@ -302,9 +305,10 @@ func AndroidCyamlNotifyNetworkChanged(closeConnectionsValue C.int) *C.char {
 	defer runtimeMu.Unlock()
 
 	if active {
+		// DNS state is reconciled separately by AndroidCyamlUpdateSystemDNS.
+		// Keeping it out of this transport reset is what lets a later handover
+		// return to the previous network's long-lived DNS branch.
 		iface.FlushCache()
-		resolver.ClearVolatileCache()
-		resolver.ResetConnection()
 		if closeConnectionsValue != 0 {
 			dialer.ClearTCPConcurrentCache()
 			statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
@@ -327,6 +331,8 @@ func AndroidCyamlUpdateSystemDNS(serversValue *C.char) *C.char {
 	}
 	MDNS.UpdateSystemDNS(servers)
 	if active {
+		// Clear only ordinary answers and DNS transports. ClearVolatileCache
+		// deliberately preserves the 24-hour network/source candidate branches.
 		resolver.ClearVolatileCache()
 		resolver.ResetConnection()
 	}
