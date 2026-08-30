@@ -562,6 +562,7 @@ class MainActivity :
             preferences.autoStartEnabled(),
             preferences.hideFromRecents(),
             preferences.diagnosticsEnabled(),
+            DiagnosticsLog.retainedBytes(this) > 0L,
             this,
         )
     }

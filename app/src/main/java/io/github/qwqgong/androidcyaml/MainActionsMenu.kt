@@ -46,6 +46,7 @@ object MainActionsMenu {
         autoStartEnabled: Boolean,
         hiddenFromRecents: Boolean,
         diagnosticsEnabled: Boolean,
+        diagnosticsExportable: Boolean,
         listener: Listener,
     ) {
         val popup = PopupMenu(context, anchor)
@@ -65,7 +66,9 @@ object MainActionsMenu {
         menu.add(Menu.NONE, DIAGNOSTICS, 8, R.string.diagnostics_sampling)
             .setCheckable(true)
             .isChecked = diagnosticsEnabled
-        if (diagnosticsEnabled) {
+        // Also offered after the toggle goes back off: the whole point of a
+        // long capture is to turn it off and then hand the file over.
+        if (diagnosticsEnabled || diagnosticsExportable) {
             menu.add(Menu.NONE, EXPORT_DIAGNOSTICS, 9, R.string.diagnostics_export)
         }
         popup.setOnMenuItemClickListener { item -> handle(item, listener) }
