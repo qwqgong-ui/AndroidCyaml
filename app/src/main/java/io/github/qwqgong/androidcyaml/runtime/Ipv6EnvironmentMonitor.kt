@@ -105,6 +105,7 @@ class Ipv6EnvironmentMonitor(context: Context) {
         val linkProperties: LinkProperties?,
     )
 
+    private val diagnosticsContext: Context = context.applicationContext
     private val identityResolver = NetworkIdentityResolver(context)
     private val connectivityManager: ConnectivityManager =
         requireNotNull(
@@ -126,6 +127,7 @@ class Ipv6EnvironmentMonitor(context: Context) {
         FLAG_INCLUDE_LOCATION_INFO,
     ) {
         override fun onAvailable(network: Network) {
+            NetworkDiagnostics.onAvailable(diagnosticsContext, network.networkHandle)
             synchronized(lock) {
                 callbackCandidates.onAvailable(network.networkHandle)
             }
@@ -136,9 +138,19 @@ class Ipv6EnvironmentMonitor(context: Context) {
             capabilities: NetworkCapabilities,
         ) {
             if (!isUsableUnderlying(capabilities)) {
+                NetworkDiagnostics.onUnusable(
+                    diagnosticsContext,
+                    network.networkHandle,
+                    capabilities,
+                )
                 removeCallbackCandidate(network)
                 return
             }
+            NetworkDiagnostics.onCapabilitiesChanged(
+                diagnosticsContext,
+                network.networkHandle,
+                capabilities,
+            )
             var properties = connectivityManager.getLinkProperties(network)
             synchronized(lock) {
                 val handle = network.networkHandle
@@ -156,6 +168,7 @@ class Ipv6EnvironmentMonitor(context: Context) {
         }
 
         override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
+            NetworkDiagnostics.onLinkPropertiesChanged()
             synchronized(lock) {
                 val handle = network.networkHandle
                 val capabilities = callbackSnapshots[handle]?.capabilities
@@ -169,6 +182,7 @@ class Ipv6EnvironmentMonitor(context: Context) {
         }
 
         override fun onLost(network: Network) {
+            NetworkDiagnostics.onLost(diagnosticsContext, network.networkHandle)
             removeCallbackCandidate(network)
         }
     }

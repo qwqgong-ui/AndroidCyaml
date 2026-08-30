@@ -208,3 +208,40 @@ func TestSocketProtectorKeepsTheThreadCountFlatUnderLoad(t *testing.T) {
 		t.Fatalf("%d concurrent protect calls created %d threads, want at most %d", callers, growth, budget)
 	}
 }
+
+func TestSocketProtectorCountsOutcomesForDiagnostics(t *testing.T) {
+	stub := startProtectEndpointStub(t, true, 0)
+	var protector socketProtector
+	protector.setEndpoint(stub.path())
+
+	granted, _ := newSocketPair(t)
+	if err := protector.protect(granted); err != nil {
+		t.Fatalf("protect a socket: %v", err)
+	}
+
+	rejecting := startProtectEndpointStub(t, false, 0)
+	protector.setEndpoint(rejecting.path())
+	refused, _ := newSocketPair(t)
+	if err := protector.protect(refused); !errors.Is(err, errSocketProtectRejected) {
+		t.Fatalf("protect error = %v, want errSocketProtectRejected", err)
+	}
+
+	protector.setEndpoint(filepath.Join(t.TempDir(), "absent.sock"))
+	broken, _ := newSocketPair(t)
+	if err := protector.protect(broken); err == nil {
+		t.Fatal("protect succeeded against an endpoint that does not exist")
+	}
+
+	counters := make(map[string]uint64)
+	protector.counters(counters)
+	want := map[string]uint64{
+		"protectAttempts":        3,
+		"protectRejections":      1,
+		"protectTransportErrors": 1,
+	}
+	for key, expected := range want {
+		if counters[key] != expected {
+			t.Errorf("%s = %d, want %d", key, counters[key], expected)
+		}
+	}
+}

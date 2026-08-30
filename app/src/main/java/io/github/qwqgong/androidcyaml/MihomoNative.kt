@@ -105,6 +105,11 @@ object MihomoNative {
     /** One diagnostics sample of Go runtime and mihomo counters. */
     fun runtimeMetrics(): JSONObject? = requireSuccess(nativeRuntimeMetrics())
 
+    /** Attaches or detaches the core's warning/error classifier. */
+    fun setDiagnostics(enabled: Boolean) {
+        requireSuccess(nativeSetDiagnostics(enabled))
+    }
+
     fun readBrowserRequestBody(bodyId: Long, destination: ByteArray): Int =
         nativeReadBrowserRequestBody(bodyId, destination)
 
@@ -191,4 +196,6 @@ object MihomoNative {
     private external fun nativeTrimMemory(): Int
 
     private external fun nativeRuntimeMetrics(): String?
+
+    private external fun nativeSetDiagnostics(enabled: Boolean): String?
 }

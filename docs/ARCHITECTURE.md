@@ -233,6 +233,18 @@ wall/boot/awake 三个时钟——`boot - awake` 即休眠时长，使序列中�
 
 导出走 `ACTION_CREATE_DOCUMENT`，不需要 FileProvider；写入在后台线程完成。
 
+网络侧信号分两种形状。底层网络的出现、消失、变得不可用是低频转变，各记一行；
+`onCapabilitiesChanged` 只在 validated / notSuspended / notMetered / notRoaming / transport
+真的翻转时才写，弱网下每分钟数十次的回调因此不会淹没日志。其余一律是 `NetworkDiagnostics`
+里的计数器，由每分钟那一行读走。拨号路径同样分层计数：dial hook 调用数、protect 尝试/拒绝/
+传输错误、JNI 回退次数、进程归属查询次数与未命中数。
+
+`coreLogCounters` 把 mihomo 自己的 warning/error 分成 timeout、refused、unreachable、reset、
+dns、tls、closed、protect、other 若干桶。只记桶计数，不抄原始消息：那些消息里带着失败的目标
+地址，而诊断日志是用来导出分享的。mihomo 的每条日志无论配置级别都会发到 observable，且订阅者
+阻塞会反压到调用点，因此分类器只在诊断开启时通过 `AndroidCyamlSetDiagnostics` 订阅，pump 只做
+一次分类加一次原子累加。
+
 ## Removed architecture
 
 以下组件或能力已明确移除：

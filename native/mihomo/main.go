@@ -55,6 +55,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -134,6 +135,25 @@ var (
 	resolveProcessCallback unsafe.Pointer
 	platformCallbackLimit  = newCallbackLimiter(maxConcurrentPlatformCallbacks)
 	platformSocketProtect  socketProtector
+
+	// Dial-path tallies for the diagnostics sampler. Deltas between two samples
+	// separate "the network is churning" (dialHookCalls climbing) from "dials
+	// are being refused" (rejections climbing) from "the endpoint broke and we
+	// are back on JNI" (jniFallbacks climbing).
+	dialHookCalls        atomic.Uint64
+	dialHookControlFails atomic.Uint64
+	protectJniCalls      atomic.Uint64
+	protectJniRejections atomic.Uint64
+	protectJniFallbacks  atomic.Uint64
+	processLookupCalls   atomic.Uint64
+	processLookupMisses  atomic.Uint64
+
+	// mihomo publishes every log event to its observable regardless of the
+	// configured level, and a slow subscriber blocks the call site. Subscribe
+	// only while diagnostics is on, and keep the pump a tight loop.
+	coreLog       coreLogCounters
+	coreLogMu     sync.Mutex
+	coreLogEvents <-chan MLog.Event
 )
 
 func main() {}
@@ -387,11 +407,61 @@ func AndroidCyamlRuntimeMetrics() *C.char {
 	uploaded, downloaded := statistic.DefaultManager.Total()
 	sample["uploadedBytes"] = nonNegative(uploaded)
 	sample["downloadedBytes"] = nonNegative(downloaded)
+	platformSocketProtect.counters(sample)
+	sample["dialHookCalls"] = dialHookCalls.Load()
+	sample["dialHookControlFails"] = dialHookControlFails.Load()
+	sample["protectJniCalls"] = protectJniCalls.Load()
+	sample["protectJniRejections"] = protectJniRejections.Load()
+	sample["protectJniFallbacks"] = protectJniFallbacks.Load()
+	sample["processLookupCalls"] = processLookupCalls.Load()
+	sample["processLookupMisses"] = processLookupMisses.Load()
+	coreLog.counters(sample)
 	payload, err := json.Marshal(diagnosticsSample{
 		Metrics:     sample,
 		Unavailable: unavailableRuntimeMetrics(),
 	})
 	return respond(payload, err)
+}
+
+// AndroidCyamlSetDiagnostics attaches or detaches the mihomo log classifier.
+// Off by default so nothing subscribes to the core's log fan-out unless the
+// user asked for diagnostics.
+//
+//export AndroidCyamlSetDiagnostics
+func AndroidCyamlSetDiagnostics(enabledValue C.int) *C.char {
+	setCoreLogPump(enabledValue != 0)
+	return respond(nil, nil)
+}
+
+func setCoreLogPump(enabled bool) {
+	coreLogMu.Lock()
+	defer coreLogMu.Unlock()
+	if enabled {
+		if coreLogEvents != nil {
+			return
+		}
+		events := MLog.Subscribe()
+		coreLogEvents = events
+		go pumpCoreLog(events)
+		return
+	}
+	if coreLogEvents == nil {
+		return
+	}
+	// UnSubscribe closes the channel, which ends the pump goroutine.
+	MLog.UnSubscribe(coreLogEvents)
+	coreLogEvents = nil
+}
+
+func pumpCoreLog(events <-chan MLog.Event) {
+	for event := range events {
+		switch event.LogLevel {
+		case MLog.WARNING:
+			coreLog.observe(true, event.Payload)
+		case MLog.ERROR:
+			coreLog.observe(false, event.Payload)
+		}
+	}
 }
 
 func nonNegative(value int64) uint64 {
@@ -598,11 +668,13 @@ func installPlatformHooks(protectEndpoint string) {
 		MLog.Warnln("Android socket protect endpoint is unavailable; dials fall back to JNI")
 	}
 	dialer.DefaultSocketHook = func(network, address string, connection syscall.RawConn) error {
+		dialHookCalls.Add(1)
 		var protectErr error
 		err := connection.Control(func(fileDescriptor uintptr) {
 			protectErr = protectDialedSocket(int(fileDescriptor))
 		})
 		if err != nil {
+			dialHookControlFails.Add(1)
 			return err
 		}
 		if protectErr != nil {
@@ -634,6 +706,7 @@ func protectDialedSocket(fileDescriptor int) error {
 		case errors.Is(err, errSocketProtectRejected):
 			return err
 		default:
+			protectJniFallbacks.Add(1)
 			if platformSocketProtect.noteDegraded(true) {
 				MLog.Warnln("Android protect endpoint unusable, falling back to JNI: %v", err)
 			}
@@ -647,10 +720,12 @@ func protectSocketThroughJNI(fileDescriptor int) error {
 	if callback == nil {
 		return errors.New("Android socket protect callback is unavailable")
 	}
+	protectJniCalls.Add(1)
 	rejected := withCallbackPermit(platformCallbackLimit, func() bool {
 		return C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
 	})
 	if rejected {
+		protectJniRejections.Add(1)
 		return errSocketProtectRejected
 	}
 	return nil
@@ -686,6 +761,7 @@ func resolveProcess(network string, source, destination netip.AddrPort) (uint32,
 	defer C.free(unsafe.Pointer(sourceAddress))
 	defer C.free(unsafe.Pointer(destinationAddress))
 
+	processLookupCalls.Add(1)
 	encoded := withCallbackPermit(platformCallbackLimit, func() *C.char {
 		return C.androidcyaml_call_resolve(
 			callback,
@@ -697,15 +773,18 @@ func resolveProcess(network string, source, destination netip.AddrPort) (uint32,
 		)
 	})
 	if encoded == nil {
+		processLookupMisses.Add(1)
 		return 0, "", process.ErrNotFound
 	}
 	defer C.free(unsafe.Pointer(encoded))
 	uidValue, packageName, found := strings.Cut(C.GoString(encoded), "\n")
 	if !found || packageName == "" {
+		processLookupMisses.Add(1)
 		return 0, "", process.ErrNotFound
 	}
 	uid, err := strconv.ParseUint(uidValue, 10, 32)
 	if err != nil {
+		processLookupMisses.Add(1)
 		return 0, "", process.ErrNotFound
 	}
 	return uint32(uid), packageName, nil

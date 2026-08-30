@@ -82,6 +82,13 @@ class RuntimeLifecycle(
                 throw firstFailure
             }
             Log.w(TAG, "IPv6 runtime startup failed; retrying with IPv6 disabled", firstFailure)
+            service?.let { host ->
+                DiagnosticsLog.append(
+                    host,
+                    "runtime.ipv6.fallback",
+                    "error=" + DiagnosticsLog.oneLine(Exceptions.usefulMessage(firstFailure)),
+                )
+            }
             try {
                 return startRuntime(
                     settings,

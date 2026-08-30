@@ -699,6 +699,15 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetDiagnostics(
+        JNIEnv* env,
+        jclass,
+        jboolean enabled
+) {
+    return stringFromNative(env, AndroidCyamlSetDiagnostics(enabled == JNI_TRUE ? 1 : 0));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeRuntimeMetrics(
         JNIEnv* env,
         jclass

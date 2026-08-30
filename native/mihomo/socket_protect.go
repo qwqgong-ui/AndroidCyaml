@@ -30,6 +30,14 @@ import (
 type socketProtector struct {
 	endpoint atomic.Pointer[string]
 	degraded atomic.Bool
+
+	// Counters, not gauges: the diagnostics sampler records them once a minute
+	// and the interesting quantity is the delta. A reconnect storm shows up as
+	// attempts climbing; a network that is up but unusable shows up as
+	// rejections climbing; a broken endpoint shows up as transportErrors.
+	attempts        atomic.Uint64
+	rejections      atomic.Uint64
+	transportErrors atomic.Uint64
 }
 
 const (
@@ -82,6 +90,19 @@ func (p *socketProtector) protect(fileDescriptor int) error {
 	if endpoint == "" {
 		return errSocketProtectUnavailable
 	}
+	p.attempts.Add(1)
+	err := p.exchange(endpoint, fileDescriptor)
+	switch {
+	case err == nil:
+	case errors.Is(err, errSocketProtectRejected):
+		p.rejections.Add(1)
+	default:
+		p.transportErrors.Add(1)
+	}
+	return err
+}
+
+func (p *socketProtector) exchange(endpoint string, fileDescriptor int) error {
 	connection, err := dialSocketProtect(endpoint)
 	if err != nil {
 		return err
@@ -103,6 +124,13 @@ func (p *socketProtector) protect(fileDescriptor int) error {
 		return errSocketProtectRejected
 	}
 	return nil
+}
+
+// counters reports the protect outcome tallies for one diagnostics sample.
+func (p *socketProtector) counters(into map[string]uint64) {
+	into["protectAttempts"] = p.attempts.Load()
+	into["protectRejections"] = p.rejections.Load()
+	into["protectTransportErrors"] = p.transportErrors.Load()
 }
 
 func dialSocketProtect(endpoint string) (*net.UnixConn, error) {

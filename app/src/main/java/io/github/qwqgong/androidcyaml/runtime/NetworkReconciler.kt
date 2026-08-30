@@ -48,7 +48,14 @@ class NetworkReconciler(
         underlyingNetworkState = networkMonitor.start { state ->
             host.submit { onUnderlyingNetworkChanged(state) }
         }
-        return underlyingNetworkState
+        val initial = underlyingNetworkState
+        NetworkDiagnostics.setUnderlying(
+            initial.networkHandle,
+            initial.selectionKind,
+            initial.ipv6Usable,
+            initial.dnsServers.size,
+        )
+        return initial
     }
 
     fun currentState(): Ipv6EnvironmentMonitor.State {
@@ -93,12 +100,21 @@ class NetworkReconciler(
         // Handovers are the events a memory curve most often bends around, so
         // record the coarse facts. Never the network's identity: the fingerprint
         // is hashed precisely so it does not get written down.
+        NetworkDiagnostics.onHandover()
+        NetworkDiagnostics.setUnderlying(
+            state.networkHandle,
+            state.selectionKind,
+            state.ipv6Usable,
+            state.dnsServers.size,
+        )
         host.diagnostic(
             "network.handover",
             "handle=" + state.networkHandle +
+                " kind=" + state.selectionKind.ifBlank { "-" } +
                 " pathChanged=" + state.pathChangedFrom(previous) +
                 " ipv6Usable=" + state.ipv6Usable +
-                " dnsCount=" + state.dnsServers.size,
+                " dnsCount=" + state.dnsServers.size +
+                " activeService=" + lifecycle.hasActiveService(),
         )
         val settings = overrideStore.settings()
         val targetTcpConcurrent = settings.adaptiveTcpConcurrent
@@ -229,6 +245,11 @@ class NetworkReconciler(
         } catch (exception: IOException) {
             // A transient handover failure must not tear down the VPN.
             Log.w(TAG, "Unable to refresh mihomo after network handover", exception)
+            NetworkDiagnostics.onRefreshFailed()
+            host.diagnostic(
+                "network.refresh.failed",
+                "error=" + DiagnosticsLog.oneLine(Exceptions.usefulMessage(exception)),
+            )
         }
     }
 

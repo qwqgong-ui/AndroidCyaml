@@ -1,3 +1,39 @@
+# AndroidCyaml v1.0.40 发布说明
+
+## 诊断采样：网络侧
+
+上一版的采样只看内存。网络不稳定需要的是另一组信号，本版补齐，仍然遵守同一条
+不耗电的约束：**不新增任何唤醒源**，高频信号一律做成计数器由每分钟那一行读走，
+只有低频转变才各占一行。
+
+新增的独立事件行：
+
+- `net.available` / `net.lost`：底层网络出现与消失；
+- `net.unusable`：网络还在，但已不满足做底层的条件（掉 validated、被 suspend 等）——
+  这通常就是"断网"的真实时刻；
+- `net.capabilities`：**只在关键位真的翻转时**才记（validated / notSuspended /
+  notMetered / notRoaming / transport）。信号强度刷新一类的回调不会写进日志，
+  否则弱网时一分钟几十行会把真正的转变淹掉；
+- `network.refresh.failed`：切网后刷新 mihomo 失败；
+- `runtime.ipv6.fallback`：IPv6 启动失败回退 IPv4。
+
+每分钟采样行新增：
+
+- 当前底层网络：handle、类型、IPv6 可用性、DNS 服务器数；
+- 网络事件累计数：available / lost / unusable / capability / link / handover /
+  refreshFailure；
+- 拨号路径分层计数：`dialHookCalls`（新建出站 socket 数）、`protectAttempts`、
+  `protectRejections`（VpnService 拒绝）、`protectTransportErrors`（端点坏了）、
+  `protectJniCalls` / `protectJniRejections` / `protectJniFallbacks`、
+  进程归属查询次数与未命中数；
+- mihomo 自身告警/错误的分类计数：timeout / refused / unreachable / reset /
+  dns / tls / closed / protect / other。
+
+最后一项**只记分类计数，不抄原始日志文本**——mihomo 的错误消息里带着失败的目标
+域名和地址，而这个文件是拿来导出分享的。要看原文，面板的日志页仍然是实时的。
+分类器只在诊断采样开启时才订阅 core 的日志流：mihomo 每条日志无论级别都会发给
+订阅者，且订阅者慢会阻塞调用点，所以默认不挂。
+
 # AndroidCyaml v1.0.39 发布说明
 
 ## 诊断采样日志

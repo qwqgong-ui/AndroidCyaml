@@ -53,6 +53,7 @@ object DiagnosticsSampler {
         handler = target
         DiagnosticsLog.setEnabled(true)
         target.post {
+            setCoreDiagnostics(true)
             DiagnosticsLog.append(context, "diag.start", "interval=" + SAMPLE_INTERVAL_MILLIS)
             // Historical exits are the only first-hand evidence of the reported
             // low-memory kills, and they carry the PSS/RSS the process died at.
@@ -73,6 +74,7 @@ object DiagnosticsSampler {
         target?.post {
             DiagnosticsLog.append(context, "diag.stop", "")
             DiagnosticsLog.setEnabled(false)
+            setCoreDiagnostics(false)
         }
         thread.quitSafely()
         worker = null
@@ -91,6 +93,7 @@ object DiagnosticsSampler {
         appendProcessStatus(detail)
         appendJavaHeap(detail)
         appendArtAttachFloor(detail)
+        detail.append(' ').append(NetworkDiagnostics.sample())
         appendCoreMetrics(detail)
         DiagnosticsLog.append(context, "sample", detail.toString().trim())
     }
@@ -149,6 +152,17 @@ object DiagnosticsSampler {
             Log.d(TAG, "Unable to read the ART attach floor", failure)
         }
         out.append(" artAttachFloor=").append(highest)
+    }
+
+    /** Nothing subscribes to the core's log fan-out unless diagnostics is on. */
+    private fun setCoreDiagnostics(enabled: Boolean) {
+        try {
+            MihomoNative.setDiagnostics(enabled)
+        } catch (failure: IOException) {
+            Log.w(TAG, "Unable to switch the core log classifier", failure)
+        } catch (failure: LinkageError) {
+            Log.w(TAG, "Core library is unavailable for diagnostics", failure)
+        }
     }
 
     private fun appendCoreMetrics(out: StringBuilder) {
