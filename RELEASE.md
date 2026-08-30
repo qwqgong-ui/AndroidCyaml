@@ -1,4 +1,17 @@
-# AndroidCyaml v1.0.36 发布说明
+# AndroidCyaml v1.0.37 发布说明
+
+## JNI/cgo 线程高水位修复
+
+本版限制进入 Android JNI/Binder 的同步回调并发，避免弱网重拨风暴让 Go runtime
+持续创建 OS thread：
+
+- socket `protect()`/底层 `Network.bindSocket()` 与进程归属查询共享 16 并发入口；
+- System WebView XHTTP 的阻塞式响应头回调使用独立的 16 并发入口；
+- 限流发生在进入 cgo 前，多余连接只停在轻量 Go goroutine，不占用额外 OS thread；
+- WebView 请求取消不受响应头并发上限约束，不会因限流阻塞取消路径。
+
+设备验证中，修复前 VPN 主进程为 467 个线程，其中 439 个为 JNI attach 后留下的
+`Thread-N`；修复版在 64 路并发、256 次 HTTPS 新连接期间保持 31 个线程。
 
 ## 网络切换修复
 

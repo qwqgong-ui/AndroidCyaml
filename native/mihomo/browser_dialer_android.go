@@ -91,6 +91,12 @@ import (
 
 const maxBrowserRequestBody = 8 << 20
 
+// Awaiting WebView response headers crosses into Java and can block for tens of
+// seconds. Bound those cgo calls independently so WebView congestion cannot
+// consume an unbounded number of Go M threads. Close callbacks remain
+// unbounded and can therefore always cancel an admitted request.
+const maxConcurrentBrowserHeaderCallbacks = 16
+
 type browserRequest struct {
 	ID            int64               `json:"id"`
 	Method        string              `json:"method"`
@@ -126,6 +132,7 @@ var (
 	browserResponseMu            sync.Mutex
 	browserResponses             = make(map[int64]*browserResponseStream)
 	nextBrowserRequestID         atomic.Int64
+	browserHeaderCallbackLimit   = newCallbackLimiter(maxConcurrentBrowserHeaderCallbacks)
 )
 
 const browserResponseQueueSize = 8
@@ -375,10 +382,12 @@ func (t *androidBrowserTransport) RoundTrip(request *http.Request) (*http.Respon
 		closeBrowserRequest(result.ID)
 		return nil, errors.New("Android WebView XHTTP headers callback is unavailable")
 	}
-	headerValue := C.androidcyaml_call_browser_headers(
-		headersCallback,
-		C.int64_t(result.ID),
-	)
+	headerValue := withCallbackPermit(browserHeaderCallbackLimit, func() *C.char {
+		return C.androidcyaml_call_browser_headers(
+			headersCallback,
+			C.int64_t(result.ID),
+		)
+	})
 	if headerValue == nil {
 		stopCancel()
 		closeBrowserRequest(result.ID)

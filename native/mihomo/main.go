@@ -79,6 +79,11 @@ const (
 	embeddedIPv4Prefix = "172.19.0.1/30"
 	embeddedIPv6Prefix = "fdfe:dcba:9876::1/126"
 	embeddedMTU        = 9000
+
+	// JNI calls can block in Binder or Network.bindSocket. Keep excess
+	// connection goroutines parked in Go instead of letting every one occupy a
+	// cgo M thread and forcing the runtime to create hundreds of OS threads.
+	maxConcurrentPlatformCallbacks = 16
 )
 
 type nativeResponse struct {
@@ -119,6 +124,7 @@ var (
 	callbackMu             sync.RWMutex
 	protectCallback        unsafe.Pointer
 	resolveProcessCallback unsafe.Pointer
+	platformCallbackLimit  = newCallbackLimiter(maxConcurrentPlatformCallbacks)
 )
 
 func main() {}
@@ -548,7 +554,9 @@ func installPlatformHooks() {
 		}
 		var rejected bool
 		err := connection.Control(func(fileDescriptor uintptr) {
-			rejected = C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
+			rejected = withCallbackPermit(platformCallbackLimit, func() bool {
+				return C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
+			})
 		})
 		if err != nil {
 			return err
@@ -590,14 +598,16 @@ func resolveProcess(network string, source, destination netip.AddrPort) (uint32,
 	defer C.free(unsafe.Pointer(sourceAddress))
 	defer C.free(unsafe.Pointer(destinationAddress))
 
-	encoded := C.androidcyaml_call_resolve(
-		callback,
-		C.int(protocol),
-		sourceAddress,
-		C.int(source.Port()),
-		destinationAddress,
-		C.int(destination.Port()),
-	)
+	encoded := withCallbackPermit(platformCallbackLimit, func() *C.char {
+		return C.androidcyaml_call_resolve(
+			callback,
+			C.int(protocol),
+			sourceAddress,
+			C.int(source.Port()),
+			destinationAddress,
+			C.int(destination.Port()),
+		)
+	})
 	if encoded == nil {
 		return 0, "", process.ErrNotFound
 	}

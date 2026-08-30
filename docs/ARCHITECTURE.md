@@ -126,6 +126,11 @@ TUN 栈不再属于运行时覆写，也不采用 YAML 中的 `stack`。旧版�
 5. 已 protect 的 socket 再经当前 underlying `Network.bindSocket(fd)` 锁定物理网络；
 6. protect/bind 被拒绝时直接让拨号失败。
 
+protect/bind 与进程归属查询共享一个 16 并发的 Go 侧入口。限流发生在进入 cgo 之前，因此弱网重拨
+风暴中的多余 goroutine 会停在 Go 调度器中，不会各自占住一个等待 JNI/Binder 的 OS thread。System
+WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消与限流
+互相等待。
+
 system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处于 TUN 数据路径中。
 
 ## Application routing
