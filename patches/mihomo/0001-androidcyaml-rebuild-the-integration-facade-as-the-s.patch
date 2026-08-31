@@ -1,0 +1,877 @@
+From ae71bf075d38f1e02e2676e9ea81f46578d74f86 Mon Sep 17 00:00:00 2001
+From: qwqgong-ui <248246420+qwqgong-ui@users.noreply.github.com>
+Date: Mon, 31 Aug 2026 13:16:12 +0800
+Subject: [PATCH] androidcyaml: rebuild the integration facade as the single
+ seam
+
+The facade covered four functions while the AndroidCyaml wrapper imported
+fourteen mihomo packages directly, so every upstream rename in any of them
+broke a downstream repository with no way to see it coming.
+
+Rebuild it by capability domain -- config, lifecycle, network, process,
+transport, diagnostics -- so the wrapper imports this package and nothing
+else, and add FacadeVersion so a contract change fails the consumer's build
+instead of misbehaving on a device. The sync guidance moves from README.md
+into doc.go, next to the contract it describes.
+
+Three neutral changes underneath it:
+
+component/process publishes its endpoint resolver atomically. A core
+restarted in-process writes it from the start and stop paths while rule
+evaluation reads it on the hot path, which is a data race on a plain package
+variable. It also exposes whether a resolver is installed, so the tunnel can
+skip the FindPackageName call that follows a successful endpoint lookup --
+that resolver already returned the package name, making the second lookup
+either identical work or, with no name resolver registered, a guaranteed
+error once per matched connection.
+
+component/dialer exports EnvironmentScope so an embedder can address a scope
+it created rather than rebuilding the string by hand.
+
+dns gains EvictNetworkScope. Scoped keys are why a handover clears nothing:
+each network's answers stay addressable under their own branch. Retirement is
+the case that leaves behind -- when the platform stops tracking a network its
+branch has no owner, yet the answers survive to their own expiry, a 24-hour
+floor with no profile left to explain them.
+---
+ androidcyaml/README.md                  |  16 ----
+ androidcyaml/config.go                  |  66 ++++++++++++++++
+ androidcyaml/diagnostics.go             |  71 +++++++++++++++++
+ androidcyaml/doc.go                     |  32 ++++++++
+ androidcyaml/facade.go                  |  42 ----------
+ androidcyaml/lifecycle.go               |  47 +++++++++++
+ androidcyaml/network.go                 | 100 ++++++++++++++++++++++++
+ androidcyaml/network_android.go         |  15 ++++
+ androidcyaml/network_other.go           |   8 ++
+ androidcyaml/process.go                 |  54 +++++++++++++
+ androidcyaml/transport.go               |  40 ++++++++++
+ component/dialer/direct_scope.go        |  18 ++++-
+ component/process/process.go            |  18 ++++-
+ component/process/process_linux_test.go |   4 +-
+ dns/cachestore.go                       |  56 +++++++++++++
+ dns/evict_scope_test.go                 |  70 +++++++++++++++++
+ tunnel/tunnel.go                        |  11 ++-
+ 17 files changed, 602 insertions(+), 66 deletions(-)
+ delete mode 100644 androidcyaml/README.md
+ create mode 100644 androidcyaml/config.go
+ create mode 100644 androidcyaml/diagnostics.go
+ create mode 100644 androidcyaml/doc.go
+ delete mode 100644 androidcyaml/facade.go
+ create mode 100644 androidcyaml/lifecycle.go
+ create mode 100644 androidcyaml/network.go
+ create mode 100644 androidcyaml/network_android.go
+ create mode 100644 androidcyaml/network_other.go
+ create mode 100644 androidcyaml/process.go
+ create mode 100644 androidcyaml/transport.go
+ create mode 100644 dns/evict_scope_test.go
+
+diff --git a/androidcyaml/README.md b/androidcyaml/README.md
+deleted file mode 100644
+index a81708f0..00000000
+--- a/androidcyaml/README.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+-# AndroidCyaml integration facade
+-
+-This package is consumed only by `qwqgong-ui/AndroidCyaml`. It exposes a small
+-facade over mihomo's neutral process-resolution and XHTTP transport extension
+-points. Android `VpnService`, JNI, WebView, TUN lifecycle, and callback
+-implementations remain owned by the AndroidCyaml repository.
+-
+-When synchronizing `MetaCubeX/mihomo:Alpha` into `dev`:
+-
+-- preserve this directory;
+-- preserve the neutral extension points it calls;
+-- keep ordinary mihomo behavior unchanged when no callbacks are registered;
+-- verify both mihomo tests and the AndroidCyaml native build after API changes.
+-
+-AndroidCyaml consumes a pinned `dev` commit and must not apply another source
+-patch layer on top of it.
+diff --git a/androidcyaml/config.go b/androidcyaml/config.go
+new file mode 100644
+index 00000000..d0219229
+--- /dev/null
++++ b/androidcyaml/config.go
+@@ -0,0 +1,66 @@
++package androidcyaml
++
++import (
++	"github.com/metacubex/mihomo/config"
++	C "github.com/metacubex/mihomo/constant"
++	"github.com/metacubex/mihomo/hub/executor"
++	LC "github.com/metacubex/mihomo/listener/config"
++	"github.com/metacubex/mihomo/log"
++)
++
++// The config types AndroidCyaml is allowed to touch, aliased so that a rename
++// upstream lands here rather than across the wrapper. AndroidCyaml shapes the
++// parsed config in memory to apply its fixed Android TUN contract -- that
++// transformation is platform policy and deliberately stays in AndroidCyaml, so
++// these types have to remain reachable. Aliasing keeps the blast radius at one
++// file without moving policy into mihomo.
++type (
++	Config    = config.Config
++	RawConfig = config.RawConfig
++	Tun       = LC.Tun
++	LogLevel  = log.LogLevel
++)
++
++// TunStackSystem is the only stack AndroidCyaml runs. gVisor and mixed are not
++// compiled into the Android core.
++const TunStackSystem = C.TunSystem
++
++// SetPaths points the core at AndroidCyaml's private working directory before
++// anything reads a relative path out of it.
++func SetPaths(homeDir, configPath string) error {
++	C.SetHomeDir(homeDir)
++	C.SetConfig(configPath)
++	return config.Init(homeDir)
++}
++
++// ParseConfigBytes validates and parses a candidate configuration without
++// touching the running core. AndroidCyaml uses it to reject a bad import before
++// it can replace the file on disk.
++func ParseConfigBytes(configuration []byte) (*Config, error) {
++	return executor.ParseWithBytes(configuration)
++}
++
++// ParseConfigPath parses the configuration the core is about to run.
++func ParseConfigPath(path string) (*Config, error) {
++	return executor.ParseWithPath(path)
++}
++
++// UnmarshalRawConfig exposes the pre-resolution document. AndroidCyaml reads it
++// to find the first configured Selector, which is the only group its
++// per-network memory ever touches.
++func UnmarshalRawConfig(configuration []byte) (*RawConfig, error) {
++	return config.UnmarshalRawConfig(configuration)
++}
++
++// DefaultRawConfig is the baseline AndroidCyaml compares an imported document
++// against.
++func DefaultRawConfig() *RawConfig {
++	return config.DefaultRawConfig()
++}
++
++// ParseLogLevel maps a wire value from the AndroidCyaml override panel onto a
++// mihomo log level. The second result is false for an unknown name.
++func ParseLogLevel(name string) (LogLevel, bool) {
++	level, found := log.LogLevelMapping[name]
++	return level, found
++}
+diff --git a/androidcyaml/diagnostics.go b/androidcyaml/diagnostics.go
+new file mode 100644
+index 00000000..9db5a45b
+--- /dev/null
++++ b/androidcyaml/diagnostics.go
+@@ -0,0 +1,71 @@
++package androidcyaml
++
++import (
++	"github.com/metacubex/mihomo/component/geodata"
++	"github.com/metacubex/mihomo/log"
++	"github.com/metacubex/mihomo/tunnel/statistic"
++)
++
++// LogEvent is one entry from mihomo's own log stream.
++type LogEvent = log.Event
++
++// LogSubscription carries mihomo's own log events.
++//
++// Every log call publishes here regardless of the configured level, and a slow
++// subscriber blocks the call site. A consumer must therefore do nothing but
++// classify and count -- never I/O, never a lock another path can hold.
++type LogSubscription = <-chan log.Event
++
++// Log severities a subscriber needs to distinguish.
++const (
++	LogWarning = log.WARNING
++	LogError   = log.ERROR
++)
++
++// SubscribeLogs starts receiving core log events.
++func SubscribeLogs() LogSubscription {
++	return log.Subscribe()
++}
++
++// UnsubscribeLogs stops receiving core log events.
++func UnsubscribeLogs(subscription LogSubscription) {
++	log.UnSubscribe(subscription)
++}
++
++// Infoln and Warnln let the platform layer report through the same log stream
++// the dashboard shows, instead of only to Android's logcat.
++func Infoln(format string, values ...any) { log.Infoln(format, values...) }
++func Warnln(format string, values ...any) { log.Warnln(format, values...) }
++
++// ConnectionCount reports the number of tracked connections.
++func ConnectionCount() uint64 {
++	var count uint64
++	statistic.DefaultManager.Range(func(statistic.Tracker) bool {
++		count++
++		return true
++	})
++	return count
++}
++
++// TotalTraffic reports cumulative bytes in each direction.
++func TotalTraffic() (uploaded, downloaded int64) {
++	return statistic.DefaultManager.Total()
++}
++
++// CloseAllConnections closes every tracked connection. AndroidCyaml calls it
++// when the physical route changed underneath them, so the existing sockets are
++// bound to a path that no longer exists.
++func CloseAllConnections() {
++	statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
++		_ = connection.Close()
++		return true
++	})
++}
++
++// ClearGeoCaches releases the parsed GeoIP and GeoSite data, which mihomo
++// rebuilds on demand. This is the largest reclaimable allocation in the core and
++// the first thing to drop when Android asks for memory back.
++func ClearGeoCaches() {
++	geodata.ClearGeoIPCache()
++	geodata.ClearGeoSiteCache()
++}
+diff --git a/androidcyaml/doc.go b/androidcyaml/doc.go
+new file mode 100644
+index 00000000..aa346b84
+--- /dev/null
++++ b/androidcyaml/doc.go
+@@ -0,0 +1,32 @@
++// Package androidcyaml is the integration seam between mihomo and
++// qwqgong-ui/AndroidCyaml.
++//
++// The contract is one-directional. AndroidCyaml owns everything Android:
++// VpnService, JNI, WebView, the TUN contract, socket protection, and the policy
++// that decides when any of the verbs below are called. This package owns the
++// mapping from those verbs onto mihomo's internals, and nothing else. No
++// Android type, no platform decision, and no AndroidCyaml policy belongs here.
++//
++// It exists because the alternative was worse. The AndroidCyaml wrapper used to
++// import fourteen mihomo packages directly -- dialer, resolver, iface, geodata,
++// statistic, hub, executor, route, dns, config, constant, listener/config, log
++// and process -- so every upstream rename in any of them broke a downstream
++// repository that has no way to see it coming. Routing the calls through one
++// package means an upstream sync breaks this file instead, next to the code
++// that knows what the call was for.
++//
++// When synchronizing MetaCubeX/mihomo:Alpha into dev:
++//
++//   - preserve this directory and the neutral extension points it calls;
++//   - keep ordinary mihomo behavior unchanged when nothing is registered;
++//   - if a signature here has to change, raise FacadeVersion so the AndroidCyaml
++//     build fails loudly at compile time instead of at runtime on a device;
++//   - verify both mihomo's tests and the AndroidCyaml native build.
++package androidcyaml
++
++// FacadeVersion is the contract version of this package. AndroidCyaml asserts it
++// at build time, so a facade that moved under a consumer pinned to an older
++// shape fails the build rather than producing a core that misbehaves on device.
++//
++// Raise it whenever an exported name here is added, removed, or changes meaning.
++const FacadeVersion = 3
+diff --git a/androidcyaml/facade.go b/androidcyaml/facade.go
+deleted file mode 100644
+index 4dc50656..00000000
+--- a/androidcyaml/facade.go
++++ /dev/null
+@@ -1,42 +0,0 @@
+-// Package androidcyaml is the private integration facade consumed by
+-// qwqgong-ui/AndroidCyaml. Platform implementations remain in that repository;
+-// this package only wires them into mihomo's neutral extension points.
+-package androidcyaml
+-
+-import (
+-	"net/netip"
+-
+-	"github.com/metacubex/http"
+-	"github.com/metacubex/mihomo/component/process"
+-	"github.com/metacubex/mihomo/hub/executor"
+-	"github.com/metacubex/mihomo/transport/xhttp"
+-)
+-
+-type ProcessResolver func(network string, src, dst netip.AddrPort) (uint32, string, error)
+-
+-type BrowserTransportOptions = xhttp.ExternalTransportOptions
+-
+-type BrowserTransportFactory func(BrowserTransportOptions) (http.RoundTripper, error)
+-
+-func SetProcessResolver(resolver ProcessResolver) {
+-	process.SetEndpointResolver(process.EndpointResolver(resolver))
+-}
+-
+-func SetBrowserTransport(factory BrowserTransportFactory, supportsStreamUp bool) {
+-	xhttp.SetExternalTransportFactory(
+-		xhttp.ExternalTransportFactory(factory),
+-		xhttp.ExternalTransportCapabilities{StreamUp: supportsStreamUp},
+-	)
+-}
+-
+-func SetSystemIPv6Available(available bool) {
+-	executor.SetSystemIPv6Available(available)
+-}
+-
+-func ResetProcessResolver() {
+-	process.SetEndpointResolver(nil)
+-}
+-
+-func ResetBrowserTransport() {
+-	xhttp.SetExternalTransportFactory(nil, xhttp.ExternalTransportCapabilities{})
+-}
+diff --git a/androidcyaml/lifecycle.go b/androidcyaml/lifecycle.go
+new file mode 100644
+index 00000000..c5e35ebe
+--- /dev/null
++++ b/androidcyaml/lifecycle.go
+@@ -0,0 +1,47 @@
++package androidcyaml
++
++import (
++	"github.com/metacubex/mihomo/hub"
++	"github.com/metacubex/mihomo/hub/executor"
++	"github.com/metacubex/mihomo/hub/route"
++	"github.com/metacubex/mihomo/listener"
++)
++
++// SetEmbedMode tells the API server it is hosted inside another process rather
++// than owning one.
++func SetEmbedMode(embedded bool) {
++	route.SetEmbedMode(embedded)
++}
++
++// ApplyConfig starts or replaces the running core.
++func ApplyConfig(cfg *Config) {
++	hub.ApplyConfig(cfg)
++}
++
++// Shutdown stops the running core's listeners and resolvers.
++func Shutdown() {
++	executor.Shutdown()
++}
++
++// ResetAPIServer tears down the external controller listener.
++func ResetAPIServer() {
++	route.ReCreateServer(&route.Config{})
++}
++
++// ResetTunListener clears mihomo's cached TUN configuration through its own
++// synchronized recreate path.
++//
++// Shutdown closes the active listener but keeps LastTunConf, because a
++// standalone mihomo exits immediately afterwards and the cache never outlives
++// it. AndroidCyaml restarts the core in-process, so leaving that cache intact
++// lets an identical configuration skip listener creation entirely -- and
++// Android is then holding a TUN file descriptor with nothing reading it.
++func ResetTunListener() {
++	listener.ReCreateTun(Tun{}, nil)
++}
++
++// TunConf reports the cached TUN configuration, so a consumer can assert that
++// ResetTunListener actually cleared it rather than trusting that it did.
++func TunConf() Tun {
++	return listener.GetTunConf()
++}
+diff --git a/androidcyaml/network.go b/androidcyaml/network.go
+new file mode 100644
+index 00000000..5dd1a7ff
+--- /dev/null
++++ b/androidcyaml/network.go
+@@ -0,0 +1,100 @@
++package androidcyaml
++
++import (
++	"syscall"
++
++	"github.com/metacubex/mihomo/component/dialer"
++	"github.com/metacubex/mihomo/component/iface"
++	"github.com/metacubex/mihomo/component/resolver"
++	"github.com/metacubex/mihomo/dns"
++	"github.com/metacubex/mihomo/hub/executor"
++)
++
++// SetDirectNetworkEnvironment selects the network-scoped branch of the direct
++// DNS candidate cache.
++//
++// Android cannot let the Go side discover the physical path itself, so
++// AndroidCyaml supplies a privacy-preserving fingerprint of the current Wi-Fi or
++// SIM combined with the interface's addresses and routes. Changing this value
++// switches branches; it deliberately clears nothing, because the scoped keys are
++// what keep one network's long-lived answers from being served on another.
++func SetDirectNetworkEnvironment(environment string) {
++	dialer.SetDirectNetworkEnvironment(environment)
++}
++
++// RetireNetworkScope drops the direct DNS candidates belonging to a network the
++// platform has stopped tracking, and reports how many entries were removed.
++//
++// Scoped keys keep a handover cheap: nothing is cleared, because each network's
++// answers stay addressable under their own branch. Retirement is the case that
++// leaves behind, and the platform is the only side that knows it happened. When
++// AndroidCyaml drops a network profile -- aged out, or pushed past its cap --
++// this removes the matching answers instead of letting them sit until their own
++// expiry with nothing left to explain them.
++func RetireNetworkScope(environment string) int {
++	scope := dialer.EnvironmentScope(environment)
++	if scope == "" {
++		return 0
++	}
++	return dns.EvictNetworkScope(scope)
++}
++
++// SetTCPConcurrent toggles concurrent dialing across resolved addresses.
++func SetTCPConcurrent(enabled bool) {
++	dialer.SetTcpConcurrent(enabled)
++}
++
++// ClearTCPConcurrentCache drops the winning-address memory, which is bound to a
++// physical path and meaningless once that path changes.
++func ClearTCPConcurrentCache() {
++	dialer.ClearTCPConcurrentCache()
++}
++
++// SetSystemIPv6Available supplies the platform's authoritative answer about
++// IPv6 reachability.
++//
++// mihomo's own probe inspects local interfaces, which on Android sees the TUN's
++// own addresses and concludes IPv6 works when the underlying network has no
++// global address or default route at all. AndroidCyaml watches the real
++// underlying network and answers for it.
++func SetSystemIPv6Available(available bool) {
++	executor.SetSystemIPv6Available(available)
++}
++
++// FlushInterfaceCache drops cached interface lookups after a physical route
++// change.
++func FlushInterfaceCache() {
++	iface.FlushCache()
++}
++
++// ClearVolatileDNSCache drops ordinary answers and DNS transports while
++// preserving the long-lived per-network candidate branches, which are scoped and
++// therefore still correct for the networks they belong to.
++func ClearVolatileDNSCache() {
++	resolver.ClearVolatileCache()
++}
++
++// ClearDNSCache drops every cached answer, including the scoped branches. This
++// is memory reclamation, not a handover step.
++func ClearDNSCache() {
++	resolver.ClearCache()
++}
++
++// ResetDNSConnections closes pooled resolver connections bound to a path that no
++// longer exists.
++func ResetDNSConnections() {
++	resolver.ResetConnection()
++}
++
++// SocketHook receives every real outbound socket before it connects.
++type SocketHook = func(network, address string, connection syscall.RawConn) error
++
++// SetSocketHook installs the per-socket hook AndroidCyaml uses to keep upstream
++// dials outside its own VPN. Passing nil removes it.
++//
++// Every socket the core dials for real traffic passes through here. The TUN
++// stack's internal listeners do not, which is what keeps reinjected traffic on
++// the TUN data path.
++func SetSocketHook(hook SocketHook) {
++	dialer.DefaultSocketHook = hook
++}
+diff --git a/androidcyaml/network_android.go b/androidcyaml/network_android.go
+new file mode 100644
+index 00000000..5c2913ce
+--- /dev/null
++++ b/androidcyaml/network_android.go
+@@ -0,0 +1,15 @@
++//go:build android
++
++package androidcyaml
++
++import "github.com/metacubex/mihomo/dns"
++
++// UpdateSystemDNS installs the resolvers the current physical network handed
++// out, so `system://` means what Android says it means.
++//
++// Android has no readable /etc/resolv.conf, so without this the core has no
++// system DNS at all. AndroidCyaml reads them from the LinkProperties of the
++// network Android itself scored best, and pushes them again on every handover.
++func UpdateSystemDNS(servers []string) {
++	dns.UpdateSystemDNS(servers)
++}
+diff --git a/androidcyaml/network_other.go b/androidcyaml/network_other.go
+new file mode 100644
+index 00000000..6929d2cf
+--- /dev/null
++++ b/androidcyaml/network_other.go
+@@ -0,0 +1,8 @@
++//go:build !android
++
++package androidcyaml
++
++// UpdateSystemDNS is Android-only: mihomo discovers system resolvers from the
++// platform everywhere else. The stub keeps this package building on the host so
++// mihomo's own tests and vet runs are not split by GOOS.
++func UpdateSystemDNS([]string) {}
+diff --git a/androidcyaml/process.go b/androidcyaml/process.go
+new file mode 100644
+index 00000000..3bafe0c2
+--- /dev/null
++++ b/androidcyaml/process.go
+@@ -0,0 +1,54 @@
++package androidcyaml
++
++import (
++	"net/netip"
++
++	"github.com/metacubex/mihomo/component/process"
++)
++
++// FindProcessMode is the strict / always / off selector from the AndroidCyaml
++// override panel.
++type FindProcessMode = process.FindProcessMode
++
++// Errors a ProcessResolver returns. A resolver failure is authoritative: mihomo
++// does not fall through to another mechanism afterwards.
++var (
++	ErrProcessNotFound   = process.ErrNotFound
++	ErrInvalidNetwork    = process.ErrInvalidNetwork
++	ErrProcessNotSupport = process.ErrPlatformNotSupport
++)
++
++// ParseFindProcessMode maps a wire value onto a mode.
++func ParseFindProcessMode(value string) (FindProcessMode, error) {
++	var mode FindProcessMode
++	if err := mode.Set(value); err != nil {
++		return mode, err
++	}
++	return mode, nil
++}
++
++// ProcessResolver answers which application owns a socket, identified by both
++// endpoints.
++//
++// On Android the only permitted mechanism is
++// ConnectivityManager.getConnectionOwnerUid, a Binder call into system_server.
++// The Linux procfs and inet_diag paths mihomo uses elsewhere are blocked by
++// SELinux, so a failure here is final rather than a reason to try again another
++// way. It returns the owning UID and the package name together, since the
++// platform lookup already has both.
++type ProcessResolver func(network string, src, dst netip.AddrPort) (uint32, string, error)
++
++// SetProcessResolver installs the platform lookup. Passing nil restores
++// mihomo's own behavior.
++func SetProcessResolver(resolver ProcessResolver) {
++	if resolver == nil {
++		process.SetEndpointResolver(nil)
++		return
++	}
++	process.SetEndpointResolver(process.EndpointResolver(resolver))
++}
++
++// ResetProcessResolver removes the platform lookup.
++func ResetProcessResolver() {
++	process.SetEndpointResolver(nil)
++}
+diff --git a/androidcyaml/transport.go b/androidcyaml/transport.go
+new file mode 100644
+index 00000000..fd427f56
+--- /dev/null
++++ b/androidcyaml/transport.go
+@@ -0,0 +1,40 @@
++package androidcyaml
++
++import (
++	"github.com/metacubex/http"
++	"github.com/metacubex/mihomo/transport/xhttp"
++)
++
++// BrowserTransportOptions carries the node's configured server address and Host
++// down to the platform transport, so a browser-owned request can still reach the
++// exact endpoint the configuration names.
++type BrowserTransportOptions = xhttp.ExternalTransportOptions
++
++// BrowserTransportFactory builds one RoundTripper per XHTTP node.
++type BrowserTransportFactory func(BrowserTransportOptions) (http.RoundTripper, error)
++
++// SetBrowserTransport routes XHTTP's HTTP layer through a platform-supplied
++// transport. AndroidCyaml points it at System WebView so that TLS, the HTTP/2
++// header set and connection reuse are produced by the installed Chromium rather
++// than by Go, while mihomo keeps XHTTP framing, session identifiers and upload
++// mode.
++//
++// supportsStreamUp reports whether the platform transport can send a streaming
++// request body. It is detected on the device rather than assumed: when it is
++// false, mihomo downgrades stream-up and stream-one to packet-up instead of
++// buffering a whole tunnel body in memory.
++func SetBrowserTransport(factory BrowserTransportFactory, supportsStreamUp bool) {
++	if factory == nil {
++		ResetBrowserTransport()
++		return
++	}
++	xhttp.SetExternalTransportFactory(
++		xhttp.ExternalTransportFactory(factory),
++		xhttp.ExternalTransportCapabilities{StreamUp: supportsStreamUp},
++	)
++}
++
++// ResetBrowserTransport restores mihomo's native XHTTP transport.
++func ResetBrowserTransport() {
++	xhttp.SetExternalTransportFactory(nil, xhttp.ExternalTransportCapabilities{})
++}
+diff --git a/component/dialer/direct_scope.go b/component/dialer/direct_scope.go
+index a68ea765..92cee5aa 100644
+--- a/component/dialer/direct_scope.go
++++ b/component/dialer/direct_scope.go
+@@ -18,9 +18,25 @@ func SetDirectNetworkEnvironment(environment string) {
+ 	directNetworkEnvironment.Store(strings.TrimSpace(environment))
+ }
+ 
++// environmentScopePrefix marks a scope the platform named rather than one
++// derived from local interfaces.
++const environmentScopePrefix = "environment|"
++
++// EnvironmentScope reports the scope string a given platform environment
++// produces. An embedder needs it to address a branch it created earlier -- to
++// evict the answers of a network it has stopped tracking, for example -- and
++// deriving that string a second time by hand is how the two drift apart.
++func EnvironmentScope(environment string) string {
++	environment = strings.TrimSpace(environment)
++	if environment == "" {
++		return ""
++	}
++	return environmentScopePrefix + environment
++}
++
+ func directNetworkScope(opt option) string {
+ 	if environment := directNetworkEnvironment.Load(); environment != "" {
+-		return "environment|" + environment
++		return environmentScopePrefix + environment
+ 	}
+ 	interfaceName := opt.interfaceName
+ 	if interfaceName == "" {
+diff --git a/component/process/process.go b/component/process/process.go
+index 57a974cd..fecb9428 100644
+--- a/component/process/process.go
++++ b/component/process/process.go
+@@ -4,6 +4,7 @@ import (
+ 	"errors"
+ 	"net/netip"
+ 
++	"github.com/metacubex/mihomo/common/atomic"
+ 	C "github.com/metacubex/mihomo/constant"
+ )
+ 
+@@ -39,10 +40,21 @@ type RuleProcessMatcher interface {
+ // unavailable or permission-denied native mechanism.
+ type EndpointResolver func(network string, src, dst netip.AddrPort) (uint32, string, error)
+ 
+-var externalEndpointResolver EndpointResolver
++// An embedding platform can register and clear this while connections are being
++// matched: a core restarted in-process writes it from the start and stop paths
++// while rule evaluation reads it on the hot path. A plain variable is a data
++// race there, so the value is published atomically.
++var externalEndpointResolver atomic.TypedValue[EndpointResolver]
+ 
+ func SetEndpointResolver(resolver EndpointResolver) {
+-	externalEndpointResolver = resolver
++	externalEndpointResolver.Store(resolver)
++}
++
++// EndpointResolverInstalled reports whether a platform lookup is registered.
++// Such a resolver already returns the package name alongside the UID, so a
++// caller must not spend a second lookup mapping that UID back to a name.
++func EndpointResolverInstalled() bool {
++	return externalEndpointResolver.Load() != nil
+ }
+ 
+ func FindProcessName(network string, srcIP netip.Addr, srcPort int) (uint32, string, error) {
+@@ -59,7 +71,7 @@ func FindProcessNameByAddr(network string, src, dst netip.AddrPort) (uint32, str
+ // FindProcessNameByAddrWithMatcher limits expensive process descriptor scans
+ // to executable paths that can match the active process rules.
+ func FindProcessNameByAddrWithMatcher(network string, src, dst netip.AddrPort, matcher ProcessMatcher) (uint32, string, error) {
+-	if resolver := externalEndpointResolver; resolver != nil {
++	if resolver := externalEndpointResolver.Load(); resolver != nil {
+ 		return resolver(network, src, dst)
+ 	}
+ 	return findProcessNameByAddr(network, src, dst, matcher)
+diff --git a/component/process/process_linux_test.go b/component/process/process_linux_test.go
+index f18d3558..337526e5 100644
+--- a/component/process/process_linux_test.go
++++ b/component/process/process_linux_test.go
+@@ -70,8 +70,8 @@ func TestFindProcessNameByAddrWithMatcher(t *testing.T) {
+ }
+ 
+ func TestEndpointResolverFailureIsAuthoritative(t *testing.T) {
+-	oldResolver := externalEndpointResolver
+-	t.Cleanup(func() { externalEndpointResolver = oldResolver })
++	oldResolver := externalEndpointResolver.Load()
++	t.Cleanup(func() { SetEndpointResolver(oldResolver) })
+ 	wantErr := errors.New("platform lookup failed")
+ 	SetEndpointResolver(func(string, netip.AddrPort, netip.AddrPort) (uint32, string, error) {
+ 		return 0, "", wantErr
+diff --git a/dns/cachestore.go b/dns/cachestore.go
+index 8cdc3f2b..a5e511e2 100644
+--- a/dns/cachestore.go
++++ b/dns/cachestore.go
+@@ -177,3 +177,59 @@ func startStoreLoop() {
+ 		}
+ 	}()
+ }
++
++// cacheDeleter is implemented by the cache algorithms that can remove a single
++// key. A cache without it is expired in place instead, which every read path
++// already honours.
++type cacheDeleter interface {
++	Delete(key string)
++}
++
++// EvictNetworkScope drops every cached answer belonging to one network scope and
++// reports how many were removed.
++//
++// The direct-nameserver candidate caches are keyed by network scope precisely so
++// that one physical network's answers are never served on another, and that is
++// why nothing clears them on a handover. The gap is retirement: when the
++// platform stops tracking a network entirely, its branch has no owner left, yet
++// the answers survive until each entry's own expiry -- with a 24-hour floor,
++// long after the profile that explained them is gone. The platform knows when it
++// retired a network; this lets it say so.
++func EvictNetworkScope(scope string) int {
++	scope = strings.TrimSpace(scope)
++	if scope == "" {
++		return 0
++	}
++	prefix := scope + keySep
++
++	persistMu.Lock()
++	caches := make([]dnsCache, 0, len(persistCaches))
++	for _, c := range persistCaches {
++		caches = append(caches, c)
++	}
++	persistMu.Unlock()
++
++	evicted := 0
++	for _, c := range caches {
++		items, ok := snapshotOf(c)
++		if !ok {
++			continue
++		}
++		deleter, deletable := c.(cacheDeleter)
++		for _, item := range items {
++			if !strings.HasPrefix(item.Key, prefix) {
++				continue
++			}
++			evicted++
++			if deletable {
++				deleter.Delete(item.Key)
++				continue
++			}
++			c.SetWithExpire(item.Key, item.Value, time.Unix(0, 0))
++		}
++	}
++	if evicted > 0 {
++		log.Infoln("[DNS] evicted %d cached answers for a retired network scope", evicted)
++	}
++	return evicted
++}
+diff --git a/dns/evict_scope_test.go b/dns/evict_scope_test.go
+new file mode 100644
+index 00000000..41e54d89
+--- /dev/null
++++ b/dns/evict_scope_test.go
+@@ -0,0 +1,70 @@
++package dns
++
++import (
++	"testing"
++	"time"
++
++	D "github.com/miekg/dns"
++)
++
++func TestEvictNetworkScopeRemovesOnlyTheRetiredBranch(t *testing.T) {
++	persistMu.Lock()
++	previous := persistCaches
++	persistCaches = make(map[string]dnsCache)
++	persistMu.Unlock()
++	t.Cleanup(func() {
++		persistMu.Lock()
++		persistCaches = previous
++		persistMu.Unlock()
++	})
++
++	cache := Config{}.newCache()
++	registerPersistentCache("direct-source-1", cache)
++
++	const retired = "environment|retired-fingerprint"
++	const kept = "environment|kept-fingerprint"
++
++	answer := new(D.Msg).SetQuestion("example.com.", D.TypeA)
++	expires := time.Now().Add(24 * time.Hour)
++	retiredKey := retired + keySep + "example.com. IN A" + keySep + "1.1.1.1"
++	keptKey := kept + keySep + "example.com. IN A" + keySep + "1.1.1.1"
++	cache.SetWithExpire(retiredKey, answer, expires)
++	cache.SetWithExpire(keptKey, answer, expires)
++
++	if got := EvictNetworkScope(retired); got != 1 {
++		t.Fatalf("evicted %d entries, want 1", got)
++	}
++
++	if _, _, hit := cache.GetWithExpire(retiredKey); hit {
++		t.Fatal("a retired network's answers survived eviction")
++	}
++	if _, _, hit := cache.GetWithExpire(keptKey); !hit {
++		t.Fatal("eviction removed a network that is still tracked")
++	}
++}
++
++func TestEvictNetworkScopeRejectsEmptyScope(t *testing.T) {
++	// An empty environment must never be turned into a prefix: every scoped key
++	// would match it and one blank call would wipe every network's branch.
++	persistMu.Lock()
++	previous := persistCaches
++	persistCaches = make(map[string]dnsCache)
++	persistMu.Unlock()
++	t.Cleanup(func() {
++		persistMu.Lock()
++		persistCaches = previous
++		persistMu.Unlock()
++	})
++
++	cache := Config{}.newCache()
++	registerPersistentCache("direct-source-1", cache)
++	key := "environment|kept" + keySep + "example.com. IN A"
++	cache.SetWithExpire(key, new(D.Msg), time.Now().Add(time.Hour))
++
++	if got := EvictNetworkScope("   "); got != 0 {
++		t.Fatalf("blank scope evicted %d entries, want 0", got)
++	}
++	if _, _, hit := cache.GetWithExpire(key); !hit {
++		t.Fatal("a blank scope wiped a live network's answers")
++	}
++}
+diff --git a/tunnel/tunnel.go b/tunnel/tunnel.go
+index 476ffdae..234bf757 100644
+--- a/tunnel/tunnel.go
++++ b/tunnel/tunnel.go
+@@ -486,8 +486,15 @@ func resolveMetadata(metadata *C.Metadata) (proxy C.Proxy, rule C.Rule, err erro
+ 						metadata.ProcessPath = path
+ 						metadata.Uid = uid
+ 
+-						if pkg, err := process.FindPackageName(metadata); err == nil { // for android (not CMFA) package names
+-							metadata.Process = pkg
++						// A registered endpoint resolver already returned the
++						// package name as the path above, and mapping the UID
++						// again would be a second platform lookup per matched
++						// connection for a result that is either identical or,
++						// where no name resolver exists, always an error.
++						if !process.EndpointResolverInstalled() {
++							if pkg, err := process.FindPackageName(metadata); err == nil { // for android (not CMFA) package names
++								metadata.Process = pkg
++							}
+ 						}
+ 					}
+ 				} else {

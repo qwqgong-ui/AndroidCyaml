@@ -3,21 +3,24 @@ package main
 import (
 	"testing"
 
+	core "github.com/metacubex/mihomo/androidcyaml"
 	"github.com/metacubex/mihomo/listener"
-	LC "github.com/metacubex/mihomo/listener/config"
 )
 
-func TestResetTunListenerForRestartClearsCachedConfig(t *testing.T) {
-	stale := LC.Tun{Device: "AndroidCyaml", FileDescriptor: 42}
+// Seeding a stale configuration is not something AndroidCyaml ever asks the core
+// to do, so it is not a facade verb. This test reaches past the facade to set up
+// the state it is guarding against; production code must not.
+func TestResetTunListenerClearsCachedConfig(t *testing.T) {
+	stale := core.Tun{Device: "AndroidCyaml", FileDescriptor: 42}
 	listener.ReCreateTun(stale, nil)
-	t.Cleanup(resetTunListenerForRestart)
+	t.Cleanup(core.ResetTunListener)
 
-	if got := listener.GetTunConf(); got.Device != stale.Device {
+	if got := core.TunConf(); got.Device != stale.Device {
 		t.Fatalf("test setup did not retain stale TUN config: %+v", got)
 	}
 
-	resetTunListenerForRestart()
-	if got := listener.GetTunConf(); !got.Equal(LC.Tun{}) {
+	core.ResetTunListener()
+	if got := core.TunConf(); !got.Equal(core.Tun{}) {
 		t.Fatalf("cached TUN config survived embedded restart: %+v", got)
 	}
 }

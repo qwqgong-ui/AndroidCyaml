@@ -48,8 +48,11 @@ class NetworkComponentTest {
         val mobileIpv6 = NetworkState.of(
             200L, "rmnet_data0", true, false, listOf("10.0.0.1"), "mobile",
         )
+        // Only the resolvers changed. The path signature is built from the
+        // interface, its IPv4 addresses and its routes, so it does not move when
+        // DHCP hands out different nameservers on the same network.
         val wifiDnsChanged = NetworkState.of(
-            100L, "wlan0-new-dns", true, true, listOf("1.1.1.1"), "home",
+            100L, "wlan0", true, true, listOf("1.1.1.1"), "home",
         )
         val officeWifi = NetworkState.of(
             100L, "wlan0", true, true, listOf("192.168.1.1"), "office",
@@ -81,8 +84,78 @@ class NetworkComponentTest {
         assertEquals("home", wifiIpv6.selectionIdentity)
         assertFalse(mobileIpv6.wifi)
         assertFalse(NetworkState.unavailable().available())
-        assertEquals("home", wifiIpv6.cacheIdentity())
-        assertEquals("mobile", mobileIpv6.cacheIdentity())
+        // The cache scope is a fingerprint, never the raw selection identity.
+        assertNotEquals(wifiIpv6.selectionIdentity, wifiIpv6.cacheIdentity())
+        assertNotEquals(wifiIpv6.cacheIdentity(), mobileIpv6.cacheIdentity())
+    }
+
+    @Test
+    fun cacheScopeSeparatesDistinctNetworksSharingOneSsid() {
+        // Two different physical networks that merely share a name: a chain
+        // cafe, a carrier hotspot, one SSID across office sites. Selection
+        // memory must treat them as one profile so roaming does not fork it,
+        // but their local resolvers answer differently, so the direct-DNS scope
+        // must not be shared.
+        val firstSite = NetworkState.of(
+            100L, "if=wlan0|addr=192.168.1.20/24", true, true, listOf("192.168.1.1"), "cafe",
+        )
+        val secondSite = NetworkState.of(
+            200L, "if=wlan0|addr=10.20.30.40/24", true, true, listOf("10.20.30.1"), "cafe",
+        )
+
+        val transition = secondSite.transitionFrom(firstSite)
+        assertFalse(transition.identityChanged)
+        assertTrue(transition.cacheChanged)
+        assertNotEquals(firstSite.cacheIdentity(), secondSite.cacheIdentity())
+    }
+
+    @Test
+    fun cacheScopeSurvivesReconnectingToTheSamePath() {
+        // A Wi-Fi reconnect produces a new Network handle for the same physical
+        // path. Rotating the scope there would throw away a warm cache branch
+        // for nothing.
+        val before = NetworkState.of(
+            100L, "if=wlan0|addr=192.168.1.20/24", true, true, listOf("192.168.1.1"), "home",
+        )
+        val afterReconnect = NetworkState.of(
+            200L, "if=wlan0|addr=192.168.1.20/24", true, true, listOf("192.168.1.1"), "home",
+        )
+
+        val transition = afterReconnect.transitionFrom(before)
+        assertTrue(transition.routeChanged)
+        assertFalse(transition.cacheChanged)
+        assertEquals(before.cacheIdentity(), afterReconnect.cacheIdentity())
+    }
+
+    @Test
+    fun unreconciledDimensionsAreReplayedOnTheNextTransition() {
+        // A native call that failed leaves its dimension owed. The state it was
+        // reconciling towards is already observed, so without carrying it
+        // forward nothing would ever report that dimension as changed again.
+        val owed = NetworkTransition(
+            routeChanged = true,
+            dnsChanged = false,
+            ipv6Changed = false,
+            identityChanged = false,
+            cacheChanged = true,
+        )
+        val dnsOnly = NetworkTransition(
+            routeChanged = false,
+            dnsChanged = true,
+            ipv6Changed = false,
+            identityChanged = false,
+            cacheChanged = false,
+        )
+
+        val replayed = dnsOnly.mergePending(owed)
+        assertTrue(replayed.dnsChanged)
+        assertTrue(replayed.routeChanged)
+        assertTrue(replayed.cacheChanged)
+        assertFalse(replayed.ipv6Changed)
+
+        assertFalse(NetworkTransition.none().changed())
+        assertEquals(dnsOnly, dnsOnly.mergePending(NetworkTransition.none()))
+        assertEquals(dnsOnly, dnsOnly.mergePending(null))
     }
 
     @Test

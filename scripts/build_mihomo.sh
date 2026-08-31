@@ -17,6 +17,7 @@ readonly SOURCE_DIR="${ROOT_DIR}/.third_party/mihomo-src"
 readonly MODULE_DIR="${ROOT_DIR}/.third_party/androidcyaml-mihomo-module"
 readonly TEMP_DIR="${ROOT_DIR}/.third_party/mihomo-jni-building"
 readonly DEP_PATCH_DIR="${ROOT_DIR}/.third_party/mihomo-patched-deps"
+readonly PATCH_DIR="${ROOT_DIR}/patches/mihomo"
 readonly HEADER_DIR="${ROOT_DIR}/app/src/main/cpp/generated"
 readonly LIBRARY_DIR="${ROOT_DIR}/app/src/main/jniLibs/arm64-v8a"
 readonly OUTPUT_LIBRARY="${LIBRARY_DIR}/libmihomo.so"
@@ -39,6 +40,17 @@ wrapper_sources=("${WRAPPER_SOURCE_DIR}"/*.go)
 }
 
 readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" | sha256sum | awk '{ print $1 }')"
+
+# Staging area for facade work that has not landed in dev yet. Each patch is
+# applied to the fresh checkout below, and is expected to stop applying once the
+# same change reaches dev -- that case is detected and skipped rather than
+# treated as a failure, so the directory can be emptied on the next sync.
+mihomo_patches=("${PATCH_DIR}"/*.patch)
+if (( ${#mihomo_patches[@]} > 0 )); then
+    readonly PATCH_DIGEST="$(cat "${mihomo_patches[@]}" | sha256sum | awk '{ print $1 }')"
+else
+    readonly PATCH_DIGEST="none"
+fi
 
 mkdir -p "${ROOT_DIR}/.third_party" "${HEADER_DIR}" "${LIBRARY_DIR}"
 
@@ -65,7 +77,20 @@ git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
 git -C "${SOURCE_DIR}" diff --check
 
-readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${WRAPPER_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
+for patch in "${mihomo_patches[@]}"; do
+    patch_name="$(basename "${patch}")"
+    if git -C "${SOURCE_DIR}" apply --check "${patch}" 2>/dev/null; then
+        git -C "${SOURCE_DIR}" apply --whitespace=nowarn "${patch}"
+        echo "Applied pending mihomo patch ${patch_name}"
+    elif git -C "${SOURCE_DIR}" apply --check --reverse "${patch}" 2>/dev/null; then
+        echo "Skipping ${patch_name}: already present in ${MIHOMO_SOURCE_BRANCH}; delete it from ${PATCH_DIR}"
+    else
+        echo "mihomo patch ${patch_name} no longer applies to ${MIHOMO_COMMIT:0:8}; rebase or drop it" >&2
+        exit 1
+    fi
+done
+
+readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${WRAPPER_DIGEST}:${PATCH_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
 if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then

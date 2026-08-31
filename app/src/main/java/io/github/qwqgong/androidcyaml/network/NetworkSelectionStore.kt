@@ -15,7 +15,7 @@ class NetworkSelectionStore(context: Context) {
         val selections: Map<String, String>,
     )
 
-    private data class StoredNetwork(
+    internal data class StoredNetwork(
         val kind: String,
         val label: String,
         val updatedAt: Long,
@@ -38,7 +38,24 @@ class NetworkSelectionStore(context: Context) {
         return stored.selections.toMap()
     }
 
-    fun save(networkIdentity: String?, selections: Map<String, String>?): Boolean =
+    /**
+     * The outcome of a write: whether it reached disk, and which networks left
+     * this store for good while it did.
+     *
+     * Selector choices and the core's direct-DNS candidates are two stores keyed
+     * by the same fingerprint, with independent expiry. Nothing used to connect
+     * them, so a network aged out or pushed past the cap here kept its DNS branch
+     * in the core until each entry's own expiry -- a 24-hour floor, with no
+     * profile left to explain it. Reporting retirements is the join; the caller
+     * has the runtime and forwards them.
+     */
+    data class SaveOutcome(val persisted: Boolean, val retired: Set<String>) {
+        companion object {
+            fun unchanged(): SaveOutcome = SaveOutcome(true, emptySet())
+        }
+    }
+
+    fun save(networkIdentity: String?, selections: Map<String, String>?): SaveOutcome =
         save(networkIdentity, "", "", selections)
 
     fun save(
@@ -46,26 +63,41 @@ class NetworkSelectionStore(context: Context) {
         kind: String?,
         label: String?,
         selections: Map<String, String>?,
-    ): Boolean {
+    ): SaveOutcome {
         if (networkIdentity.isNullOrBlank() || selections.isNullOrEmpty()) {
-            return true
+            return SaveOutcome.unchanged()
         }
         val now = System.currentTimeMillis()
         val sanitized = sanitizeSelections(selections)
         if (sanitized.isEmpty()) {
-            return true
+            return SaveOutcome.unchanged()
         }
         val networks = readNetworks()
-        networks.entries.removeIf { isExpired(it.value.updatedAt, now) }
+        val retired = LinkedHashSet<String>()
+        networks.entries.removeIf { entry ->
+            val expired = isExpired(entry.value.updatedAt, now)
+            if (expired) retired.add(entry.key)
+            expired
+        }
         val previous = networks[networkIdentity]
         val storedKind = nonBlank(kind, previous?.kind ?: "")
         val storedLabel = nonBlank(label, previous?.label ?: "")
         networks[networkIdentity] = StoredNetwork(storedKind, storedLabel, now, sanitized)
-        trimOldest(networks)
+        retired.addAll(trimOldest(networks))
         // These writes happen only on network/lifecycle boundaries. commit()
         // makes the memory-kill acknowledgement truthful: once it returns, the
         // latest selector state is on disk rather than queued in this process.
-        return preferences.edit().putString(DOCUMENT, encodeNetworks(networks)).commit()
+        val persisted = preferences.edit().putString(DOCUMENT, encodeNetworks(networks)).commit()
+        // Only report a retirement the disk agrees with. A failed commit leaves
+        // every profile in place, and evicting the core's answers for a network
+        // that is still remembered throws away a warm cache for nothing.
+        if (!persisted) {
+            return SaveOutcome(false, emptySet())
+        }
+        // The network being written is by definition not retired, even if an
+        // older record under the same identity had already aged out above.
+        retired.remove(networkIdentity)
+        return SaveOutcome(true, retired)
     }
 
     fun profiles(): List<Profile> {
@@ -122,7 +154,7 @@ class NetworkSelectionStore(context: Context) {
         return networks
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "AndroidCyaml/Selections"
         const val PREFERENCES = "androidcyaml_network_selections"
         const val DOCUMENT = "network_selections_v1"
@@ -170,14 +202,22 @@ class NetworkSelectionStore(context: Context) {
             return sanitized.toMap()
         }
 
-        fun trimOldest(networks: MutableMap<String, StoredNetwork>) {
+        /**
+         * Drops the least recently used networks past the cap and names them, so
+         * the caller can retire their DNS candidates in the core too.
+         */
+        fun trimOldest(networks: MutableMap<String, StoredNetwork>): Set<String> {
             if (networks.size <= MAX_NETWORKS) {
-                return
+                return emptySet()
             }
+            val removed = LinkedHashSet<String>()
             val ordered = networks.entries.sortedBy { it.value.updatedAt }
             for (index in 0 until ordered.size - MAX_NETWORKS) {
-                networks.remove(ordered[index].key)
+                val identity = ordered[index].key
+                networks.remove(identity)
+                removed.add(identity)
             }
+            return removed
         }
 
         fun isExpired(updatedAt: Long, now: Long): Boolean =

@@ -33,6 +33,16 @@ class SelectorSession(
     }
 
     fun moveTo(networkState: NetworkState, runtime: MihomoRuntime?): Boolean {
+        // An outage is not a network change -- the same network usually comes
+        // back. Holding the session across it lets a choice the user made while
+        // the network was down survive; ending it would make the return look
+        // like a fresh arrival and restore the remembered node over the top. A
+        // network that is present but unidentifiable is a real move and still
+        // ends the session, otherwise its choices would be checkpointed under
+        // the previous network's identity.
+        if (!networkState.available()) {
+            return false
+        }
         if (identity == networkState.selectionIdentity) {
             return false
         }
@@ -57,7 +67,15 @@ class SelectorSession(
         }
         val remembered = store.selections(identity)
         if (remembered.isEmpty()) {
-            save(runtime, identity, kind, label)
+            // Nothing to restore, and nothing worth writing yet. The core's
+            // current choice at this moment is still whatever the previous
+            // network restored, so persisting it here would record one network's
+            // node as another's -- permanently, and again after every expiry,
+            // seeded from whichever network happened to be active. A network
+            // passed through for two seconds during a handover would also leave
+            // a profile behind. The session is live from here, so the ordinary
+            // checkpoint on departure records what this network actually ended
+            // on, which is the state worth remembering.
             ready = true
             return
         }
@@ -162,9 +180,11 @@ class SelectorSession(
             selectedKind = kind
             selectedLabel = label
         }
-        if (!store.save(requestedIdentity, selectedKind, selectedLabel, selections)) {
+        val outcome = store.save(requestedIdentity, selectedKind, selectedLabel, selections)
+        if (!outcome.persisted) {
             throw IOException("节点选择无法写入设备存储")
         }
+        retire(runtime, outcome)
         if (requestedIdentity == identity) {
             ready = true
         }
@@ -177,10 +197,33 @@ class SelectorSession(
         targetKind: String,
         targetLabel: String,
     ): Boolean = try {
-        store.save(targetIdentity, targetKind, targetLabel, runtime.selectorSelections())
+        val outcome = store.save(targetIdentity, targetKind, targetLabel, runtime.selectorSelections())
+        retire(runtime, outcome)
+        outcome.persisted
     } catch (exception: IOException) {
         Log.w(TAG, "Unable to remember selector choices", exception)
         false
+    }
+
+    /**
+     * Retires the core's direct-DNS candidates for networks this store just
+     * dropped, so the two long-term stores let go of a network together.
+     *
+     * A failure here is not worth failing the write for: the entries still carry
+     * their own expiry, so the worst case is the behaviour that existed before
+     * the two stores were joined at all.
+     */
+    private fun retire(runtime: MihomoRuntime, outcome: NetworkSelectionStore.SaveOutcome) {
+        for (identity in outcome.retired) {
+            try {
+                runtime.retireNetworkScope(identity)
+            } catch (exception: IOException) {
+                Log.w(TAG, "Unable to retire DNS candidates for a dropped network", exception)
+            }
+        }
+        if (outcome.retired.isNotEmpty()) {
+            Log.i(TAG, "Retired " + outcome.retired.size + " network profiles and their DNS candidates")
+        }
     }
 
     private companion object {

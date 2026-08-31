@@ -679,6 +679,18 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateNetworkEnvironment(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeRetireNetworkScope(
+        JNIEnv* env,
+        jclass,
+        jstring network_identity
+) {
+    std::string network_identity_value = stringFromJava(env, network_identity);
+    return stringFromNative(env, AndroidCyamlRetireNetworkScope(
+            const_cast<char*>(network_identity_value.c_str())
+    ));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateSystemDns(
         JNIEnv* env,
         jclass,

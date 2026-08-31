@@ -59,27 +59,24 @@ import (
 	"syscall"
 	"unsafe"
 
-	androidcyamlcore "github.com/metacubex/mihomo/androidcyaml"
-	"github.com/metacubex/mihomo/component/dialer"
-	"github.com/metacubex/mihomo/component/geodata"
-	"github.com/metacubex/mihomo/component/iface"
-	"github.com/metacubex/mihomo/component/process"
-	"github.com/metacubex/mihomo/component/resolver"
-	"github.com/metacubex/mihomo/config"
-	MC "github.com/metacubex/mihomo/constant"
-	MDNS "github.com/metacubex/mihomo/dns"
-	"github.com/metacubex/mihomo/hub"
-	"github.com/metacubex/mihomo/hub/executor"
-	"github.com/metacubex/mihomo/hub/route"
-	LC "github.com/metacubex/mihomo/listener/config"
-	MLog "github.com/metacubex/mihomo/log"
-	"github.com/metacubex/mihomo/tunnel/statistic"
+	core "github.com/metacubex/mihomo/androidcyaml"
 )
 
 const (
 	embeddedIPv4Prefix = "172.19.0.1/30"
 	embeddedIPv6Prefix = "fdfe:dcba:9876::1/126"
 	embeddedMTU        = 9000
+
+	// A phone's NAT table is not free and nothing reaps it early: sing-tun holds
+	// a UDP session for its whole timeout after the last packet. mihomo's
+	// default is five minutes, chosen for a desktop that is not being killed for
+	// memory. Ninety seconds still outlives a QUIC idle period (30s) and a DNS
+	// exchange by a wide margin, while releasing the sessions a chatty app opens
+	// and abandons roughly three times sooner.
+	embeddedUDPTimeoutSeconds = 90
+
+	// ICMP sessions are answered and finished; they do not need a long window.
+	embeddedICMPTimeoutSeconds = 10
 
 	// The process-owner lookup is a genuine Binder round trip into
 	// ConnectivityService, and a goroutine waiting inside cgo owns its OS
@@ -153,7 +150,7 @@ var (
 	// only while diagnostics is on, and keep the pump a tight loop.
 	coreLog       coreLogCounters
 	coreLogMu     sync.Mutex
-	coreLogEvents <-chan MLog.Event
+	coreLogEvents <-chan core.LogEvent
 )
 
 func main() {}
@@ -184,7 +181,7 @@ func AndroidCyamlValidate(homeValue, configValue *C.char) *C.char {
 	}
 	configuration, err := os.ReadFile(configPath)
 	if err == nil {
-		_, err = executor.ParseWithBytes(configuration)
+		_, err = core.ParseConfigBytes(configuration)
 	}
 	return respond(nil, err)
 }
@@ -205,7 +202,7 @@ func AndroidCyamlPrepareTun(
 	if err != nil {
 		return respond(nil, err)
 	}
-	cfg, err := executor.ParseWithBytes(configuration)
+	cfg, err := core.ParseConfigBytes(configuration)
 	if err != nil {
 		return respond(nil, err)
 	}
@@ -240,14 +237,14 @@ func AndroidCyamlStart(
 	if !callbacksInstalled() {
 		return respond(nil, errors.New("Android JNI callbacks are not installed"))
 	}
-	dialer.SetDirectNetworkEnvironment(C.GoString(networkEnvironmentValue))
+	core.SetDirectNetworkEnvironment(C.GoString(networkEnvironmentValue))
 
 	home := C.GoString(homeValue)
 	configPath := C.GoString(configValue)
 	if err := initializeRuntimePaths(home, configPath); err != nil {
 		return respond(nil, err)
 	}
-	cfg, err := executor.ParseWithPath(configPath)
+	cfg, err := core.ParseConfigPath(configPath)
 	if err != nil {
 		return respond(nil, err)
 	}
@@ -258,14 +255,14 @@ func AndroidCyamlStart(
 	if err != nil {
 		return respond(nil, fmt.Errorf("read selector configuration: %w", err))
 	}
-	rawCfg, err := config.UnmarshalRawConfig(configuration)
+	rawCfg, err := core.UnmarshalRawConfig(configuration)
 	if err != nil {
 		return respond(nil, fmt.Errorf("parse selector configuration: %w", err))
 	}
 	primarySelector := firstConfiguredSelector(rawCfg)
 
 	logLevelName := strings.ToLower(strings.TrimSpace(C.GoString(logLevelValue)))
-	logLevel, found := MLog.LogLevelMapping[logLevelName]
+	logLevel, found := core.ParseLogLevel(logLevelName)
 	if !found {
 		return respond(nil, fmt.Errorf("unsupported mihomo log level: %s", logLevelName))
 	}
@@ -296,8 +293,8 @@ func AndroidCyamlStart(
 	}
 
 	installPlatformHooks(C.GoString(protectEndpointValue))
-	route.SetEmbedMode(true)
-	hub.ApplyConfig(cfg)
+	core.SetEmbedMode(true)
+	core.ApplyConfig(cfg)
 	active = true
 	releaseRebuildableMemory(false)
 	return respond(payload, nil)
@@ -311,7 +308,17 @@ func AndroidCyamlUpdateNetworkEnvironment(environmentValue *C.char) *C.char {
 	// Changing this value selects another network-scoped direct-DNS branch.
 	// Do not clear either the ordinary or the long-lived per-source DNS caches:
 	// their scoped keys keep answers from different physical networks isolated.
-	dialer.SetDirectNetworkEnvironment(C.GoString(environmentValue))
+	core.SetDirectNetworkEnvironment(C.GoString(environmentValue))
+	return respond(nil, nil)
+}
+
+//export AndroidCyamlRetireNetworkScope
+func AndroidCyamlRetireNetworkScope(environmentValue *C.char) *C.char {
+	// Deliberately does not take runtimeMu and does not require an active
+	// runtime. Retirement is bookkeeping about networks the platform no longer
+	// tracks, and the caches outlive any single core instance -- refusing while
+	// stopped would just leave the answers behind until their own expiry.
+	core.RetireNetworkScope(C.GoString(environmentValue))
 	return respond(nil, nil)
 }
 
@@ -323,7 +330,7 @@ func AndroidCyamlSetTcpConcurrent(enabledValue C.int) *C.char {
 	if !active {
 		return respond(nil, errors.New("mihomo runtime is not active"))
 	}
-	dialer.SetTcpConcurrent(enabledValue != 0)
+	core.SetTCPConcurrent(enabledValue != 0)
 	return respond(nil, nil)
 }
 
@@ -344,14 +351,11 @@ func AndroidCyamlNotifyNetworkChanged(closeConnectionsValue C.int) *C.char {
 		// DNS state is reconciled separately by AndroidCyamlUpdateSystemDNS.
 		// Keeping it out of this transport reset is what lets a later handover
 		// return to the previous network's long-lived DNS branch.
-		iface.FlushCache()
+		core.FlushInterfaceCache()
 		if closeConnectionsValue != 0 {
-			dialer.ClearTCPConcurrentCache()
-			resolver.ResetConnection()
-			statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
-				_ = connection.Close()
-				return true
-			})
+			core.ClearTCPConcurrentCache()
+			core.ResetDNSConnections()
+			core.CloseAllConnections()
 		}
 	}
 	return respond(nil, nil)
@@ -366,12 +370,12 @@ func AndroidCyamlUpdateSystemDNS(serversValue *C.char) *C.char {
 	if err := json.Unmarshal([]byte(C.GoString(serversValue)), &servers); err != nil {
 		return respond(nil, fmt.Errorf("decode Android system DNS: %w", err))
 	}
-	MDNS.UpdateSystemDNS(servers)
+	core.UpdateSystemDNS(servers)
 	if active {
 		// Clear only ordinary answers and DNS transports. ClearVolatileCache
 		// deliberately preserves the 24-hour network/source candidate branches.
-		resolver.ClearVolatileCache()
-		resolver.ResetConnection()
+		core.ClearVolatileDNSCache()
+		core.ResetDNSConnections()
 	}
 	return respond(nil, nil)
 }
@@ -382,7 +386,7 @@ func AndroidCyamlUpdateIPv6Availability(availableValue C.int) *C.char {
 	defer runtimeMu.Unlock()
 
 	if active {
-		androidcyamlcore.SetSystemIPv6Available(availableValue != 0)
+		core.SetSystemIPv6Available(availableValue != 0)
 	}
 	return respond(nil, nil)
 }
@@ -403,20 +407,15 @@ func AndroidCyamlTrimMemory() C.int {
 }
 
 // AndroidCyamlRuntimeMetrics answers one diagnostics sample. It deliberately
-// takes no lock: runtimeMu is held across a full hub.ApplyConfig during start,
+// takes no lock: runtimeMu is held across a full config apply during start,
 // and a sampler on a timer must never wait on that. Everything read here is
 // either lock-free in the Go runtime or already synchronised by mihomo.
 //
 //export AndroidCyamlRuntimeMetrics
 func AndroidCyamlRuntimeMetrics() *C.char {
 	sample := collectRuntimeMetrics()
-	var connections uint64
-	statistic.DefaultManager.Range(func(statistic.Tracker) bool {
-		connections++
-		return true
-	})
-	sample["connections"] = connections
-	uploaded, downloaded := statistic.DefaultManager.Total()
+	sample["connections"] = core.ConnectionCount()
+	uploaded, downloaded := core.TotalTraffic()
 	sample["uploadedBytes"] = nonNegative(uploaded)
 	sample["downloadedBytes"] = nonNegative(downloaded)
 	platformSocketProtect.counters(sample)
@@ -452,7 +451,7 @@ func setCoreLogPump(enabled bool) {
 		if coreLogEvents != nil {
 			return
 		}
-		events := MLog.Subscribe()
+		events := core.SubscribeLogs()
 		coreLogEvents = events
 		go pumpCoreLog(events)
 		return
@@ -461,16 +460,16 @@ func setCoreLogPump(enabled bool) {
 		return
 	}
 	// UnSubscribe closes the channel, which ends the pump goroutine.
-	MLog.UnSubscribe(coreLogEvents)
+	core.UnsubscribeLogs(coreLogEvents)
 	coreLogEvents = nil
 }
 
-func pumpCoreLog(events <-chan MLog.Event) {
+func pumpCoreLog(events <-chan core.LogEvent) {
 	for event := range events {
 		switch event.LogLevel {
-		case MLog.WARNING:
+		case core.LogWarning:
 			coreLog.observe(true, event.Payload)
-		case MLog.ERROR:
+		case core.LogError:
 			coreLog.observe(false, event.Payload)
 		}
 	}
@@ -490,12 +489,10 @@ func initializeRuntimePaths(home, configPath string) error {
 	if configPath == "" || !filepath.IsAbs(configPath) {
 		return errors.New("mihomo configuration path must be absolute")
 	}
-	MC.SetHomeDir(home)
-	MC.SetConfig(configPath)
-	return config.Init(home)
+	return core.SetPaths(home, configPath)
 }
 
-func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte, error) {
+func prepareEmbeddedConfig(cfg *core.Config, options embeddedOptions) ([]byte, error) {
 	if cfg == nil || cfg.General == nil {
 		return nil, errors.New("AndroidCyaml received an incomplete mihomo configuration")
 	}
@@ -508,7 +505,7 @@ func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte,
 	originalAutoRoute := tunConfig.AutoRoute
 	tunConfig.Enable = true
 	tunConfig.Device = "AndroidCyaml"
-	tunConfig.Stack = MC.TunSystem
+	tunConfig.Stack = core.TunStackSystem
 	tunConfig.MTU = embeddedMTU
 	tunConfig.GSO = false
 	tunConfig.GSOMaxSize = 0
@@ -528,8 +525,9 @@ func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte,
 	if cfg.DNS != nil {
 		cfg.DNS.IPv6 = cfg.DNS.IPv6 && options.IPv6Enabled
 	}
+	applyAndroidTunTuning(tunConfig)
 
-	var findProcessMode process.FindProcessMode
+	var findProcessMode core.FindProcessMode
 	if err := findProcessMode.Set(options.ProcessMatching); err != nil {
 		return nil, fmt.Errorf(
 			"unsupported mihomo find-process-mode: %s",
@@ -562,7 +560,30 @@ func prepareEmbeddedConfig(cfg *config.Config, options embeddedOptions) ([]byte,
 	return payload, nil
 }
 
-func makeTunSpec(tunConfig LC.Tun, dnsEnabled bool) tunSpec {
+// applyAndroidTunTuning fixes the transport-session parameters that mihomo
+// otherwise leaves at desktop defaults.
+//
+// These are deliberately not runtime overrides. They are properties of running
+// inside an Android VPN service that can be killed for memory at any moment, not
+// preferences, and a user has no way to tell whether a given value is helping.
+// A configuration that sets them explicitly is still honoured -- only the
+// unset case is filled in.
+func applyAndroidTunTuning(tunConfig *core.Tun) {
+	if tunConfig.UDPTimeout == 0 {
+		tunConfig.UDPTimeout = embeddedUDPTimeoutSeconds
+	}
+	if tunConfig.ICMPTimeout == 0 {
+		tunConfig.ICMPTimeout = embeddedICMPTimeoutSeconds
+	}
+	// Endpoint-independent NAT is what lets two peers behind different NATs
+	// reach each other directly, so WebRTC calls, console and phone games, and
+	// peer-to-peer transfers stop falling back to a relay or failing outright.
+	// It costs a second index over the session table, which is bounded by the
+	// timeout above.
+	tunConfig.EndpointIndependentNat = true
+}
+
+func makeTunSpec(tunConfig core.Tun, dnsEnabled bool) tunSpec {
 	mtu := tunConfig.MTU
 	if mtu == 0 {
 		mtu = embeddedMTU
@@ -618,7 +639,7 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 	return uniqueSorted(result)
 }
 
-func dnsServerAddresses(tunConfig LC.Tun, enabled bool) []string {
+func dnsServerAddresses(tunConfig core.Tun, enabled bool) []string {
 	if !enabled {
 		return nil
 	}
@@ -675,11 +696,11 @@ func installPlatformHooks(protectEndpoint string) {
 	// would otherwise make a broken endpoint indistinguishable from a working
 	// one. Say which path is live.
 	if platformSocketProtect.enabled() {
-		MLog.Infoln("Android socket protect uses the unix endpoint at %s", protectEndpoint)
+		core.Infoln("Android socket protect uses the unix endpoint at %s", protectEndpoint)
 	} else {
-		MLog.Warnln("Android socket protect endpoint is unavailable; dials fall back to JNI")
+		core.Warnln("Android socket protect endpoint is unavailable; dials fall back to JNI")
 	}
-	dialer.DefaultSocketHook = func(network, address string, connection syscall.RawConn) error {
+	core.SetSocketHook(func(network, address string, connection syscall.RawConn) error {
 		dialHookCalls.Add(1)
 		var protectErr error
 		err := connection.Control(func(fileDescriptor uintptr) {
@@ -698,8 +719,8 @@ func installPlatformHooks(protectEndpoint string) {
 			)
 		}
 		return nil
-	}
-	androidcyamlcore.SetProcessResolver(resolveProcess)
+	})
+	core.SetProcessResolver(resolveProcess)
 }
 
 // protectDialedSocket prefers the unix socket endpoint, which keeps the dial
@@ -712,7 +733,7 @@ func protectDialedSocket(fileDescriptor int) error {
 		switch {
 		case err == nil:
 			if platformSocketProtect.noteDegraded(false) {
-				MLog.Infoln("Android protect endpoint recovered; sockets no longer cross JNI")
+				core.Infoln("Android protect endpoint recovered; sockets no longer cross JNI")
 			}
 			return nil
 		case errors.Is(err, errSocketProtectRejected):
@@ -720,7 +741,7 @@ func protectDialedSocket(fileDescriptor int) error {
 		default:
 			protectJniFallbacks.Add(1)
 			if platformSocketProtect.noteDegraded(true) {
-				MLog.Warnln("Android protect endpoint unusable, falling back to JNI: %v", err)
+				core.Warnln("Android protect endpoint unusable, falling back to JNI: %v", err)
 			}
 		}
 	}
@@ -744,18 +765,18 @@ func protectSocketThroughJNI(fileDescriptor int) error {
 }
 
 func clearPlatformHooks() {
-	dialer.DefaultSocketHook = nil
+	core.SetSocketHook(nil)
 	platformSocketProtect.setEndpoint("")
-	androidcyamlcore.ResetProcessResolver()
+	core.ResetProcessResolver()
 }
 
 func resolveProcess(network string, source, destination netip.AddrPort) (uint32, string, error) {
 	if !source.IsValid() || !destination.IsValid() {
-		return 0, "", process.ErrNotFound
+		return 0, "", core.ErrProcessNotFound
 	}
 	callback := currentResolveProcessCallback()
 	if callback == nil {
-		return 0, "", process.ErrNotFound
+		return 0, "", core.ErrProcessNotFound
 	}
 
 	var protocol int
@@ -765,7 +786,7 @@ func resolveProcess(network string, source, destination netip.AddrPort) (uint32,
 	case strings.HasPrefix(network, "udp"):
 		protocol = syscall.IPPROTO_UDP
 	default:
-		return 0, "", process.ErrInvalidNetwork
+		return 0, "", core.ErrInvalidNetwork
 	}
 
 	sourceAddress := C.CString(source.Addr().String())
@@ -786,18 +807,18 @@ func resolveProcess(network string, source, destination netip.AddrPort) (uint32,
 	})
 	if encoded == nil {
 		processLookupMisses.Add(1)
-		return 0, "", process.ErrNotFound
+		return 0, "", core.ErrProcessNotFound
 	}
 	defer C.free(unsafe.Pointer(encoded))
 	uidValue, packageName, found := strings.Cut(C.GoString(encoded), "\n")
 	if !found || packageName == "" {
 		processLookupMisses.Add(1)
-		return 0, "", process.ErrNotFound
+		return 0, "", core.ErrProcessNotFound
 	}
 	uid, err := strconv.ParseUint(uidValue, 10, 32)
 	if err != nil {
 		processLookupMisses.Add(1)
-		return 0, "", process.ErrNotFound
+		return 0, "", core.ErrProcessNotFound
 	}
 	return uint32(uid), packageName, nil
 }
@@ -822,24 +843,23 @@ func currentResolveProcessCallback() unsafe.Pointer {
 
 func stopLocked() {
 	if active {
-		executor.Shutdown()
-		resetTunListenerForRestart()
-		route.ReCreateServer(&route.Config{})
+		core.Shutdown()
+		core.ResetTunListener()
+		core.ResetAPIServer()
 	}
 	clearPlatformHooks()
-	MDNS.UpdateSystemDNS(nil)
-	dialer.SetDirectNetworkEnvironment("")
+	core.UpdateSystemDNS(nil)
+	core.SetDirectNetworkEnvironment("")
 	active = false
 	releaseRebuildableMemory(false)
 }
 
 func releaseRebuildableMemory(clearRuntimeCaches bool) int {
-	geodata.ClearGeoIPCache()
-	geodata.ClearGeoSiteCache()
+	core.ClearGeoCaches()
 	clearedCacheGroups := 2
 	if clearRuntimeCaches {
-		iface.FlushCache()
-		resolver.ClearCache()
+		core.FlushInterfaceCache()
+		core.ClearDNSCache()
 		clearedCacheGroups += 2
 	}
 	// FreeOSMemory already performs a full GC before returning unused pages to

@@ -110,6 +110,10 @@ class MihomoRuntime(
         MihomoNative.updateNetworkEnvironment(networkEnvironment)
     }
 
+    fun retireNetworkScope(networkIdentity: String) = withActiveRuntime {
+        MihomoNative.retireNetworkScope(networkIdentity)
+    }
+
     fun updateSystemDns(dnsServers: List<String>) = withActiveRuntime {
         MihomoNative.updateSystemDns(dnsServers)
     }

@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/metacubex/mihomo/config"
+	core "github.com/metacubex/mihomo/androidcyaml"
 )
 
-func firstConfiguredSelector(rawCfg *config.RawConfig) string {
+func firstConfiguredSelector(rawCfg *core.RawConfig) string {
 	if rawCfg == nil {
 		return ""
 	}

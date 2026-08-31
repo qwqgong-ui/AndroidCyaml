@@ -13,15 +13,24 @@ data class NetworkState(
 ) {
     fun available(): Boolean = networkHandle != 0L
 
+    // Cache scope and selection memory answer different questions, so they must
+    // not share a key. Selection memory keys on the SSID alone, deliberately, so
+    // that roaming across the access points of one Wi-Fi keeps a single profile.
+    // The direct-DNS scope needs the opposite guarantee: two networks that merely
+    // share a name -- a chain cafe, a carrier hotspot, an office with one SSID
+    // across sites -- hand out different local answers, and reusing one scope
+    // between them serves the other network's long-lived candidates. Mixing the
+    // physical path signature back in separates those while still collapsing to
+    // one scope when the path is genuinely the same.
     fun cacheIdentity(): String {
         if (!available()) {
             return ""
         }
-        if (selectionIdentity.isNotBlank()) {
-            return selectionIdentity
-        }
-        val fallbackKind = selectionKind.ifBlank { if (wifi) "wifi" else "cellular" }
-        return NetworkIdentityResolver.pathFingerprint(fallbackKind, cachePathSignature)
+        val kind = selectionKind.ifBlank { if (wifi) "wifi" else "cellular" }
+        return NetworkIdentityResolver.pathFingerprint(
+            kind,
+            selectionIdentity + PATH_SEPARATOR + cachePathSignature,
+        )
     }
 
     fun transitionFrom(previous: NetworkState?): NetworkTransition = NetworkTransition(
@@ -35,6 +44,8 @@ data class NetworkState(
     )
 
     companion object {
+        private const val PATH_SEPARATOR = "|"
+
         fun unavailable(): NetworkState = NetworkState(
             0L,
             "",
@@ -101,4 +112,36 @@ data class NetworkTransition(
 ) {
     fun changed(): Boolean =
         routeChanged || dnsChanged || ipv6Changed || identityChanged || cacheChanged
+
+    /**
+     * Folds dimensions an earlier transition could not finish back into this one.
+     *
+     * A native call that fails leaves its dimension unreconciled, and the state it
+     * was reconciling towards has already been observed -- so nothing later will
+     * report that dimension as changed again. Carrying the unfinished dimensions
+     * forward is what makes the next transition retry them instead of dropping
+     * the work silently.
+     */
+    fun mergePending(pending: NetworkTransition?): NetworkTransition {
+        if (pending == null || !pending.changed()) {
+            return this
+        }
+        return NetworkTransition(
+            routeChanged = routeChanged || pending.routeChanged,
+            dnsChanged = dnsChanged || pending.dnsChanged,
+            ipv6Changed = ipv6Changed || pending.ipv6Changed,
+            identityChanged = identityChanged || pending.identityChanged,
+            cacheChanged = cacheChanged || pending.cacheChanged,
+        )
+    }
+
+    companion object {
+        fun none(): NetworkTransition = NetworkTransition(
+            routeChanged = false,
+            dnsChanged = false,
+            ipv6Changed = false,
+            identityChanged = false,
+            cacheChanged = false,
+        )
+    }
 }

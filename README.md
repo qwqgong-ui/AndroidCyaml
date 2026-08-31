@@ -30,14 +30,20 @@ AndroidCyaml 固定使用 `scripts/build_mihomo.sh` 中的 mihomo `dev` 提交�
    `-buildmode=c-shared` 生成 `libmihomo.so`；
 5. CMake 构建 JNI 包装库 `libandroidcyaml.so`。
 
-AndroidCyaml 不再对检出的 mihomo 源码应用二次补丁。dev 只保留中性的进程解析和 XHTTP transport
-扩展点，以及薄的 `androidcyaml` facade；JNI 导出、固定 TUN 合约、IPv6 处理、逐 socket
-`protect()`、WebView 实现和运行时配置变换仍由 AndroidCyaml 仓库维护。
+dev 提供中性的进程解析和 XHTTP transport 扩展点，以及 `androidcyaml` facade；JNI 导出、
+固定 TUN 合约、IPv6 处理、逐 socket `protect()`、WebView 实现和运行时配置变换仍由
+AndroidCyaml 仓库维护。`native/mihomo` 包装模块**只 import `androidcyaml` 这一个 mihomo 包**，
+不再直接引用 dialer、resolver、hub 等内部包，因此上游改名只会打断 facade，而不会散落到本仓各处。
+facade 带 `FacadeVersion` 常量，包装层在编译期断言它；契约变化会让构建失败，而不是产出一个
+能编译却在设备上行为错误的核心。
 
 AndroidCyaml 固定使用 `qwqgong-ui/mihomo:dev` 的已测试提交，而不是未经修改的
 `MetaCubeX/mihomo:Alpha`。Mihomo 下游修改已直接展开在 `dev` 源码中，包括构建裁剪、
-UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用源码补丁。JNI 集成由
-`native/mihomo` 包装模块完成，不会修改 mihomo checkout。
+UDP 域名转发等定制。
+
+`patches/mihomo/` 是**尚未合入 dev 的 facade 改动的暂存区**，构建时按序应用到新检出上。
+它不是常设的补丁层：同一改动一旦进入 dev，构建会检测到补丁已存在并跳过，同时提示删除该文件。
+补丁摘要计入构建标记，改动补丁会强制重新编译。
 
 ### UDP 域名原样转发
 
@@ -99,6 +105,21 @@ UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用源码补丁
 `/30` 与 `/126` 为 system 栈提供 `.2` / `::2` 回注地址，避免 `/32`、`/128` 无下一地址的问题。
 接口地址保留主机位；只有添加路由时才归一为网段。
 
+GSO 无法开启：Android `VpnService` 的 fd 不支持 `IFF_VNET_HDR`。
+
+传输层会话参数也不再走 mihomo 的桌面默认值。配置里显式设置的值仍然优先，只有未设置时才填入：
+
+- `udp-timeout`：90 秒（默认 5 分钟）。sing-tun 在最后一个包之后要把 UDP 会话保留整个超时时长，
+  NAT 表因此直接吃内存，而这个进程随时可能因内存被杀。90 秒仍远超 QUIC 的 30 秒空闲期和一次
+  DNS 往返，却让应用开完就丢的会话早约三倍释放。
+- `icmp-timeout`：10 秒。ICMP 会话应答完即结束，不需要长窗口。
+- `endpoint-independent-nat`：开启。它让两个各自在 NAT 后的对端能直连，WebRTC 通话、主机与
+  手机游戏、点对点传输因此不必回落中继或直接失败；代价是会话表多一个索引，而会话表的规模由
+  上面的超时封顶。
+
+这些不是运行时覆写。它们是「跑在一个随时可能被杀的 Android VPN 服务里」的属性，不是偏好，
+用户也无从判断某个值是否有帮助。
+
 ## 逐 socket protect
 
 AndroidCyaml 为 mihomo 的真实拨号安装 `dialer.DefaultSocketHook`：
@@ -132,6 +153,13 @@ SIM 运营商与 carrier 等稳定信息。原始身份只在内存中组合，m
 重置 resolver 连接并关闭旧连接。按网络指纹隔离的 direct DNS 来源候选会保留，
 但不会被新网络误用；重回原网络时可继续使用该网络之前的候选。
 
+**网络退休时两侧一起清。** 节点选择记忆（Java `SharedPreferences`，90 天 / 24 个网络上限）
+与 DNS 长期候选（核心 `cache.db`）是两套存储，用的是同一个指纹。切网不清是对的——各自
+分桶互不干扰；但一个网络被**彻底淘汰**时旧实现没人通知核心，它那一支答案会一直留到每条
+entry 自己过期（下限 24 小时），而解释它存在的档案早已不在。现在档案落盘成功后会把被
+淘汰的身份交给核心 `RetireNetworkScope`，两套长期存储同时放手。写盘失败则不上报——档案
+还在，清掉核心的热缓存毫无意义。
+
 ## 运行时覆写
 
 覆写面板当前提供：
@@ -155,6 +183,12 @@ TUN 栈不再可覆写，旧版本保存的 `tun_stack` / `tun_stack_mode` 会�
 mihomo 按协议和原始四元组调用 Android `ConnectivityManager.getConnectionOwnerUid()`，再将 UID
 映射为包名。Android API 返回失败后直接按未找到处理，不再进入无权限的 Linux procfs/inet_diag
 fallback。
+
+这次 Binder 往返是进程匹配的全部成本，且四元组逐连接唯一、没有批量接口，所以**每连接一次
+往返的下界消不掉**。能省的是三处重复：`strict` 只在规则真正需要时才查（未改动）；平台
+resolver 已经连包名一起返回，核心因此不再多做一次必然失败的 `FindPackageName`；未命中的
+四元组进 5 秒负缓存，弱网重拨风暴对同一条死连接不会反复问。命中结果**从不缓存**——四元组
+会被内核复用给别的应用，缓存正结果就会答错。
 
 核心、JNI 和 VPN 服务位于同一进程，查询不经过 JSON 或 Unix Socket 往返。
 
@@ -190,8 +224,14 @@ AndroidCyaml 会按物理网络身份只记忆 config.yaml 中第一个 `Selecto
 订阅与稳定运营商信息，不因 4G/5G 制式变化更换身份。持久化前只保存网络身份的 SHA-256
 指纹。
 
-记忆是事件驱动的：第一次识别某个网络时保存初始选择，离开该网络、停止 VPN、
-重启核心或回应后台内存回收协议前同步保存当前选择；稳定驻留期间不轮询、不重复写盘。
+记忆是事件驱动的：离开该网络、停止 VPN、重启核心或回应后台内存回收协议前同步保存
+当前选择；稳定驻留期间不轮询、不重复写盘。首次进入一个尚无记忆的网络时不写盘——
+那一刻核心里还是上一个网络恢复出来的选择，记下来等于把一个网络的节点记成另一个的，
+且握手途中短暂经过的网络也会留下档案。该网络的档案在它第一次被真正离开时建立，
+记录的是它实际停在的选择。
+
+底层网络短暂中断不视为换网：中断期间会话保持在原网络上，因此中断中通过 WebUI 做出的
+选择在网络恢复后不会被旧记忆覆盖。能被观察到但无法识别身份的网络仍算真正换网。
 进入已记忆的网络后只恢复这个主 Selector，QUIC、UDP、拒绝等后续策略组保持 mihomo 自身状态。
 目标已从组中移除或明确失活时，优先选择组内可用的 URLTest/Fallback/LoadBalance/Smart
 自动组；若无自动组或控制器请求超时，保留 mihomo 当前选择。

@@ -86,7 +86,7 @@ import (
 
 	"github.com/metacubex/http"
 	"github.com/metacubex/http/httptrace"
-	androidcyamlcore "github.com/metacubex/mihomo/androidcyaml"
+	core "github.com/metacubex/mihomo/androidcyaml"
 )
 
 const maxBrowserRequestBody = 8 << 20
@@ -239,7 +239,7 @@ func AndroidCyamlSetBrowserDialerEnabled(enabledValue, requestStreamsValue C.int
 		browserRequestStreamsEnabled.Store(false)
 		closeAllBrowserRequestBodies()
 		closeAllBrowserResponses()
-		androidcyamlcore.ResetBrowserTransport()
+		core.ResetBrowserTransport()
 		return respond(nil, nil)
 	}
 	if !browserCallbacksInstalled() {
@@ -248,7 +248,7 @@ func AndroidCyamlSetBrowserDialerEnabled(enabledValue, requestStreamsValue C.int
 
 	supportsRequestStreams := requestStreamsValue != 0
 	browserRequestStreamsEnabled.Store(supportsRequestStreams)
-	androidcyamlcore.SetBrowserTransport(func(options androidcyamlcore.BrowserTransportOptions) (http.RoundTripper, error) {
+	core.SetBrowserTransport(func(options core.BrowserTransportOptions) (http.RoundTripper, error) {
 		if !browserCallbacksInstalled() {
 			return nil, errors.New("Android WebView XHTTP callbacks became unavailable")
 		}
@@ -258,7 +258,7 @@ func AndroidCyamlSetBrowserDialerEnabled(enabledValue, requestStreamsValue C.int
 }
 
 type androidBrowserTransport struct {
-	options androidcyamlcore.BrowserTransportOptions
+	options core.BrowserTransportOptions
 }
 
 func (t *androidBrowserTransport) RoundTrip(request *http.Request) (*http.Response, error) {

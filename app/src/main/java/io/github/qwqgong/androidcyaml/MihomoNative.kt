@@ -94,6 +94,18 @@ object MihomoNative {
         requireSuccess(nativeUpdateNetworkEnvironment(networkEnvironment))
     }
 
+    /**
+     * Drops the direct DNS candidates of a network AndroidCyaml has stopped
+     * remembering, so the two long-term stores retire a network together.
+     *
+     * Safe to call while the core is stopped: the caches outlive any single core
+     * instance, and refusing then would leave the answers behind until their own
+     * expiry with no profile left to explain them.
+     */
+    fun retireNetworkScope(networkIdentity: String) {
+        requireSuccess(nativeRetireNetworkScope(networkIdentity))
+    }
+
     fun updateSystemDns(servers: List<String>?) {
         requireSuccess(nativeUpdateSystemDns(JSONArray(servers ?: emptyList<String>()).toString()))
     }
@@ -192,6 +204,8 @@ object MihomoNative {
     private external fun nativeNotifyNetworkChanged(closeConnections: Boolean): String?
 
     private external fun nativeUpdateNetworkEnvironment(networkEnvironment: String): String?
+
+    private external fun nativeRetireNetworkScope(networkIdentity: String): String?
 
     private external fun nativeUpdateSystemDns(serversJson: String): String?
 

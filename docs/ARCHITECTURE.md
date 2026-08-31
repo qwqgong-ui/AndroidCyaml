@@ -17,7 +17,7 @@
 | `MihomoNative` | Java JNI contract and native response decoding | VPN lifecycle |
 | `libandroidcyaml.so` | JNI exports, JavaVM attachment and callback dispatch | mihomo configuration semantics |
 | `native/mihomo` | C ABI exports, in-memory Android config adaptation and mihomo package orchestration | Android UI and service policy |
-| mihomo `androidcyaml` facade | neutral platform hooks and runtime IPv6 signal | Android JNI implementation |
+| mihomo `androidcyaml` facade | the entire mihomo-facing contract: config, lifecycle, network, process, transport, diagnostics | Android JNI implementation or platform policy |
 | UI/Binder | user intent and observation | runtime ownership |
 
 `MainActivity` runs in `:ui`; `AppControlService`、`AndroidVpnService`、两个原生库和 Go runtime 均位于默认
@@ -29,10 +29,20 @@ VPN 服务进程。
 
 ## Core isolation
 
-AndroidCyaml 构建时解析 `qwqgong-ui/mihomo:dev` 的当前提交并记录精确 SHA，不再在临时构建目录中应用
-Android 源码补丁。dev 内核提供中性的 endpoint-aware 进程解析、运行时 IPv6 信号与 XHTTP transport 扩展点，并通过
-`mihomo/androidcyaml` 薄 facade 供本项目注册平台实现。构建不会把 JNI、VpnService、WebView
+AndroidCyaml 构建时解析 `qwqgong-ui/mihomo:dev` 的当前提交并记录精确 SHA。dev 内核提供中性的
+endpoint-aware 进程解析、运行时 IPv6 信号与 XHTTP transport 扩展点，并通过 `mihomo/androidcyaml`
+facade 供本项目注册平台实现。构建不会把 JNI、VpnService、WebView
 或运行时覆写代码写回 mihomo checkout；未注册 facade 回调时，普通 mihomo 行为保持不变。
+
+facade 是**唯一接缝**：`native/mihomo` 只 import `github.com/metacubex/mihomo/androidcyaml`。
+此前包装层直接 import 了 14 个 mihomo 内部包（dialer、resolver、iface、geodata、statistic、hub、
+executor、route、dns、config、constant、listener/config、log、process），上游任一改名都会直接
+砸到下游且无从预警。facade 按能力域分文件——`config.go`、`lifecycle.go`、`network.go`、
+`process.go`、`transport.go`、`diagnostics.go`——并导出 `FacadeVersion`；
+`native/mihomo/facade_version.go` 在编译期断言该常量，契约漂移变成构建失败而非设备上的错误行为。
+
+`patches/mihomo/` 暂存尚未合入 dev 的 facade 改动，构建时应用到新检出上；改动进入 dev 后
+构建会识别为已存在并跳过。这是过渡机制，不是常设补丁层。
 
 较大的 Android 行为全部位于 AndroidCyaml：
 
@@ -115,6 +125,15 @@ TUN 栈不再属于运行时覆写，也不采用 YAML 中的 `stack`。旧版�
 固定 `/30` 与 `/126` 前缀保证 system 栈拥有第二个接口地址用于 local-listener NAT 回注。Android
 接口保留 `.1` / `::1` 主机位；只有路由通过 `IpPrefix` 归一化。gVisor 和 mixed 配置在该内核中不可用。
 
+GSO 固定关闭：Android `VpnService` 的 fd 不支持 `IFF_VNET_HDR`，这不是可调项。
+
+传输层会话参数由 `applyAndroidTunTuning` 在未显式配置时填入，取代 mihomo 的桌面默认值：
+`udp-timeout` 90 秒（默认 5 分钟）、`icmp-timeout` 10 秒、`endpoint-independent-nat` 开启。
+sing-tun 在最后一个包之后保留 UDP 会话整个超时时长，NAT 表规模因此由该超时决定，而这个
+进程随时可能因内存被杀；90 秒仍远超 QUIC 30 秒空闲期。endpoint-independent NAT 让 NAT 后的
+两端能直连（WebRTC、游戏、点对点传输），代价是会话表多一个索引，其规模被超时封顶。
+这些不进运行时覆写：它们是运行环境的属性而非用户偏好。
+
 ## Socket protection
 
 整个应用 UID 保持在 VPN 路由内。每个真实 mihomo 上游 socket：
@@ -187,6 +206,15 @@ DIRECT、DNS 和代理出站的系统默认选网行为。
 JNI 调用 `ConnectivityManager.getConnectionOwnerUid()`，其失败是权威结果，不再回退 Android
 SELinux 禁止的 Linux procfs/inet_diag 路径。
 
+该 Binder 往返是这条路径的全部成本，四元组逐连接唯一且没有批量接口，每连接一次往返的下界
+消不掉。去掉的是重复：核心在 endpoint resolver 成功后不再调用 `FindPackageName`（resolver
+已经连包名一起返回，而 AndroidCyaml 从不注册 `DefaultPackageNameResolver`，那次调用必然
+返回 `ErrPlatformNotSupport`）；`ConnectionOwnerResolver` 对未命中的四元组保留 5 秒负缓存。
+命中结果从不缓存：四元组会被内核复用给别的应用，缓存正结果会答错。
+
+`externalEndpointResolver` 以原子方式发布。核心是 in-process 重启的，启停路径写、规则匹配
+热路径读，裸包级变量在这里是真实的数据竞争。
+
 ## Adaptive IPv6 transaction
 
 `UnderlyingNetworkMonitor` 追踪 Android 自身评分选出的最佳非 VPN Internet network。用户开启 IPv6
@@ -207,15 +235,33 @@ direct cache key；只有最佳物理 Network handle 改变才刷新
 接口状态并关闭旧路径连接。`VpnService.Builder.setUnderlyingNetworks(null)` 与 protect-only socket
 让 Android 的吞吐、费用、用户偏好和网络评分决定 Wi-Fi/移动数据出口。
 
+每个维度独立提交。某个 native 调用失败时只有该维度算未完成，其余照常生效；未完成的维度
+记在 pending 集合里，由下一次转变重放。观察到的状态在调用之前就已推进，没有这个重放，
+失败维度的清理（尤其是排在最后的关闭旧连接）会被永久丢弃而不再有任何转变报告它变化过。
+
+cache scope 与策略记忆身份是两个键，不能共用。策略记忆按 SSID 分桶，使 Mesh/多 AP 漫游
+保持同一档案；cache scope 额外混入物理路径签名（接口名、IPv4 地址、路由），因为同名的两个
+不同网络本地解析结果不同，共用一个 scope 会把对方的长效候选喂给当前网络。同一路径重连
+换 handle 时两者都不变，不会白白丢弃热缓存。
+
 同一网络快照中的 `LinkProperties.getDnsServers()` 会在 core 启动前以及 handover 时经
 Java → JNI → Go 传给 `dns.UpdateSystemDNS`。Android 不再从 `/etc/resolv.conf` 推断系统 DNS。
+
+两套长期存储在网络退休时一起放手。节点选择记忆（Java `SharedPreferences`）与 direct DNS
+长期候选（核心 `cache.db`）按同一指纹分桶但各自过期。切网不清是设计——分桶本身就是隔离；
+退休才是缺口：网络被彻底淘汰后核心那一支答案无人认领，却要留到每条 entry 自己过期。
+`NetworkSelectionStore.save` 现在返回本次淘汰的身份集合，`SelectorSession` 转交给
+`RetireNetworkScope`。只有写盘成功才上报，否则档案仍在，清核心缓存没有意义。
 
 `NetworkIdentityResolver` 同时从物理 network capabilities 生成策略选择记忆键：Wi-Fi 优先使用
 SSID（缺失时回退 BSSID），cellular 使用 subscription ID 与稳定的 SIM operator/carrier。原始身份仅在
 内存中组合，`NetworkSelectionStore` 只持久化 SHA-256 指纹及 Selector 组/目标名。
 
-`RuntimeCoordinator` 仅在首次进入网络和 underlying-network identity 变化时读写记忆，不定时
+`RuntimeCoordinator` 仅在 underlying-network identity 变化时读写记忆，不定时
 轮询 controller。handover 只保存旧网络第一个 Selector 的可用 `now`，等待新网络稳定后恢复。
+首次进入尚无记忆的网络时只恢复不写盘：此刻核心里仍是上一网络的选择，写下来即是把一个
+网络的节点记成另一个的。底层网络中断不结束会话，因此中断期间的 WebUI 选择在恢复后不会
+被旧记忆覆盖；可观察但身份不可识别的网络仍按真正换网处理。
 停止 VPN、重启 core 或回应后台内存回收协议前也会同步持久化最新选择；只有写盘
 成功才向回收协议报告状态已保存。
 已移除/失活目标会回退到组内可用自动类型；无可用自动组或 HTTP 超时时保留当前
