@@ -15,7 +15,7 @@ import java.net.Inet6Address
 import java.net.InetAddress
 
 /**
- * Observes Android's best validated non-VPN network.
+ * Observes Android's best routable non-VPN network.
  *
  * Routing remains in system-default mode: this monitor does not request a network and does not
  * impose its own Wi-Fi/cellular ranking. The selected handle is used for network identity,
@@ -40,8 +40,8 @@ class UnderlyingNetworkMonitor(context: Context) {
     private val callbackThread = HandlerThread("AndroidCyaml-NetworkMonitor")
     private val handler: Handler
     private val lock = Any()
-    // VALIDATED is checked on callback snapshots below. It is a mutable capability and Android
-    // rejects it in best-matching requests before the VPN runtime can start.
+    // VALIDATED remains diagnostic/inventory state below. It is mutable, Android rejects it in
+    // best-matching requests, and waiting for it would create a false outage during handover.
     private val request = NetworkRequest.Builder()
         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
@@ -77,7 +77,7 @@ class UnderlyingNetworkMonitor(context: Context) {
             network: Network,
             capabilities: NetworkCapabilities,
         ) {
-            if (isUsableUnderlying(capabilities)) {
+            if (isRoutableUnderlying(capabilities)) {
                 NetworkDiagnostics.onCapabilitiesChanged(
                     diagnosticsContext,
                     network.networkHandle,
@@ -134,7 +134,7 @@ class UnderlyingNetworkMonitor(context: Context) {
             synchronized(lock) {
                 if (!registered) return
                 val profile = identityResolver.profile(capabilities)
-                if (isUsableUnderlying(capabilities) && profile.available()) {
+                if (isValidatedUnderlying(capabilities) && profile.available()) {
                     observedProfiles[network.networkHandle] = profile
                 } else {
                     observedProfiles.remove(network.networkHandle)
@@ -167,7 +167,10 @@ class UnderlyingNetworkMonitor(context: Context) {
             observedProfiles.clear()
             initial.capabilities?.let { capabilities ->
                 val profile = identityResolver.profile(capabilities)
-                if (initial.network != null && profile.available()) {
+                if (initial.network != null &&
+                    isValidatedUnderlying(capabilities) &&
+                    profile.available()
+                ) {
                     observedProfiles[initial.network.networkHandle] = profile
                 }
             }
@@ -273,7 +276,7 @@ class UnderlyingNetworkMonitor(context: Context) {
         return try {
             val capabilities = connectivityManager.getNetworkCapabilities(network)
             val properties = connectivityManager.getLinkProperties(network)
-            if (!isUsableUnderlying(capabilities) || properties == null) {
+            if (!isRoutableUnderlying(capabilities) || properties == null) {
                 Snapshot(null, null, null)
             } else {
                 Snapshot(network, capabilities, properties)
@@ -288,7 +291,7 @@ class UnderlyingNetworkMonitor(context: Context) {
         val network = snapshot?.network
         val capabilities = snapshot?.capabilities
         val properties = snapshot?.linkProperties
-        if (network == null || !isUsableUnderlying(capabilities) || properties == null) {
+        if (network == null || !isRoutableUnderlying(capabilities) || properties == null) {
             return NetworkState.unavailable()
         }
         val profile = identityResolver.profile(capabilities)
@@ -310,12 +313,15 @@ class UnderlyingNetworkMonitor(context: Context) {
         const val LOST_HANDOVER_GRACE_MILLIS = 650L
         val EVALUATION_TOKEN = Any()
 
-        fun isUsableUnderlying(capabilities: NetworkCapabilities?): Boolean =
+        fun isRoutableUnderlying(capabilities: NetworkCapabilities?): Boolean =
             capabilities != null &&
                 capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
                 capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
                 !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+
+        fun isValidatedUnderlying(capabilities: NetworkCapabilities?): Boolean =
+            isRoutableUnderlying(capabilities) &&
+                capabilities!!.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 
         fun dnsServers(properties: LinkProperties): List<String> = properties.dnsServers
             .mapNotNull { it.hostAddress?.takeIf(String::isNotBlank) }
