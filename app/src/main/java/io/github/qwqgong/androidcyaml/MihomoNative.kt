@@ -98,6 +98,10 @@ object MihomoNative {
         requireSuccess(nativeUpdateSystemDns(JSONArray(servers ?: emptyList<String>()).toString()))
     }
 
+    fun updateIpv6Availability(available: Boolean) {
+        requireSuccess(nativeUpdateIpv6Availability(available))
+    }
+
     fun isRunning(): Boolean = nativeIsRunning()
 
     fun trimMemory(): Int = nativeTrimMemory()
@@ -190,6 +194,8 @@ object MihomoNative {
     private external fun nativeUpdateNetworkEnvironment(networkEnvironment: String): String?
 
     private external fun nativeUpdateSystemDns(serversJson: String): String?
+
+    private external fun nativeUpdateIpv6Availability(available: Boolean): String?
 
     private external fun nativeIsRunning(): Boolean
 

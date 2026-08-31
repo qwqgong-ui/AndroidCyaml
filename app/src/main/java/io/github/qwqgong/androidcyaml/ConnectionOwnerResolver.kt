@@ -3,6 +3,7 @@ package io.github.qwqgong.androidcyaml
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Process
+import io.github.qwqgong.androidcyaml.network.NetworkAddressParser
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap

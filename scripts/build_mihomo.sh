@@ -182,7 +182,7 @@ fi
         GOWORK=off \
         GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
         GOFLAGS="-modfile=${MIHOMO_MODFILE}" \
-        go test ./transport/xhttp ./adapter/outbound ./dns ./component/dialer ./component/resolver
+        go test ./transport/xhttp ./adapter/outbound ./dns ./component/dialer ./component/process ./component/resolver ./hub/executor
 )
 
 rm -rf "${MODULE_DIR}" "${TEMP_DIR}"

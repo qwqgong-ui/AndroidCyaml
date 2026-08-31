@@ -8,6 +8,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import io.github.qwqgong.androidcyaml.network.NetworkCoordinator
+import io.github.qwqgong.androidcyaml.network.NetworkSelectionStore
+import io.github.qwqgong.androidcyaml.network.NetworkState
+import io.github.qwqgong.androidcyaml.network.SelectorSession
+import io.github.qwqgong.androidcyaml.network.UnderlyingNetworkMonitor
 import org.json.JSONException
 import java.io.IOException
 import java.util.Locale
@@ -20,7 +25,7 @@ import java.util.concurrent.TimeoutException
 class RuntimeCoordinator private constructor(context: Context) :
     RuntimeConfigTransactions.Lifecycle,
     RuntimeConfigTransactions.Host,
-    NetworkReconciler.Host {
+    NetworkCoordinator.Host {
 
     fun interface OperationCallback {
         fun onComplete(success: Boolean, detail: String)
@@ -40,14 +45,14 @@ class RuntimeCoordinator private constructor(context: Context) :
     private val overrideStore = RuntimeOverrideStore(this.context)
     private val selectorSession: SelectorSession
     private val lifecycle: RuntimeLifecycle
-    private val networkReconciler: NetworkReconciler
+    private val networkCoordinator: NetworkCoordinator
     private val configTransactions: RuntimeConfigTransactions
 
     init {
-        val networkMonitor = Ipv6EnvironmentMonitor(this.context)
+        val networkMonitor = UnderlyingNetworkMonitor(this.context)
         selectorSession = SelectorSession(NetworkSelectionStore(this.context), networkMonitor)
         lifecycle = RuntimeLifecycle(fileStore, selectorSession)
-        networkReconciler = NetworkReconciler(
+        networkCoordinator = NetworkCoordinator(
             networkMonitor,
             overrideStore,
             lifecycle,
@@ -159,7 +164,7 @@ class RuntimeCoordinator private constructor(context: Context) :
                 return@execute
             }
             try {
-                complete(callback, true, selectorSession.catalog(current))
+                complete(callback, true, networkCoordinator.selectorCatalog(current))
             } catch (exception: IOException) {
                 complete(callback, false, Exceptions.usefulMessage(exception))
             } catch (exception: JSONException) {
@@ -181,7 +186,11 @@ class RuntimeCoordinator private constructor(context: Context) :
                 return@execute
             }
             try {
-                complete(callback, true, selectorSession.select(current, identity, group, target))
+                complete(
+                    callback,
+                    true,
+                    networkCoordinator.select(current, identity, group, target),
+                )
             } catch (exception: IOException) {
                 complete(callback, false, Exceptions.usefulMessage(exception))
             }
@@ -199,14 +208,14 @@ class RuntimeCoordinator private constructor(context: Context) :
 
         cleanupAll()
         try {
-            val underlyingNetworkState = networkReconciler.start()
+            val underlyingNetworkState = networkCoordinator.start()
             publish(RuntimeState.STARTING, "正在启动同进程 mihomo JNI TUN…")
             val request = runtimeStartRequest()
             val detail = lifecycle.start(
                 requestedService,
                 request.settings,
                 underlyingNetworkState,
-                networkReconciler::cancelSelectionRestoration,
+                networkCoordinator::cancelSelectionRestoration,
             ) + request.detailSuffix
             publish(RuntimeState.RUNNING, detail)
         } catch (exception: Exception) {
@@ -221,8 +230,8 @@ class RuntimeCoordinator private constructor(context: Context) :
         val request = runtimeStartRequest()
         return lifecycle.restart(
             request.settings,
-            networkReconciler.currentState(),
-            networkReconciler::cancelSelectionRestoration,
+            networkCoordinator.currentState(),
+            networkCoordinator::cancelSelectionRestoration,
         ) + request.detailSuffix
     }
 
@@ -243,7 +252,7 @@ class RuntimeCoordinator private constructor(context: Context) :
 
     override fun setIdleEffectiveState(
         settings: RuntimeOverrideSettings,
-        networkState: Ipv6EnvironmentMonitor.State,
+        networkState: NetworkState,
     ) {
         lifecycle.setIdleEffectiveState(settings, networkState)
     }
@@ -257,8 +266,8 @@ class RuntimeCoordinator private constructor(context: Context) :
             context.checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) ==
             PackageManager.PERMISSION_GRANTED
 
-    override fun refreshUnderlyingNetworkState(): Ipv6EnvironmentMonitor.State =
-        networkReconciler.refreshState()
+    override fun refreshUnderlyingNetworkState(): NetworkState =
+        networkCoordinator.refreshState()
 
     override fun failActiveService(message: String) {
         val failedService = lifecycle.service()
@@ -270,7 +279,7 @@ class RuntimeCoordinator private constructor(context: Context) :
     }
 
     private fun cleanupAll() {
-        networkReconciler.stop()
+        networkCoordinator.stop()
         lifecycle.stop()
     }
 

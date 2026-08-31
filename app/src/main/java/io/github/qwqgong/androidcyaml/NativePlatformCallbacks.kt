@@ -44,7 +44,7 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
         closeWebViewXhttp()
     }
 
-    fun updateUnderlyingNetwork(networkHandle: Long) {
+    fun updateWebViewUnderlyingNetwork(networkHandle: Long) {
         underlyingNetwork = try {
             if (networkHandle == 0L) null else Network.fromNetworkHandle(networkHandle)
         } catch (exception: IllegalArgumentException) {
@@ -57,40 +57,30 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
         if (fileDescriptor < 0) {
             return false
         }
-        return protect(fileDescriptor) {
-            ParcelFileDescriptor.fromFd(fileDescriptor).use { duplicate ->
-                bindToUnderlyingNetwork(duplicate.fileDescriptor)
-            }
-        }
+        return protect(fileDescriptor)
     }
 
     /** Protects a descriptor received over the socket endpoint. */
     fun protectSocket(descriptor: FileDescriptor): Boolean = try {
         ParcelFileDescriptor.dup(descriptor).use { duplicate ->
-            protect(duplicate.fd) { bindToUnderlyingNetwork(descriptor) }
+            protect(duplicate.fd)
         }
     } catch (exception: IOException) {
         Log.w(TAG, "Unable to duplicate a received socket descriptor", exception)
         false
     }
 
-    private fun protect(fileDescriptor: Int, bind: () -> Unit): Boolean = try {
-        if (vpnService.protect(fileDescriptor)) {
-            bind()
-            true
-        } else {
-            false
-        }
+    private fun protect(fileDescriptor: Int): Boolean = try {
+        // Protected sockets deliberately remain unbound. Together with
+        // VpnService.setUnderlyingNetworks(null), Android's own network scoring decides
+        // whether Wi-Fi or cellular carries new upstream connections.
+        vpnService.protect(fileDescriptor)
     } catch (exception: IOException) {
-        Log.w(TAG, "Unable to protect/bind socket fd=$fileDescriptor", exception)
+        Log.w(TAG, "Unable to protect socket fd=$fileDescriptor", exception)
         false
     } catch (exception: RuntimeException) {
-        Log.w(TAG, "Unable to protect/bind socket fd=$fileDescriptor", exception)
+        Log.w(TAG, "Unable to protect socket fd=$fileDescriptor", exception)
         false
-    }
-
-    private fun bindToUnderlyingNetwork(descriptor: FileDescriptor) {
-        underlyingNetwork?.bindSocket(descriptor)
     }
 
     fun resolveProcessOwner(

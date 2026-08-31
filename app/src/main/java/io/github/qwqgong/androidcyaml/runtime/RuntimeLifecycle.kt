@@ -1,6 +1,8 @@
 package io.github.qwqgong.androidcyaml
 
 import android.util.Log
+import io.github.qwqgong.androidcyaml.network.NetworkState
+import io.github.qwqgong.androidcyaml.network.SelectorSession
 import java.io.IOException
 
 /** Owns the Android VPN, TUN, and embedded mihomo runtime resources. */
@@ -35,7 +37,7 @@ class RuntimeLifecycle(
     fun start(
         requestedService: AndroidVpnService,
         settings: RuntimeOverrideSettings,
-        networkState: Ipv6EnvironmentMonitor.State,
+        networkState: NetworkState,
         runtimeStarted: Runnable?,
     ): String {
         stop()
@@ -43,7 +45,7 @@ class RuntimeLifecycle(
         tunManager = AndroidTunManager(requestedService)
         val callbacks = NativePlatformCallbacks(requestedService)
         platformCallbacks = callbacks
-        callbacks.updateUnderlyingNetwork(networkState.networkHandle)
+        callbacks.updateWebViewUnderlyingNetwork(networkState.networkHandle)
         try {
             return restart(settings, networkState, runtimeStarted)
         } catch (failure: IOException) {
@@ -61,10 +63,12 @@ class RuntimeLifecycle(
 
     fun restart(
         settings: RuntimeOverrideSettings,
-        networkState: Ipv6EnvironmentMonitor.State,
+        networkState: NetworkState,
         runtimeStarted: Runnable?,
     ): String {
-        val requestedIpv6 = settings.ipv6Enabled && networkState.ipv6Usable
+        // The user's IPv6 intent owns the TUN shape. Physical IPv6 availability is a separate
+        // runtime signal and must never rebuild the whole Android VPN.
+        val requestedIpv6 = settings.ipv6Enabled
         val requestedTcpConcurrent = settings.adaptiveTcpConcurrent
         try {
             return startRuntime(
@@ -113,8 +117,8 @@ class RuntimeLifecycle(
             fallbackFailure,
         )
 
-    fun updateUnderlyingNetwork(networkHandle: Long) {
-        platformCallbacks?.updateUnderlyingNetwork(networkHandle)
+    fun updateWebViewUnderlyingNetwork(networkHandle: Long) {
+        platformCallbacks?.updateWebViewUnderlyingNetwork(networkHandle)
     }
 
     fun applyTcpConcurrent(enabled: Boolean): Boolean {
@@ -127,9 +131,13 @@ class RuntimeLifecycle(
         return true
     }
 
+    fun updateEffectiveIpv6(enabled: Boolean) {
+        effectiveIpv6Enabled = enabled
+    }
+
     fun setIdleEffectiveState(
         settings: RuntimeOverrideSettings,
-        networkState: Ipv6EnvironmentMonitor.State,
+        networkState: NetworkState,
     ) {
         effectiveIpv6Enabled = settings.ipv6Enabled && networkState.ipv6Usable
         effectiveTcpConcurrent = settings.adaptiveTcpConcurrent
@@ -152,7 +160,7 @@ class RuntimeLifecycle(
 
     private fun startRuntime(
         settings: RuntimeOverrideSettings,
-        networkState: Ipv6EnvironmentMonitor.State,
+        networkState: NetworkState,
         ipv6Enabled: Boolean,
         tcpConcurrentEnabled: Boolean,
         runtimeStarted: Runnable?,
@@ -176,6 +184,7 @@ class RuntimeLifecycle(
             tcpConcurrentEnabled,
             networkState.dnsServers,
             networkState.cacheIdentity(),
+            networkState.ipv6Usable,
         )
         runtime = candidate
         try {
@@ -183,7 +192,7 @@ class RuntimeLifecycle(
             if (!activeTunManager.hasUsableTunnel()) {
                 throw IOException("mihomo 未建立 Android TUN")
             }
-            effectiveIpv6Enabled = ipv6Enabled
+            effectiveIpv6Enabled = ipv6Enabled && networkState.ipv6Usable
             effectiveTcpConcurrent = tcpConcurrentEnabled
             runtimeStarted?.run()
             selectorSession.begin(candidate, networkState)

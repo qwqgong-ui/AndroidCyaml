@@ -4,6 +4,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import io.github.qwqgong.androidcyaml.network.NetworkAddressParser
 import java.io.Closeable
 import java.io.IOException
 import java.net.InetAddress
@@ -46,6 +47,7 @@ class AndroidTunManager(private val host: VpnPlatformHost) : Closeable {
             .setMtu(options.mtu)
             .setBlocking(false)
             .setMetered(false)
+            .setUnderlyingNetworks(null)
             .setConfigureIntent(host.openAppPendingIntent())
 
         val hasIpv4 = addAddresses(builder, options.inet4Address)

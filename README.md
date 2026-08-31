@@ -58,7 +58,8 @@ UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用源码补丁
 - `libmihomo.so`：Go `c-shared` 核心库，只包含 system TUN 栈。
 - `NativePlatformCallbacks`：执行逐 socket `VpnService.protect(fd)`，并提供 UID/包名查询。
 - `AndroidTunManager`：应用固定接口地址、路由、DNS 和应用范围。
-- `RuntimeCoordinator`：串行化启动、停止、配置事务、IPv6 环境变化和底层网络切换。
+- `network/`：集中拥有系统最佳物理网络观察、变化分类、DNS/IPv6 缓存更新和按网络策略记忆。
+- `RuntimeCoordinator`：串行化启动、停止和配置事务，并装配独立的网络组件。
 - `MainActivity`：运行在独立 `:ui` 进程，通过同 UID、非导出的 Binder 服务控制 VPN 进程。
 - `PredictiveBackAnimator`：面板返回手势期间跟随手指缩放、位移并圆角化面板，提供预测性返回动画。
 - `VpnTileService`：快捷设置磁贴，绑定同一个控制服务显示运行时状态并切换 VPN。
@@ -91,7 +92,7 @@ UDP 域名转发等定制；AndroidCyaml 构建时不再重复应用源码补丁
 - 栈：`system`
 - 设备名：`AndroidCyaml`
 - IPv4：`172.19.0.1/30`
-- IPv6：`fdfe:dcba:9876::1/126`（环境有效且用户启用时）
+- IPv6：`fdfe:dcba:9876::1/126`（用户启用时保持稳定）
 - MTU：`9000`
 - GSO：关闭
 
@@ -105,15 +106,15 @@ AndroidCyaml 为 mihomo 的真实拨号安装 `dialer.DefaultSocketHook`：
 ```text
 Go RawConn FD → NativePlatformCallbacks.protectSocket(fd)
               → AndroidVpnService.protect(fd)
-              → underlying Network.bindSocket(fd)
+              → Android 系统默认物理网络
 ```
 
 保护失败会终止该次拨号，而不是允许出站重新进入 VPN 形成路由循环。system 栈内部 listener 不属于
 真实代理出站，不会被该 hook 排除。
 
-`Ipv6EnvironmentMonitor` 同时从当前最佳非 VPN `LinkProperties` 取得 DNS，通过 JNI
+`UnderlyingNetworkMonitor` 同时从系统评分选出的最佳非 VPN `LinkProperties` 取得 DNS，通过 JNI
 更新 mihomo 非 CMFA Android 路径的 `UpdateSystemDNS`。因此配置中的 `system://` 始终表示
-当前 Wi-Fi/移动网络提供的 DNS，查询 socket 自身经 protect 并绑定该底层 Network。
+当前 Wi-Fi/移动网络提供的 DNS。普通查询 socket 只做 protect，不绑定指定 Network。
 
 ### 按物理网络隔离的长期 DNS 候选缓存
 
@@ -147,9 +148,13 @@ TUN 栈不再可覆写，旧版本保存的 `tun_stack` / `tun_stack_mode` 会�
 
 ### 进程匹配
 
-- 开启：强制 `find-process-mode: always`；mihomo 按协议和原始四元组调用 Android
-  `ConnectivityManager.getConnectionOwnerUid()`，再将 UID 映射为包名。
-- 关闭：强制 `find-process-mode: off`。
+- `strict`：只有规则遍历实际需要进程信息时才查询；
+- `always`：每条可查询连接提前解析 UID/包名；
+- `off`：完全关闭查询。
+
+mihomo 按协议和原始四元组调用 Android `ConnectivityManager.getConnectionOwnerUid()`，再将 UID
+映射为包名。Android API 返回失败后直接按未找到处理，不再进入无权限的 Linux procfs/inet_diag
+fallback。
 
 核心、JNI 和 VPN 服务位于同一进程，查询不经过 JSON 或 Unix Socket 往返。
 
@@ -173,10 +178,9 @@ IPv6 开关表示用户意愿。实际启用还要求当前最佳非 VPN 网络�
 - 全局 IPv6 地址；
 - IPv6 默认路由。
 
-环境不满足时保留用户开关，但运行 IPv4-only。Wi-Fi 与移动网络切换且协议族不变时，应用复用现有
-TUN，只关闭旧连接并清理接口、普通易失 DNS 缓存和持久解析连接；按网络指纹隔离的
-direct DNS 长期来源候选会保留。若 IPv6 模式启动失败，会停止失败实例并
-以 IPv4-only 重试一次。
+用户启用后 Android TUN 保持双栈；环境不满足时只暂停 DIRECT IPv6、AAAA 解析和相关 resolver
+连接，不重建 TUN，也不关闭 IPv4 或代理连接。只有系统评分选出的物理 Network handle 真正变化时，
+才关闭旧路径的现有连接。若双栈模式首次启动失败，仍会停止失败实例并以 IPv4-only 重试一次。
 
 ### 按网络记忆策略组
 

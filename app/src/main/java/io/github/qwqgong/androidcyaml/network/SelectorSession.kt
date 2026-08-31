@@ -1,6 +1,7 @@
-package io.github.qwqgong.androidcyaml
+package io.github.qwqgong.androidcyaml.network
 
 import android.util.Log
+import io.github.qwqgong.androidcyaml.MihomoRuntime
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -9,14 +10,14 @@ import java.io.IOException
 /** Owns the selector checkpoint associated with the current physical network. */
 class SelectorSession(
     private val store: NetworkSelectionStore,
-    private val networkMonitor: Ipv6EnvironmentMonitor,
+    private val networkMonitor: UnderlyingNetworkMonitor,
 ) {
     private var identity = ""
     private var kind = ""
     private var label = ""
     private var ready = false
 
-    fun begin(runtime: MihomoRuntime?, networkState: Ipv6EnvironmentMonitor.State?) {
+    fun begin(runtime: MihomoRuntime?, networkState: NetworkState?) {
         identity = networkState?.selectionIdentity ?: ""
         kind = networkState?.selectionKind ?: ""
         label = networkState?.selectionLabel ?: ""
@@ -31,7 +32,7 @@ class SelectorSession(
         ready = false
     }
 
-    fun moveTo(networkState: Ipv6EnvironmentMonitor.State, runtime: MihomoRuntime?): Boolean {
+    fun moveTo(networkState: NetworkState, runtime: MihomoRuntime?): Boolean {
         if (identity == networkState.selectionIdentity) {
             return false
         }

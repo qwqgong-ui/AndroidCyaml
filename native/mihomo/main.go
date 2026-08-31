@@ -347,6 +347,7 @@ func AndroidCyamlNotifyNetworkChanged(closeConnectionsValue C.int) *C.char {
 		iface.FlushCache()
 		if closeConnectionsValue != 0 {
 			dialer.ClearTCPConcurrentCache()
+			resolver.ResetConnection()
 			statistic.DefaultManager.Range(func(connection statistic.Tracker) bool {
 				_ = connection.Close()
 				return true
@@ -371,6 +372,17 @@ func AndroidCyamlUpdateSystemDNS(serversValue *C.char) *C.char {
 		// deliberately preserves the 24-hour network/source candidate branches.
 		resolver.ClearVolatileCache()
 		resolver.ResetConnection()
+	}
+	return respond(nil, nil)
+}
+
+//export AndroidCyamlUpdateIPv6Availability
+func AndroidCyamlUpdateIPv6Availability(availableValue C.int) *C.char {
+	runtimeMu.Lock()
+	defer runtimeMu.Unlock()
+
+	if active {
+		androidcyamlcore.SetSystemIPv6Available(availableValue != 0)
 	}
 	return respond(nil, nil)
 }

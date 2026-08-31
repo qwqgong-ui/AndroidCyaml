@@ -1,5 +1,7 @@
 package io.github.qwqgong.androidcyaml
 
+import io.github.qwqgong.androidcyaml.network.NetworkState
+
 import android.net.Uri
 import android.util.Log
 import java.io.IOException
@@ -18,7 +20,7 @@ class RuntimeConfigTransactions(
 
         fun setIdleEffectiveState(
             settings: RuntimeOverrideSettings,
-            networkState: Ipv6EnvironmentMonitor.State,
+            networkState: NetworkState,
         )
 
         fun effectiveIpv6Enabled(): Boolean
@@ -31,7 +33,7 @@ class RuntimeConfigTransactions(
     interface Host {
         fun hasLocalNetworkAccess(): Boolean
 
-        fun refreshUnderlyingNetworkState(): Ipv6EnvironmentMonitor.State
+        fun refreshUnderlyingNetworkState(): NetworkState
 
         fun snapshot(): RuntimeSnapshot
 

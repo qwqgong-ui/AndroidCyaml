@@ -15,6 +15,7 @@ class MihomoRuntime(
     private val tcpConcurrentEnabled: Boolean,
     systemDnsServers: List<String>?,
     private val networkEnvironment: String,
+    private val physicalIpv6Available: Boolean,
 ) : AutoCloseable {
     private val settings: RuntimeOverrideSettings = settings ?: RuntimeOverrideSettings.defaults()
     private val systemDnsServers: List<String> = systemDnsServers?.toList() ?: emptyList()
@@ -44,6 +45,7 @@ class MihomoRuntime(
                 networkEnvironment,
             )
             nativeAcceptedDescriptor = true
+            MihomoNative.updateIpv6Availability(ipv6Enabled && physicalIpv6Available)
             MihomoNative.setTcpConcurrent(tcpConcurrentEnabled)
             activeController.setSecret(controllerSecret)
             activeController.awaitReady(90, TimeUnit.SECONDS)
@@ -104,16 +106,20 @@ class MihomoRuntime(
         }
     }
 
-    fun onUnderlyingNetworkChanged(
-        dnsServers: List<String>,
-        networkEnvironment: String,
-        closeConnections: Boolean,
-    ) {
-        if (started && MihomoNative.isRunning()) {
-            MihomoNative.updateNetworkEnvironment(networkEnvironment)
-            MihomoNative.updateSystemDns(dnsServers)
-            MihomoNative.notifyNetworkChanged(closeConnections)
-        }
+    fun updateNetworkEnvironment(networkEnvironment: String) = withActiveRuntime {
+        MihomoNative.updateNetworkEnvironment(networkEnvironment)
+    }
+
+    fun updateSystemDns(dnsServers: List<String>) = withActiveRuntime {
+        MihomoNative.updateSystemDns(dnsServers)
+    }
+
+    fun updateIpv6Availability(available: Boolean) = withActiveRuntime {
+        MihomoNative.updateIpv6Availability(ipv6Enabled && available)
+    }
+
+    fun onPhysicalRouteChanged() = withActiveRuntime {
+        MihomoNative.notifyNetworkChanged(true)
     }
 
     fun selectorSelections(): Map<String, String> {
@@ -163,6 +169,10 @@ class MihomoRuntime(
     private fun activeController(): MihomoController? {
         val current = controller
         return if (started && current != null && MihomoNative.isRunning()) current else null
+    }
+
+    private inline fun withActiveRuntime(operation: () -> Unit) {
+        if (started && MihomoNative.isRunning()) operation()
     }
 
     private fun requireController(): MihomoController =

@@ -1,4 +1,4 @@
-package io.github.qwqgong.androidcyaml
+package io.github.qwqgong.androidcyaml.network
 
 import android.content.Context
 import android.util.Log

@@ -132,6 +132,7 @@ for symbol in \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetTcpConcurrent \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStop \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeNotifyNetworkChanged \
+    Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateIpv6Availability \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning \
     Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeTrimMemory; do
     grep -q "GLOBAL.*${symbol}$" "${WRAPPER_SYMBOLS}" || {
@@ -155,6 +156,7 @@ for symbol in \
     AndroidCyamlStop \
     AndroidCyamlNotifyNetworkChanged \
     AndroidCyamlUpdateSystemDNS \
+    AndroidCyamlUpdateIPv6Availability \
     AndroidCyamlIsRunning \
     AndroidCyamlTrimMemory; do
     grep -q "GLOBAL.*${symbol}$" "${CORE_SYMBOLS}" || {

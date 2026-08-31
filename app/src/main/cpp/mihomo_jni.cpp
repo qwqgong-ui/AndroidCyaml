@@ -690,6 +690,17 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateSystemDns(
     ));
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeUpdateIpv6Availability(
+        JNIEnv* env,
+        jclass,
+        jboolean available
+) {
+    return stringFromNative(env, AndroidCyamlUpdateIPv6Availability(
+            available == JNI_TRUE ? 1 : 0
+    ));
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning(
         JNIEnv*,

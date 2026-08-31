@@ -1,3 +1,20 @@
+# AndroidCyaml v1.0.42 发布说明
+
+## 系统默认切网与可观测状态
+
+- 普通 mihomo 出站 socket 只执行 `VpnService.protect()`，不再绑定指定物理
+  `Network`；Wi-Fi/移动数据双连时由 Android 系统网络评分决定新连接出口。
+- 底层网络变化拆分为 route、DNS、IPv6、网络身份与 cache scope；IPv6
+  变化只更新 mihomo IPv6 resolver/DNS 状态，不重建 TUN，不关闭 IPv4/代理连接。
+- 切网观察、Selector 记忆和 direct cache scope 归入独立 `network` 组件；
+  系统最佳出口与可用网络档案由两个被动 callback 分开观察。
+- Android 进程归属查询失败后立即按未找到处理，不再落回 Linux
+  procfs/inet_diag 路径。
+
+诊断采样日志新增 `network.initial`、`network.transition`和
+`network.handover`，记录 route/DNS/IPv6/identity/cache 变化位、网络类型、
+IPv6 可用性和 DNS 数量，不记录 SSID、IP、DNS 地址或网络指纹。
+
 # AndroidCyaml v1.0.41 发布说明
 
 ## 关掉采样后仍可导出

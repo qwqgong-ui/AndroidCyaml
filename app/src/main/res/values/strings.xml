@@ -67,8 +67,8 @@
     <string name="override_process_matching_summary">strict 仅在进程规则需要时查询；always 对所有连接查询 Android UID/包名；off 完全关闭。</string>
     <string name="override_ipv6">IPv6</string>
     <string name="override_ipv6_available">当前底层网络具有已验证的全局 IPv6 地址和默认路由。</string>
-    <string name="override_ipv6_auto_disabled">IPv6 开关保持开启，但当前环境不可用；运行时已自动重载为 IPv4-only。</string>
-    <string name="override_ipv6_pending_environment">应用后将按当前网络环境决定是否实际启用 IPv6。</string>
+    <string name="override_ipv6_auto_disabled">IPv6 开关保持开启，但当前环境不可用；仅 DIRECT IPv6 与相关解析暂时关闭，VPN 不重建。</string>
+    <string name="override_ipv6_pending_environment">应用后保持双栈 TUN，并按当前网络环境动态控制 DIRECT IPv6。</string>
     <string name="override_ipv6_disabled">IPv6 已手动关闭，mihomo 和 Android TUN 均使用 IPv4-only。</string>
     <string name="override_adaptive_tcp_concurrent">TCP 并发</string>
     <string name="override_adaptive_tcp_concurrent_summary">开启后无论 Wi‑Fi 还是手机流量均强制使用 tcp-concurrent: true；关闭后所有网络均强制使用 false。</string>

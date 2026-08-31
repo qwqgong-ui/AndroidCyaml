@@ -8,29 +8,29 @@
 | `RuntimeCoordinator` | public runtime API, single-thread submission, module assembly and state publication | lifecycle, config rollback or network debounce implementation |
 | `RuntimeLifecycle` | VPN service, TUN/native resources, core restart and IPv6-to-IPv4 startup fallback | persisted settings or network monitoring |
 | `RuntimeConfigTransactions` | config install, runtime override persistence and failure rollback | direct mutation of lifecycle or coordinator state |
-| `NetworkReconciler` | underlying-network handover, adaptive TCP, IPv6 debounce/reconcile and delayed selector restore | TUN/native resource ownership |
-| `SelectorSession` | per-network selector checkpoint, restore, catalog and selection persistence | physical-network monitoring or core lifecycle |
+| `network/NetworkCoordinator` | typed route/DNS/IPv6/identity transitions, cache updates and delayed selector restore | TUN/native resource ownership |
+| `network/SelectorSession` | per-network selector checkpoint, restore, catalog and selection persistence | physical-network monitoring or core lifecycle |
 | `RuntimeOverrideStore` | process matching, IPv6, log level, adaptive TCP concurrency and LAN WebUI intent | YAML mutation or effective network state |
-| `Ipv6EnvironmentMonitor` | best validated non-VPN network identity, link state and IPv6 availability | user preference or core lifecycle |
+| `network/UnderlyingNetworkMonitor` | Android-scored best validated non-VPN network, identity, DNS and IPv6 snapshots | user preference or core lifecycle |
 | `AndroidTunManager` | fixed interface addresses, routes, DNS and application scope | socket protection or proxy routing |
 | `NativePlatformCallbacks` | per-socket `protect(fd)` and Android UID/package lookup | TUN packet processing |
 | `MihomoNative` | Java JNI contract and native response decoding | VPN lifecycle |
 | `libandroidcyaml.so` | JNI exports, JavaVM attachment and callback dispatch | mihomo configuration semantics |
 | `native/mihomo` | C ABI exports, in-memory Android config adaptation and mihomo package orchestration | Android UI and service policy |
-| patched mihomo source | config parsing, system sing-tun, DNS, sniffer, rules and outbounds | Android JNI implementation |
+| mihomo `androidcyaml` facade | neutral platform hooks and runtime IPv6 signal | Android JNI implementation |
 | UI/Binder | user intent and observation | runtime ownership |
 
 `MainActivity` runs in `:ui`; `AppControlService`、`AndroidVpnService`、两个原生库和 Go runtime 均位于默认
 VPN 服务进程。
 
-这些 Java runtime 类型物理位于 `app/src/main/java/io/github/qwqgong/androidcyaml/runtime/`，但仍使用
-`io.github.qwqgong.androidcyaml` package，以保留 Android/JNI adapter 的 package-private 边界，
-避免仅为目录分层扩大内部 API 的 public 可见性。
+网络观察、变化分类、策略记忆和持久化物理集中在
+`app/src/main/java/io/github/qwqgong/androidcyaml/network/`，并使用独立
+`io.github.qwqgong.androidcyaml.network` package；runtime 只消费其稳定状态和事件。
 
 ## Core isolation
 
-AndroidCyaml 固定 `qwqgong-ui/mihomo:dev` 的已测试提交，不再在临时构建目录中应用 Android
-源码补丁。dev 内核提供中性的 endpoint-aware 进程解析与 XHTTP transport 扩展点，并通过
+AndroidCyaml 构建时解析 `qwqgong-ui/mihomo:dev` 的当前提交并记录精确 SHA，不再在临时构建目录中应用
+Android 源码补丁。dev 内核提供中性的 endpoint-aware 进程解析、运行时 IPv6 信号与 XHTTP transport 扩展点，并通过
 `mihomo/androidcyaml` 薄 facade 供本项目注册平台实现。构建不会把 JNI、VpnService、WebView
 或运行时覆写代码写回 mihomo checkout；未注册 facade 回调时，普通 mihomo 行为保持不变。
 
@@ -41,8 +41,8 @@ native/mihomo/main.go
 ├── JNI-facing C ABI exports
 ├── 强制 system TUN 栈
 ├── 固定 /30 和 /126 TUN 合约
-├── 自适应 IPv6 配置变换
-├── 网络切换缓存与连接重置
+├── Android IPv6 availability 信号
+├── 物理 route 切换连接重置
 ├── find-process-mode 变换
 ├── TUN FD 注入
 └── dialer.DefaultSocketHook → protect(fd)
@@ -95,7 +95,7 @@ Go 核心额外固定 `GOARM64=v8.2`，使运行时原子操作走 ARMv8.1 LSE �
 3. `MihomoNative.prepareTun` 在嵌入式 Go runtime 中解析 `config.yaml`；
 4. `native/mihomo` 强制 system 栈并应用固定 Android 接口合约：
    - IPv4 `172.19.0.1/30`；
-   - IPv6 `fdfe:dcba:9876::1/126`（有效时）；
+   - IPv6 `fdfe:dcba:9876::1/126`（用户启用时）；
    - MTU 9000；
    - GSO 关闭；
 5. Go runtime 返回供 `VpnService.Builder` 使用的地址、路由、DNS 和包范围；
@@ -123,8 +123,8 @@ TUN 栈不再属于运行时覆写，也不采用 YAML 中的 `stack`。旧版�
 2. Go 连接 app 私有目录中的 unix socket endpoint，用 `SCM_RIGHTS` 传递该 FD；
 3. `SocketProtectService` 的 worker 线程收下 FD，校验对端 uid 属于本进程；
 4. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`；
-5. 已 protect 的 socket 再经当前 underlying `Network.bindSocket(fd)` 锁定物理网络；
-6. worker 回写一字节裁决，protect/bind 被拒绝时直接让拨号失败。
+5. socket 不绑定指定 Network，由 Android 系统默认路由选择 Wi-Fi 或移动数据；
+6. worker 回写一字节裁决，protect 被拒绝时直接让拨号失败。
 
 `VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect fwmark 位，所以请求
 必须到达 JVM；但它不必作为 JNI upcall 从 Go 线程发出。goroutine 阻塞在 cgo 期间独占其 OS thread，
@@ -149,6 +149,26 @@ system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处�
 
 真实上游 socket 是唯一通过逐个 `protect()` 排除的 socket。
 
+## Mihomo outbound tree
+
+```text
+Android app traffic
+└── VpnService TUN fd
+    └── mihomo system stack → rules/process owner
+        ├── DIRECT / DNS / native proxy outbound
+        │   └── dialer socket hook → VpnService.protect(fd)
+        │       └── unbound socket → Android system default network scoring
+        │           ├── Wi-Fi
+        │           └── cellular
+        └── optional System WebView XHTTP
+            └── Java WebView dialer → best-matching physical Network.bindSocket()
+                └── WebView HTTPS request outside the VPN
+```
+
+WebView XHTTP 是唯一例外：它需要在 Java 端显式绑定已观察到的物理 network，避免
+WebView 自身的 DNS/HTTPS 请求重新进入 VPN 形成递归。这个特例不改变普通 mihomo
+DIRECT、DNS 和代理出站的系统默认选网行为。
+
 ## Runtime overrides
 
 运行时覆写仅包括：
@@ -163,25 +183,29 @@ system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处�
 
 ## Process matching
 
-启用时强制 `find-process-mode: always`。补丁将协议和原始源/目标 endpoint 通过 JNI 交给
-`ConnectivityManager.getConnectionOwnerUid()`，再映射为稳定包名；关闭时强制 `off`。
+`strict` 只在规则遍历需要进程信息时查询；`always` 提前查询；`off` 完全关闭。平台 resolver 通过
+JNI 调用 `ConnectivityManager.getConnectionOwnerUid()`，其失败是权威结果，不再回退 Android
+SELinux 禁止的 Linux procfs/inet_diag 路径。
 
 ## Adaptive IPv6 transaction
 
-`Ipv6EnvironmentMonitor` 追踪最佳非 VPN Internet network。只有底层网络已验证、具备全局 IPv6 地址
-和 IPv6 默认路由时才启用固定 `/126`。
+`UnderlyingNetworkMonitor` 追踪 Android 自身评分选出的最佳非 VPN Internet network。用户开启 IPv6
+时 Android TUN 固定保留 `/126`；底层网络的全局 IPv6 地址和默认路由只控制 mihomo 的运行时 IPv6
+resolver/DNS 行为。
 
 - 用户关闭 IPv6：运行 IPv4-only；
-- 用户开启但环境不可用：保留意愿，实际运行 IPv4-only；
-- 底层网络短暂消失：保留当前协议族合约并关闭旧连接；
-- 新网络改变 IPv6 可用性：重建相应 TUN 合约；
+- 用户开启但环境不可用：保留双栈 TUN，只暂停 DIRECT IPv6；
+- 同一物理网络 IPv6 变化：只更新 IPv6 resolver/DNS，不关闭 IPv4/代理连接；
+- 物理 route handle 改变：关闭旧路径连接，新连接使用系统默认出口；
 - IPv6 启动失败：停止失败实例并执行一次 IPv4-only 重试。
 
 ## Underlying-network handover
 
-网络切换若不改变有效协议族，`RuntimeCoordinator` 不替换 TUN，而是刷新接口/DNS 缓存、重置持久
-resolver transport 并关闭现有 mihomo 连接。新建且已 protect 的 socket 随 Android 新物理默认网络
-出去，从而避免 Wi-Fi/移动网络切换导致不必要的 VPN 重建。
+`NetworkCoordinator` 把变化分为 route、DNS、IPv6、identity 和 cache scope。DNS 变化只更新
+DNS；IPv6 变化只更新 IPv6；identity 变化只处理策略记忆；cache scope 变化只更新
+direct cache key；只有最佳物理 Network handle 改变才刷新
+接口状态并关闭旧路径连接。`VpnService.Builder.setUnderlyingNetworks(null)` 与 protect-only socket
+让 Android 的吞吐、费用、用户偏好和网络评分决定 Wi-Fi/移动数据出口。
 
 同一网络快照中的 `LinkProperties.getDnsServers()` 会在 core 启动前以及 handover 时经
 Java → JNI → Go 传给 `dns.UpdateSystemDNS`。Android 不再从 `/etc/resolv.conf` 推断系统 DNS。
