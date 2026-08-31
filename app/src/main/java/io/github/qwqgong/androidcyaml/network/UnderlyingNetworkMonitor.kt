@@ -40,10 +40,11 @@ class UnderlyingNetworkMonitor(context: Context) {
     private val callbackThread = HandlerThread("AndroidCyaml-NetworkMonitor")
     private val handler: Handler
     private val lock = Any()
+    // VALIDATED is checked on callback snapshots below. It is a mutable capability and Android
+    // rejects it in best-matching requests before the VPN runtime can start.
     private val request = NetworkRequest.Builder()
         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-        .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         .build()
 
     private var listener: Listener? = null
