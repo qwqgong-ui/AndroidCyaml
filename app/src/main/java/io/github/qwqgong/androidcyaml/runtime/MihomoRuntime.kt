@@ -28,6 +28,10 @@ class MihomoRuntime(
         val activeController = MihomoController.reserve(settings.lanWebUiPublic)
         controller = activeController
         platformCallbacks.configureWebViewXhttp(settings.webViewXhttp)
+        // Prime mihomo's platform-authoritative IPv6 sample before either config
+        // parse. A running core also receives the same value below for backwards
+        // compatibility with dev revisions that ignored pre-start updates.
+        MihomoNative.updateIpv6Availability(physicalIpv6Available)
         val tunOptions = MihomoNative.prepareTun(paths, settings, ipv6Enabled)
         val tunnel = tunManager.open(tunOptions)
         val duplicate = ParcelFileDescriptor.dup(tunnel.fileDescriptor)
@@ -45,7 +49,7 @@ class MihomoRuntime(
                 networkEnvironment,
             )
             nativeAcceptedDescriptor = true
-            MihomoNative.updateIpv6Availability(ipv6Enabled && physicalIpv6Available)
+            MihomoNative.updateIpv6Availability(physicalIpv6Available)
             MihomoNative.setTcpConcurrent(tcpConcurrentEnabled)
             // The log switch decides how much of the core's own stream is kept
             // for the diagnostics log. Warnings and errors are always retained;
@@ -118,7 +122,9 @@ class MihomoRuntime(
     }
 
     fun updateIpv6Availability(available: Boolean) = withActiveRuntime {
-        MihomoNative.updateIpv6Availability(ipv6Enabled && available)
+        // The native core owns the conjunction with the configured IPv6 intent;
+        // this signal describes only the physical network observed by Android.
+        MihomoNative.updateIpv6Availability(available)
     }
 
     fun onPhysicalRouteChanged() = withActiveRuntime {

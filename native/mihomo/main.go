@@ -380,9 +380,10 @@ func AndroidCyamlUpdateIPv6Availability(availableValue C.int) *C.char {
 	runtimeMu.Lock()
 	defer runtimeMu.Unlock()
 
-	if active {
-		core.SetSystemIPv6Available(availableValue != 0)
-	}
+	// The platform sample is also valid before ApplyConfig. Newer mihomo dev
+	// revisions retain it for the first config application; older revisions
+	// safely treat this pre-start call as a no-op and receive it again after start.
+	core.SetSystemIPv6Available(availableValue != 0)
 	return respond(nil, nil)
 }
 
