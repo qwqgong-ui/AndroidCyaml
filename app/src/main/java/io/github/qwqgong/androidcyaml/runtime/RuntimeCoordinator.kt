@@ -287,6 +287,22 @@ class RuntimeCoordinator private constructor(context: Context) :
         executor.execute(operation)
     }
 
+    /**
+     * Runs inline: every caller already reaches this from [submit], so the work
+     * belongs to the transition being applied rather than to a task queued behind it.
+     */
+    override fun rebuildRuntime() {
+        try {
+            publish(RuntimeState.STARTING, "正在重启 mihomo JNI 核心…")
+            publish(RuntimeState.RUNNING, start())
+        } catch (exception: Exception) {
+            if (exception is InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            failActiveService("mihomo 重启失败：" + Exceptions.usefulMessage(exception))
+        }
+    }
+
     override fun snapshot(): RuntimeSnapshot = stateBus.snapshot()
 
     override fun publish(snapshot: RuntimeSnapshot) {

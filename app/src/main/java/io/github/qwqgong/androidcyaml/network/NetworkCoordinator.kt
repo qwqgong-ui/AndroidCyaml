@@ -21,6 +21,13 @@ class NetworkCoordinator(
 ) {
     interface Host {
         fun submit(operation: Runnable)
+
+        /**
+         * Rebuilds the runtime against the state observed right now. Used for the
+         * dimensions a running core cannot be reconciled with in place.
+         */
+        fun rebuildRuntime()
+
         fun snapshot(): RuntimeSnapshot
         fun publish(snapshot: RuntimeSnapshot)
         fun diagnostic(event: String, detail: String)
@@ -118,8 +125,20 @@ class NetworkCoordinator(
             return
         }
 
-        applyTcpConcurrent(settings.adaptiveTcpConcurrent)
-        pendingTransition = applyRuntimeTransition(next, transition, settings.ipv6Enabled)
+        if (transition.ipv6Changed && settings.ipv6Enabled) {
+            // Physical IPv6 decides the TUN's own shape, which is fixed at
+            // establish() time, so this dimension cannot be reconciled against a
+            // running core -- the core owns the descriptor and will not take a new
+            // one while up. The rebuild starts from the state observed now, which
+            // reconciles every other dimension along with it. Only the core
+            // restarts: the tunnel is re-established over the live VpnService.
+            pendingTransition = NetworkTransition.none()
+            host.diagnostic("network.ipv6.rebuild", description)
+            host.rebuildRuntime()
+        } else {
+            applyTcpConcurrent(settings.adaptiveTcpConcurrent)
+            pendingTransition = applyRuntimeTransition(next, transition, settings.ipv6Enabled)
+        }
         if (identityChanged && next.available()) scheduleSelectionRestoration()
         host.publish(host.snapshot())
     }

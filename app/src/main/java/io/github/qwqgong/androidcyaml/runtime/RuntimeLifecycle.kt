@@ -1,6 +1,5 @@
 package io.github.qwqgong.androidcyaml
 
-import android.util.Log
 import io.github.qwqgong.androidcyaml.network.NetworkState
 import io.github.qwqgong.androidcyaml.network.SelectorSession
 import java.io.IOException
@@ -66,56 +65,24 @@ class RuntimeLifecycle(
         networkState: NetworkState,
         runtimeStarted: Runnable?,
     ): String {
-        // The user's IPv6 intent owns the TUN shape. Physical IPv6 availability is a separate
-        // runtime signal and must never rebuild the whole Android VPN.
-        val requestedIpv6 = settings.ipv6Enabled
-        val requestedTcpConcurrent = settings.adaptiveTcpConcurrent
-        try {
-            return startRuntime(
-                settings,
-                networkState,
-                requestedIpv6,
-                requestedTcpConcurrent,
-                runtimeStarted,
-            )
-        } catch (firstFailure: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw firstFailure
-        } catch (firstFailure: IOException) {
-            if (!requestedIpv6) {
-                throw firstFailure
-            }
-            Log.w(TAG, "IPv6 runtime startup failed; retrying with IPv6 disabled", firstFailure)
-            service?.let { host ->
-                DiagnosticsLog.append(
-                    host,
-                    "runtime.ipv6.fallback",
-                    "error=" + DiagnosticsLog.oneLine(Exceptions.usefulMessage(firstFailure)),
-                )
-            }
-            try {
-                return startRuntime(
-                    settings,
-                    networkState,
-                    false,
-                    requestedTcpConcurrent,
-                    runtimeStarted,
-                ) + " · IPv6 自动关闭"
-            } catch (fallbackFailure: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw combinedStartFailure(firstFailure, fallbackFailure)
-            } catch (fallbackFailure: IOException) {
-                throw combinedStartFailure(firstFailure, fallbackFailure)
-            }
-        }
-    }
-
-    private fun combinedStartFailure(firstFailure: Exception, fallbackFailure: Exception) =
-        IOException(
-            "IPv6 模式启动失败：" + Exceptions.usefulMessage(firstFailure) +
-                "；IPv4 回退也失败：" + Exceptions.usefulMessage(fallbackFailure),
-            fallbackFailure,
+        // The TUN shape follows the user's IPv6 intent *and* whether the physical
+        // network actually carries IPv6. A TUN that advertises IPv6 the core will
+        // refuse to dial is worse than no IPv6 at all: apps that reach past DNS --
+        // an HTTPDNS client, or one replaying addresses it cached on another
+        // network -- keep dialing addresses that can never connect, with no DNS
+        // answer left to steer them back. Losing or gaining physical IPv6 therefore
+        // restarts the core and re-establishes the tunnel. The VpnService itself
+        // stays up, and that restart is affordable because the change coincides
+        // with the handover that already drops every connection.
+        val requestedIpv6 = settings.ipv6Enabled && networkState.ipv6Usable
+        return startRuntime(
+            settings,
+            networkState,
+            requestedIpv6,
+            settings.adaptiveTcpConcurrent,
+            runtimeStarted,
         )
+    }
 
     fun updateWebViewUnderlyingNetwork(networkHandle: Long) {
         platformCallbacks?.updateWebViewUnderlyingNetwork(networkHandle)
@@ -192,7 +159,8 @@ class RuntimeLifecycle(
             if (!activeTunManager.hasUsableTunnel()) {
                 throw IOException("mihomo 未建立 Android TUN")
             }
-            effectiveIpv6Enabled = ipv6Enabled && networkState.ipv6Usable
+            // ipv6Enabled already carries the physical-availability mask.
+            effectiveIpv6Enabled = ipv6Enabled
             effectiveTcpConcurrent = tcpConcurrentEnabled
             runtimeStarted?.run()
             selectorSession.begin(candidate, networkState)
@@ -212,9 +180,5 @@ class RuntimeLifecycle(
         runtime?.close()
         runtime = null
         selectorSession.reset()
-    }
-
-    private companion object {
-        const val TAG = "AndroidCyaml/Coordinator"
     }
 }
