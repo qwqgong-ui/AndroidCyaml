@@ -41,8 +41,29 @@ executor、route、dns、config、constant、listener/config、log、process）�
 `process.go`、`transport.go`、`diagnostics.go`——并导出 `FacadeVersion`；
 `native/mihomo/facade_version.go` 在编译期断言该常量，契约漂移变成构建失败而非设备上的错误行为。
 
-`patches/mihomo/` 暂存尚未合入 dev 的 facade 改动，构建时应用到新检出上；改动进入 dev 后
-构建会识别为已存在并跳过。这是过渡机制，不是常设补丁层。
+`patches/mihomo/` 暂存尚未合入 dev 的下游改动——facade 契约变更，以及本项目先发现、
+应当回流上游的内核修复——构建时应用到新检出上；改动进入 dev 后构建会识别为已存在并跳过。
+这是过渡机制，不是常设补丁层：每个补丁都以合入 dev 后被删除为目标。
+
+当前暂存两个连接生命周期修复，均在 Android 上实测复现：
+
+- `0001-relay-bound-half-closed-direction.patch`：`N.Relay` 在一侧 `CloseWrite` 后，
+  另一方向的 `Copy` 没有时间上界。远端 FIN 而本地不再写入时（被黑洞路由抛弃的流），
+  存活方向永久阻塞，`defer` 的 Close 不执行，inbound socket 连同 fd、goroutine、
+  tracker 一起停在 CLOSE_WAIT。修复为半关闭后对存活方向读取侧装载 `HalfCloseTimeout`。
+- `0002-dialer-unreachable-destination-breaker.patch`：拨号路径不记忆失败。
+  对不应答的 CDN 地址，每次重试都要付满 `DefaultTCPTimeout`，客户端并发重试时
+  会堆出数千个并发半开 socket。修复为按 `directNetworkEnvironment` 作用域的
+  熔断器：连续可达性失败达阈值后立即失败，冷却后放行一次探测。
+  作用域携带网络身份，因此切换网络时旧判决自然失效，无需显式清理。
+- `0003-direct-gate-address-race.patch`：DIRECT 出站此前无条件启用地址竞速
+  （`adapter/outbound/direct.go` 直接 append `WithDirectDualStack()`，无配置项）。
+  竞速对同一地址族内**所有** A 记录同时发起连接，没有 RFC 8305 的
+  Connection Attempt Delay，也没有上限；赢家缓存只在成功时写入，所以完全不通的
+  域名每次重试都付全量扇出。实测两条 A 记录的 CDN 域名 = 235 条连接 / 470 个并发
+  半开 socket。补丁引入 `dialer.DirectRaceEnabled`（默认 `false`）在唯一调用点
+  门控，使 DIRECT 恢复上游逐个地址拨号；竞速代码本身保留，等它学会错开候选后
+  再打开。注意：`tcp-concurrent` 开关管不到这条路径——关掉它反而会进入竞速分支。
 
 较大的 Android 行为全部位于 AndroidCyaml：
 
@@ -139,19 +160,28 @@ sing-tun 在最后一个包之后保留 UDP 会话整个超时时长，NAT 表�
 整个应用 UID 保持在 VPN 路由内。每个真实 mihomo 上游 socket：
 
 1. `dialer.DefaultSocketHook` 在 connect 前获得 raw FD；
-2. Go 连接 app 私有目录中的 unix socket endpoint，用 `SCM_RIGHTS` 传递该 FD；
-3. `SocketProtectService` 的 worker 线程收下 FD，校验对端 uid 属于本进程；
-4. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`；
-5. socket 不绑定指定 Network，由 Android 系统默认路由选择 Wi-Fi 或移动数据；
-6. worker 回写一字节裁决，protect 被拒绝时直接让拨号失败。
+2. Go 取一枚 `platformCallbackLimit` 许可（上限 `maxConcurrentPlatformCallbacks = 8`）后进入 JNI；
+3. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`；
+4. socket 不绑定指定 Network，由 Android 系统默认路由选择 Wi-Fi 或移动数据；
+5. protect 的裁决只被计数，不改变拨号成败。
 
 `VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect fwmark 位，所以请求
-必须到达 JVM；但它不必作为 JNI upcall 从 Go 线程发出。goroutine 阻塞在 cgo 期间独占其 OS thread，
-且进入 JNI 的线程会被 attach 到 ART——这正是弱网重拨风暴留下大量 `Thread-N` 的原因。改走 unix
-socket 后，等待裁决的 goroutine 停在 Go netpoller 上，拨号热路径不再创建或 attach 任何线程；Java
-侧的并发上限由固定 8 个 worker 的线程池决定。endpoint 位于 `no_backup` 私有目录而非 abstract
-namespace，因为设备上所有 app 共享同一 network namespace。endpoint 创建失败或运行中失效时，Go 侧
-自动回退到原 JNI 回调。
+必须到达 JVM。goroutine 阻塞在 cgo 期间独占其 OS thread，因此真正需要约束的量是**同时进入 cgo 的
+调用数**——这正是那枚信号量的作用：多余的调用者在进入 cgo 之前就停在 Go 调度器里，运行时不会为它们
+创建替补 M，`Thread-N` 高水位随之封顶。进程归属查询共享同一枚信号量，因为它同样是 Binder 往返。
+ClashMetaForAndroid 与 FlClash 采用完全相同的结构。
+
+此前这条路径走的是 unix socket + `SCM_RIGHTS` + Java 线程池，目标是让拨号热路径完全不进 cgo。它缺少
+准入控制：数百个并发拨号会打爆 endpoint 的 listen backlog，而竞争失败的拨号又统统回退到同一条 JNI
+路径——当时唯一挂着上限的恰恰只有那条回退路径。真机诊断中 `protectTransportErrors`、
+`protectJniFallbacks`、`protectJniCalls` 三个计数完全相等（5456），即整条链路被走满了 5456 次。把上限
+加在回调本身，就解决了当初促使引入该传输层的问题，传输层本身随之成为多余，故连同
+`SocketProtectService` 一并移除。
+
+protect 失败不再让拨号失败。让它失败看似更安全，实则更糟：高压下最先饱和的正是 protect，把饱和变成
+拨号错误会让 mihomo 重试、上层客户端重试，再把更多 protect 请求灌回已经饱和的地方，形成拥塞崩溃。
+未被 protect 的 socket 也不会静默走错——它绕回 TUN 后被 loopback 检查拒绝，失败依然可见，只是表现为
+一条连接失败，而不是一个正反馈环。
 
 进程归属查询是真正的 Binder 调用，仍走 JNI，并保留 16 并发的 Go 侧入口；限流发生在进入 cgo 之前。
 System WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消

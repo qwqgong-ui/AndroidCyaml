@@ -53,13 +53,7 @@ class MihomoRuntime(
             started = true
             return "mihomo " + BuildConfig.MIHOMO_CHANNEL +
                 " · JNI/CGO" +
-                (
-                    if (platformCallbacks.protectEndpointPath().isEmpty()) {
-                        " · protect JNI 回退"
-                    } else {
-                        " · protect unix socket"
-                    }
-                ) +
+                " · protect JNI" +
                 " · system 全栈" +
                 " · 进程匹配 " + settings.processMatchingMode.wireValue +
                 (if (ipv6Enabled) " · IPv6" else " · IPv4-only") +
