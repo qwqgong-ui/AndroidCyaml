@@ -77,14 +77,6 @@ const (
 
 	// ICMP sessions are answered and finished; they do not need a long window.
 	embeddedICMPTimeoutSeconds = 10
-
-	// The process-owner lookup is a genuine Binder round trip into
-	// ConnectivityService, and a goroutine waiting inside cgo owns its OS
-	// thread. Bound those callers so a lookup burst parks in the Go scheduler
-	// instead of making the runtime create hundreds of OS threads. Socket
-	// protection no longer needs this: it leaves through a unix socket in pure
-	// Go, see socket_protect.go.
-	maxConcurrentPlatformCallbacks = 16
 )
 
 type nativeResponse struct {
@@ -131,7 +123,6 @@ var (
 	protectCallback        unsafe.Pointer
 	resolveProcessCallback unsafe.Pointer
 	platformCallbackLimit  = newCallbackLimiter(maxConcurrentPlatformCallbacks)
-	platformSocketProtect  socketProtector
 
 	// Dial-path tallies for the diagnostics sampler. Deltas between two samples
 	// separate "the network is churning" (dialHookCalls climbing) from "dials
@@ -139,9 +130,8 @@ var (
 	// are back on JNI" (jniFallbacks climbing).
 	dialHookCalls        atomic.Uint64
 	dialHookControlFails atomic.Uint64
-	protectJniCalls      atomic.Uint64
-	protectJniRejections atomic.Uint64
-	protectJniFallbacks  atomic.Uint64
+	protectAttempts      atomic.Uint64
+	protectRejections    atomic.Uint64
 	processLookupCalls   atomic.Uint64
 	processLookupMisses  atomic.Uint64
 
@@ -223,7 +213,6 @@ func AndroidCyamlStart(
 	logLevelValue,
 	processMatchingValue *C.char,
 	networkEnvironmentValue *C.char,
-	protectEndpointValue *C.char,
 	fileDescriptor,
 	ipv6Value,
 	lanWebUiPublicValue C.int,
@@ -292,7 +281,7 @@ func AndroidCyamlStart(
 		return respond(nil, fmt.Errorf("encode controller credentials: %w", err))
 	}
 
-	installPlatformHooks(C.GoString(protectEndpointValue))
+	installPlatformHooks()
 	core.SetEmbedMode(true)
 	core.ApplyConfig(cfg)
 	active = true
@@ -418,12 +407,10 @@ func AndroidCyamlRuntimeMetrics() *C.char {
 	uploaded, downloaded := core.TotalTraffic()
 	sample["uploadedBytes"] = nonNegative(uploaded)
 	sample["downloadedBytes"] = nonNegative(downloaded)
-	platformSocketProtect.counters(sample)
 	sample["dialHookCalls"] = dialHookCalls.Load()
 	sample["dialHookControlFails"] = dialHookControlFails.Load()
-	sample["protectJniCalls"] = protectJniCalls.Load()
-	sample["protectJniRejections"] = protectJniRejections.Load()
-	sample["protectJniFallbacks"] = protectJniFallbacks.Load()
+	sample["protectAttempts"] = protectAttempts.Load()
+	sample["protectRejections"] = protectRejections.Load()
 	sample["processLookupCalls"] = processLookupCalls.Load()
 	sample["processLookupMisses"] = processLookupMisses.Load()
 	coreLog.counters(sample)
@@ -690,83 +677,52 @@ func ipv4Addresses(values []netip.Addr) []netip.Addr {
 	return result
 }
 
-func installPlatformHooks(protectEndpoint string) {
-	platformSocketProtect.setEndpoint(protectEndpoint)
-	// The JNI fallback below keeps dialing when the endpoint is missing, which
-	// would otherwise make a broken endpoint indistinguishable from a working
-	// one. Say which path is live.
-	if platformSocketProtect.enabled() {
-		core.Infoln("Android socket protect uses the unix endpoint at %s", protectEndpoint)
-	} else {
-		core.Warnln("Android socket protect endpoint is unavailable; dials fall back to JNI")
-	}
+func installPlatformHooks() {
 	core.SetSocketHook(func(network, address string, connection syscall.RawConn) error {
 		dialHookCalls.Add(1)
-		var protectErr error
+		// A failed protect deliberately does not fail the dial.
+		//
+		// Failing it looked safer and was worse. Under load the protect path is
+		// exactly what saturates first, so turning that into a dial error made
+		// mihomo retry, made the client above retry, and fed more protect calls
+		// into the thing that was already saturated. That is congestion
+		// collapse, and it is how a slow moment became thousands of half-open
+		// sockets.
+		//
+		// An unprotected socket is not silently wrong either: it routes back
+		// into the TUN, where the loopback guard rejects it. The failure still
+		// surfaces, as one connection failing instead of a feedback loop.
+		// ClashMetaForAndroid and FlClash both return nothing from protect.
 		err := connection.Control(func(fileDescriptor uintptr) {
-			protectErr = protectDialedSocket(int(fileDescriptor))
+			protectDialedSocket(int(fileDescriptor))
 		})
 		if err != nil {
 			dialHookControlFails.Add(1)
 			return err
-		}
-		if protectErr != nil {
-			return fmt.Errorf(
-				"VpnService.protect rejected %s socket for %s: %w",
-				network,
-				address,
-				protectErr,
-			)
 		}
 		return nil
 	})
 	core.SetProcessResolver(resolveProcess)
 }
 
-// protectDialedSocket prefers the unix socket endpoint, which keeps the dial
-// path in pure Go. The JNI callback stays as a fallback so a broken endpoint
-// degrades to the old behaviour instead of failing every dial; a verdict from
-// VpnService itself is final and is not retried.
-func protectDialedSocket(fileDescriptor int) error {
-	if platformSocketProtect.enabled() {
-		err := platformSocketProtect.protect(fileDescriptor)
-		switch {
-		case err == nil:
-			if platformSocketProtect.noteDegraded(false) {
-				core.Infoln("Android protect endpoint recovered; sockets no longer cross JNI")
-			}
-			return nil
-		case errors.Is(err, errSocketProtectRejected):
-			return err
-		default:
-			protectJniFallbacks.Add(1)
-			if platformSocketProtect.noteDegraded(true) {
-				core.Warnln("Android protect endpoint unusable, falling back to JNI: %v", err)
-			}
-		}
-	}
-	return protectSocketThroughJNI(fileDescriptor)
-}
-
-func protectSocketThroughJNI(fileDescriptor int) error {
+// protectDialedSocket hands one socket to VpnService.protect through the JNI
+// callback, bounded by the shared platform-callback permit.
+func protectDialedSocket(fileDescriptor int) {
 	callback := currentProtectCallback()
 	if callback == nil {
-		return errors.New("Android socket protect callback is unavailable")
+		return
 	}
-	protectJniCalls.Add(1)
+	protectAttempts.Add(1)
 	rejected := withCallbackPermit(platformCallbackLimit, func() bool {
 		return C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
 	})
 	if rejected {
-		protectJniRejections.Add(1)
-		return errSocketProtectRejected
+		protectRejections.Add(1)
 	}
-	return nil
 }
 
 func clearPlatformHooks() {
 	core.SetSocketHook(nil)
-	platformSocketProtect.setEndpoint("")
 	core.ResetProcessResolver()
 }
 

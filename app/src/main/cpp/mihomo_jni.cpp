@@ -601,8 +601,7 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
         jstring process_matching_mode,
         jboolean lan_web_ui_public,
         jobject callbacks,
-        jstring network_environment,
-        jstring protect_endpoint
+        jstring network_environment
 ) {
     if (!installCallback(env, callbacks)) {
         return env->NewStringUTF(
@@ -616,7 +615,6 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
     std::string log_level_value = stringFromJava(env, log_level);
     std::string process_matching_mode_value = stringFromJava(env, process_matching_mode);
     std::string network_environment_value = stringFromJava(env, network_environment);
-    std::string protect_endpoint_value = stringFromJava(env, protect_endpoint);
     return stringFromNative(env, AndroidCyamlStart(
             const_cast<char*>(home_value.c_str()),
             const_cast<char*>(config_value.c_str()),
@@ -625,7 +623,6 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeStart(
             const_cast<char*>(log_level_value.c_str()),
             const_cast<char*>(process_matching_mode_value.c_str()),
             const_cast<char*>(network_environment_value.c_str()),
-            const_cast<char*>(protect_endpoint_value.c_str()),
             static_cast<int>(tun_file_descriptor),
             ipv6_enabled == JNI_TRUE ? 1 : 0,
             lan_web_ui_public == JNI_TRUE ? 1 : 0

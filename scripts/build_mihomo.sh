@@ -112,6 +112,7 @@ fi
 host_tag=""
 case "$(uname -s)" in
     Linux) host_tag="linux-x86_64" ;;
+    MINGW*|MSYS*|CYGWIN*) host_tag="windows-x86_64" ;;
     Darwin)
         for candidate in darwin-arm64 darwin-x86_64; do
             if [[ -d "${NDK_ROOT}/toolchains/llvm/prebuilt/${candidate}" ]]; then
