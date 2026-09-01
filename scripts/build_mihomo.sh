@@ -45,7 +45,11 @@ readonly WRAPPER_DIGEST="$(cat "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources
 # applied to the fresh checkout below, and is expected to stop applying once the
 # same change reaches dev -- that case is detected and skipped rather than
 # treated as a failure, so the directory can be emptied on the next sync.
+# nullglob so an empty staging directory yields an empty array rather than the
+# literal pattern, which the "none" branch below and the apply loop both assume.
+shopt -s nullglob
 mihomo_patches=("${PATCH_DIR}"/*.patch)
+shopt -u nullglob
 if (( ${#mihomo_patches[@]} > 0 )); then
     readonly PATCH_DIGEST="$(cat "${mihomo_patches[@]}" | sha256sum | awk '{ print $1 }')"
 else
