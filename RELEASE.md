@@ -1,3 +1,16 @@
+# AndroidCyaml v1.0.51 发布说明
+
+## 修复:v1.0.50 的拨号探针没有输出
+
+v1.0.50 引入的拨号探针在收集数据,但两处接线遗漏,导致它从不上报:
+
+- `AndroidCyamlRuntimeMetrics` 没有调用 `platformDialProbe.counters`,统计因此进不了
+  诊断采样;
+- socket hook 没有调用 `observeAddress`,解析后地址一栏始终为空。
+
+真机验证过:v1.0.50 采到 11 条样本,`dialFailDst.*` 等字段一条都没有出现。本版补上这
+两处调用,探针字段方可出现在采样中。探针本身的逻辑与隐私说明不变,见 v1.0.50。
+
 # AndroidCyaml v1.0.50 发布说明
 
 ## 拨号探针:让核心自己说出在拨谁
