@@ -45,6 +45,10 @@ func (c *coreLogCounters) observe(warning bool, payload string) {
 		c.errors.Add(1)
 	}
 	c.buckets[classifyCoreLog(payload)].Add(1)
+	// The bucket says how it failed. The probe says what failed, which is the
+	// half a storm cannot be attributed without. Both are a classification and a
+	// bounded map write, which is all this call site can afford.
+	platformDialProbe.observeFailure(payload)
 }
 
 func classifyCoreLog(payload string) int {
