@@ -5,8 +5,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-
-	core "github.com/metacubex/mihomo/androidcyaml"
 )
 
 // dialProbe attributes a reconnect storm instead of leaving it to be guessed at.
@@ -148,25 +146,30 @@ func (p *dialProbe) report() {
 	emit("dial probe outbounds", outbounds)
 	emit("dial probe addresses", addresses)
 	if dropped != 0 {
-		core.Warnln(
+		capturedCoreLog.record("WARN", fmt.Sprintf(
 			"dial probe: %d entries dropped past the %d cap; the window is incomplete",
 			dropped, dialProbeCapacity,
-		)
+		))
 	}
 }
 
-// emit writes one section, wrapped, with each line saying which part of the
-// whole it carries so a truncated view is never mistaken for the whole.
+// emit writes one section into the captured log, wrapped, with each line saying
+// which part of the whole it carries so a truncated view is never mistaken for
+// the whole.
+//
+// It goes to the capture rather than to mihomo's own stream because the probe
+// is this layer's finding, not the core's, and because the capture is what ends
+// up in the file that survives a restart and can be exported.
 func emit(label string, entries []string) {
 	if len(entries) == 0 {
 		return
 	}
 	for start := 0; start < len(entries); start += dialProbePerLine {
 		end := min(start+dialProbePerLine, len(entries))
-		core.Infoln(
+		capturedCoreLog.record("PROBE", fmt.Sprintf(
 			"%s [%d-%d of %d]: %s",
 			label, start+1, end, len(entries), strings.Join(entries[start:end], " "),
-		)
+		))
 	}
 }
 

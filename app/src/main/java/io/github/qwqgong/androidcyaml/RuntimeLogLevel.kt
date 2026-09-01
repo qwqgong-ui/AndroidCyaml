@@ -9,6 +9,17 @@ enum class RuntimeLogLevel(val wireValue: String) {
     INFO("info"),
     DEBUG("debug");
 
+    /**
+     * Whether this level asks for mihomo's per-connection lines to be retained
+     * in the diagnostics log.
+     *
+     * Those lines are the evidence that names a destination, so raising the log
+     * level is what turns the diagnostics log from "a storm happened" into
+     * "this is what it was dialing". They are also one line per connection,
+     * which is why the quieter levels leave them out.
+     */
+    fun capturesConnections(): Boolean = this == INFO || this == DEBUG
+
     companion object {
         fun fromWireValue(value: String?): RuntimeLogLevel {
             val normalized = value?.trim()?.lowercase(Locale.ROOT) ?: ""

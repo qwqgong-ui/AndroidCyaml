@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -28,6 +29,11 @@ object DiagnosticsSampler {
 
     private var worker: HandlerThread? = null
     private var handler: Handler? = null
+
+    // Handed over between reading the native payload and writing it out, so the
+    // metrics line is assembled and appended before the lines it summarises.
+    private var pendingCoreLog: JSONArray? = null
+    private var pendingCoreLogDropped: Long = 0L
 
     @Synchronized
     fun setEnabled(context: Context, enabled: Boolean) {
@@ -96,6 +102,39 @@ object DiagnosticsSampler {
         detail.append(' ').append(NetworkDiagnostics.sample())
         appendCoreMetrics(detail)
         DiagnosticsLog.append(context, "sample", detail.toString().trim())
+        appendCoreLog(context)
+    }
+
+    /**
+     * Writes mihomo's own lines from this window into the diagnostics log.
+     *
+     * The counters in the sample above say a storm happened; only these lines
+     * say what was dialed, which rule matched and through which outbound. They
+     * live in the core's log stream, which the dashboard shows and then forgets
+     * on restart, so they are copied into the file that rotates and exports.
+     *
+     * Each line is its own record: one `sample` event carrying thousands of
+     * lines would be unreadable, and rotation could then discard a whole window
+     * at once instead of its oldest part.
+     */
+    private fun appendCoreLog(context: Context) {
+        val lines = pendingCoreLog
+        val dropped = pendingCoreLogDropped
+        pendingCoreLog = null
+        pendingCoreLogDropped = 0L
+
+        if (dropped > 0L) {
+            DiagnosticsLog.append(context, "core.dropped", "lines=" + dropped)
+        }
+        if (lines == null) {
+            return
+        }
+        for (index in 0 until lines.length()) {
+            val line = lines.optString(index, "")
+            if (line.isNotEmpty()) {
+                DiagnosticsLog.append(context, "core", line)
+            }
+        }
     }
 
     private fun appendProcessStatus(out: StringBuilder) {
@@ -180,6 +219,8 @@ object DiagnosticsSampler {
             out.append(" core=empty")
             return
         }
+        pendingCoreLog = payload.optJSONArray("coreLog")
+        pendingCoreLogDropped = payload.optLong("coreLogDropped", 0L)
         for (key in metrics.keys().asSequence().sorted()) {
             out.append(' ').append(key).append('=').append(metrics.optLong(key, -1L))
         }

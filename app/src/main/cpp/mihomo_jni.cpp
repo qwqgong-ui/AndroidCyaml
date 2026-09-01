@@ -719,17 +719,12 @@ Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeIsRunning(
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeLog(
+Java_io_github_qwqgong_androidcyaml_MihomoNative_nativeSetLogCapture(
         JNIEnv* env,
         jclass,
-        jboolean warning,
-        jstring message
+        jboolean enabled
 ) {
-    std::string message_value = stringFromJava(env, message);
-    return stringFromNative(env, AndroidCyamlLog(
-            warning == JNI_TRUE ? 1 : 0,
-            const_cast<char*>(message_value.c_str())
-    ));
+    return stringFromNative(env, AndroidCyamlSetLogCapture(enabled == JNI_TRUE ? 1 : 0));
 }
 
 extern "C" JNIEXPORT jstring JNICALL

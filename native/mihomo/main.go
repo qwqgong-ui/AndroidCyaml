@@ -77,10 +77,6 @@ const (
 
 	// ICMP sessions are answered and finished; they do not need a long window.
 	embeddedICMPTimeoutSeconds = 10
-
-	// Marks a log line as this layer's own rather than the core's, so the
-	// warning/error classifier can leave it out of the core buckets.
-	platformLogPrefix = "[android] "
 )
 
 type nativeResponse struct {
@@ -98,6 +94,12 @@ type embeddedOptions struct {
 type diagnosticsSample struct {
 	Metrics     map[string]uint64 `json:"metrics"`
 	Unavailable []string          `json:"unavailable,omitempty"`
+	// CoreLog carries mihomo's own lines since the previous sample, so the
+	// platform's diagnostics log -- the artefact that rotates and can be
+	// exported -- holds the same evidence the dashboard's log view shows and
+	// then forgets.
+	CoreLog        []string `json:"coreLog,omitempty"`
+	CoreLogDropped uint64   `json:"coreLogDropped,omitempty"`
 }
 
 type startPayload struct {
@@ -426,47 +428,14 @@ func AndroidCyamlRuntimeMetrics() *C.char {
 	// would dominate the tally for the rest of the session, which is exactly the
 	// mistake that made an early burst look like steady state.
 	platformDialProbe.reset()
+	capturedLines, capturedDropped := capturedCoreLog.drain()
 	payload, err := json.Marshal(diagnosticsSample{
-		Metrics:     sample,
-		Unavailable: unavailableRuntimeMetrics(),
+		Metrics:        sample,
+		Unavailable:    unavailableRuntimeMetrics(),
+		CoreLog:        capturedLines,
+		CoreLogDropped: capturedDropped,
 	})
 	return respond(payload, err)
-}
-
-// AndroidCyamlLog publishes one platform-side event into mihomo's own log
-// stream, which is what the dashboard's log view reads.
-//
-// Without this the two halves of the runtime are legible only in two different
-// places: the core's dial failures in the log view, and everything Android
-// knows -- the network transitions, the TUN and protect state, the memory and
-// thread counters -- in a separate file reachable only over adb. A question
-// like "did that storm start when the route changed" then needs two exports and
-// a manual merge on their timestamps. Publishing here puts both on one
-// timeline, in the order they actually happened.
-//
-// The severity is the caller's, so a platform warning stays a warning when the
-// log level filters the stream.
-//
-//export AndroidCyamlLog
-func AndroidCyamlLog(warningValue C.int, messageValue *C.char) *C.char {
-	message := C.GoString(messageValue)
-	if message == "" {
-		return respond(nil, nil)
-	}
-	// The prefix is what keeps the core's own counters honest. Every warning on
-	// this stream is classified and tallied as a core warning, and a platform
-	// event is not one -- without a marker, turning log mode on would inflate
-	// coreWarnings with Android's own events and make the bucket counters
-	// describe the wrong thing. pumpCoreLog skips anything carrying it.
-	//
-	// %s, not the message as a format string: the payload carries arbitrary
-	// text, and a stray verb in it must not turn into a formatting artefact.
-	if warningValue != 0 {
-		core.Warnln("%s%s", platformLogPrefix, message)
-	} else {
-		core.Infoln("%s%s", platformLogPrefix, message)
-	}
-	return respond(nil, nil)
 }
 
 // AndroidCyamlSetDiagnostics attaches or detaches the mihomo log classifier.
@@ -476,6 +445,21 @@ func AndroidCyamlLog(warningValue C.int, messageValue *C.char) *C.char {
 //export AndroidCyamlSetDiagnostics
 func AndroidCyamlSetDiagnostics(enabledValue C.int) *C.char {
 	setCoreLogPump(enabledValue != 0)
+	if enabledValue == 0 {
+		capturedCoreLog.reset()
+	}
+	return respond(nil, nil)
+}
+
+// AndroidCyamlSetLogCapture chooses whether mihomo's per-connection INFO lines
+// are retained for the diagnostics log, on top of the warnings and errors that
+// always are. This is the log-mode switch: the connection lines are what name
+// the destination, the matched rule and the outbound, and they are also what
+// would fill the ring during ordinary browsing.
+//
+//export AndroidCyamlSetLogCapture
+func AndroidCyamlSetLogCapture(enabledValue C.int) *C.char {
+	capturedCoreLog.setInfo(enabledValue != 0)
 	return respond(nil, nil)
 }
 
@@ -503,12 +487,18 @@ func pumpCoreLog(events <-chan core.LogEvent) {
 	for event := range events {
 		switch event.LogLevel {
 		case core.LogWarning:
-			if !strings.HasPrefix(event.Payload, platformLogPrefix) {
-				coreLog.observe(true, event.Payload)
-			}
+			coreLog.observe(true, event.Payload)
+			capturedCoreLog.record("WARN", event.Payload)
 		case core.LogError:
-			if !strings.HasPrefix(event.Payload, platformLogPrefix) {
-				coreLog.observe(false, event.Payload)
+			coreLog.observe(false, event.Payload)
+			capturedCoreLog.record("ERROR", event.Payload)
+		default:
+			// Everything else is the per-connection stream. It is the half that
+			// names what was dialed and which rule matched, so it is worth
+			// keeping -- but only when asked, because it is also the half that
+			// would fill the ring during ordinary browsing.
+			if capturedCoreLog.wantsInfo() {
+				capturedCoreLog.record("INFO", event.Payload)
 			}
 		}
 	}

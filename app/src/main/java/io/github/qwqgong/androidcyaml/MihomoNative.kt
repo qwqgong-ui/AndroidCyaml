@@ -120,27 +120,17 @@ object MihomoNative {
     /** One diagnostics sample of Go runtime and mihomo counters. */
     fun runtimeMetrics(): JSONObject? = requireSuccess(nativeRuntimeMetrics())
 
-    /**
-     * Publishes one platform event into mihomo's log stream, so the log view
-     * shows the Android half of the runtime next to the core's own lines.
-     *
-     * Best effort by design: log mode must never be able to fail the operation
-     * it is describing, and this is called from paths that are already handling
-     * a failure of their own.
-     */
-    fun log(warning: Boolean, message: String) {
-        try {
-            nativeLog(warning, message)
-        } catch (ignored: IOException) {
-            // The runtime is not up, or is going down. Nothing to report to.
-        } catch (ignored: LinkageError) {
-            // The native library is not loaded in this process.
-        }
-    }
-
     /** Attaches or detaches the core's warning/error classifier. */
     fun setDiagnostics(enabled: Boolean) {
         requireSuccess(nativeSetDiagnostics(enabled))
+    }
+
+    /**
+     * Chooses whether mihomo's per-connection lines are retained for the
+     * diagnostics log, on top of the warnings and errors that always are.
+     */
+    fun setLogCapture(enabled: Boolean) {
+        requireSuccess(nativeSetLogCapture(enabled))
     }
 
     fun readBrowserRequestBody(bodyId: Long, destination: ByteArray): Int =
@@ -233,7 +223,7 @@ object MihomoNative {
 
     private external fun nativeRuntimeMetrics(): String?
 
-    private external fun nativeLog(warning: Boolean, message: String): String?
+    private external fun nativeSetLogCapture(enabled: Boolean): String?
 
     private external fun nativeSetDiagnostics(enabled: Boolean): String?
 }

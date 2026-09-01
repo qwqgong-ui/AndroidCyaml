@@ -47,6 +47,11 @@ class MihomoRuntime(
             nativeAcceptedDescriptor = true
             MihomoNative.updateIpv6Availability(ipv6Enabled && physicalIpv6Available)
             MihomoNative.setTcpConcurrent(tcpConcurrentEnabled)
+            // The log switch decides how much of the core's own stream is kept
+            // for the diagnostics log. Warnings and errors are always retained;
+            // info and debug additionally keep the per-connection lines, which
+            // are the ones that name the destination and the matched rule.
+            MihomoNative.setLogCapture(settings.logLevel.capturesConnections())
             activeController.setSecret(controllerSecret)
             activeController.awaitReady(90, TimeUnit.SECONDS)
             activeController.awaitTun(10, TimeUnit.SECONDS)
