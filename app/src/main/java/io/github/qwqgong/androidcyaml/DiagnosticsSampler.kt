@@ -2,11 +2,7 @@ package io.github.qwqgong.androidcyaml
 
 import android.app.ActivityManager
 import android.content.Context
-import android.os.Handler
-import android.os.HandlerThread
-import android.os.Process
 import android.util.Log
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -25,128 +21,60 @@ object DiagnosticsSampler {
     private const val TAG = "AndroidCyaml/Diag"
     private const val SAMPLE_INTERVAL_MILLIS = 60_000L
 
-    /** Fits in the 15-character `comm` limit and is unique at that length. */
-    const val SAMPLER_THREAD_NAME = "acy-diag-sample"
-
     // A process has dozens of one-off threads whose names carry nothing. Naming
     // every one of them each minute would bury the pools that actually grow.
     private const val THREAD_CENSUS_FLOOR = 2
     private const val EXIT_HISTORY_LIMIT = 16
     private const val ART_THREAD_PREFIX = "Thread-"
 
-    private var worker: HandlerThread? = null
-    private var handler: Handler? = null
 
     // Handed over between reading the native payload and writing it out, so the
     // metrics line is assembled and appended before the lines it summarises.
-    private var pendingCoreLog: JSONArray? = null
-    private var pendingCoreLogDropped: Long = 0L
 
+    /**
+     * Turns the platform half of log mode on or off.
+     *
+     * This object owns no thread and no clock any more. The log process does --
+     * see [DiagnosticsService] -- because a sampler living beside the runtime it
+     * measures shares that runtime's lifetime, and a core restart or a
+     * low-memory kill is exactly the moment the record has to survive. What is
+     * left here is the part that can only run in the proxy process: switching
+     * the core's log classifier, and building the sample line from this
+     * process's own state.
+     */
     @Synchronized
     fun setEnabled(context: Context, enabled: Boolean) {
+        val application = context.applicationContext
+        DiagnosticsLog.setEnabled(enabled)
+        setCoreDiagnostics(enabled)
         if (enabled) {
-            start(context.applicationContext)
-        } else {
-            stop(context.applicationContext)
-        }
-    }
-
-    @Synchronized
-    fun isRunning(): Boolean = handler != null
-
-    @Synchronized
-    private fun start(context: Context) {
-        if (handler != null) {
-            return
-        }
-        // Names are compared as /proc `comm`, which truncates at 15 characters.
-        // "AndroidCyaml-diagnostics" and "AndroidCyaml-diagnostics-export" both
-        // truncate to "AndroidCyaml-di", so a thread census could not tell them
-        // apart -- which is exactly the question a census gets asked. These fit
-        // inside the limit and stay distinct.
-        val thread = HandlerThread(SAMPLER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND)
-        thread.start()
-        val target = Handler(thread.looper)
-        worker = thread
-        handler = target
-        DiagnosticsLog.setEnabled(true)
-        target.post {
-            setCoreDiagnostics(true)
-            DiagnosticsLog.append(context, "diag.start", "interval=" + SAMPLE_INTERVAL_MILLIS)
+            DiagnosticsLog.append(application, "diag.start", "interval=" + SAMPLE_INTERVAL_MILLIS)
             // Historical exits are the only first-hand evidence of the reported
             // low-memory kills, and they carry the PSS/RSS the process died at.
-            appendExitHistory(context)
-            sample(context)
-            scheduleNext(context, target)
+            appendExitHistory(application)
+            DiagnosticsService.start(application)
+        } else {
+            DiagnosticsLog.append(application, "diag.stop", "")
+            DiagnosticsService.stop(application)
+            DiagnosticsRelay.clear()
         }
     }
 
     @Synchronized
-    private fun stop(context: Context) {
-        val thread = worker ?: return
-        val target = handler
-        // Drop the pending tick first, then hand the closing line to the worker
-        // so no file write lands on the caller's thread. quitSafely still runs
-        // what is already queued.
-        target?.removeCallbacksAndMessages(null)
-        target?.post {
-            DiagnosticsLog.append(context, "diag.stop", "")
-            DiagnosticsLog.setEnabled(false)
-            setCoreDiagnostics(false)
-        }
-        thread.quitSafely()
-        worker = null
-        handler = null
-    }
+    fun isRunning(): Boolean = DiagnosticsLog.isEnabled()
 
-    private fun scheduleNext(context: Context, target: Handler) {
-        target.postDelayed({
-            sample(context)
-            scheduleNext(context, target)
-        }, SAMPLE_INTERVAL_MILLIS)
-    }
-
-    private fun sample(context: Context) {
+    /**
+     * Builds one sample line without writing it. The log process asks for this
+     * over binder and decides where it lands.
+     */
+    fun describe(context: Context): String {
         val detail = StringBuilder(320)
         appendProcessStatus(detail)
         appendJavaHeap(detail)
         appendThreadCensus(detail)
         detail.append(' ').append(NetworkDiagnostics.sample())
         appendCoreMetrics(detail)
-        DiagnosticsLog.append(context, "sample", detail.toString().trim())
-        appendCoreLog(context)
-    }
-
-    /**
-     * Writes mihomo's own lines from this window into the diagnostics log.
-     *
-     * The counters in the sample above say a storm happened; only these lines
-     * say what was dialed, which rule matched and through which outbound. They
-     * live in the core's log stream, which the dashboard shows and then forgets
-     * on restart, so they are copied into the file that rotates and exports.
-     *
-     * Each line is its own record: one `sample` event carrying thousands of
-     * lines would be unreadable, and rotation could then discard a whole window
-     * at once instead of its oldest part.
-     */
-    private fun appendCoreLog(context: Context) {
-        val lines = pendingCoreLog
-        val dropped = pendingCoreLogDropped
-        pendingCoreLog = null
-        pendingCoreLogDropped = 0L
-
-        if (dropped > 0L) {
-            DiagnosticsLog.append(context, "core.dropped", "lines=" + dropped)
-        }
-        if (lines == null) {
-            return
-        }
-        for (index in 0 until lines.length()) {
-            val line = lines.optString(index, "")
-            if (line.isNotEmpty()) {
-                DiagnosticsLog.append(context, "core", line)
-            }
-        }
+        return detail.toString().trim()
     }
 
     private fun appendProcessStatus(out: StringBuilder) {
@@ -268,8 +196,6 @@ object DiagnosticsSampler {
             out.append(" core=empty")
             return
         }
-        pendingCoreLog = payload.optJSONArray("coreLog")
-        pendingCoreLogDropped = payload.optLong("coreLogDropped", 0L)
         for (key in metrics.keys().asSequence().sorted()) {
             out.append(' ').append(key).append('=').append(metrics.optLong(key, -1L))
         }

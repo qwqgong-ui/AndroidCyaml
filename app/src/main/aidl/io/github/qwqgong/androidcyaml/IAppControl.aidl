@@ -16,6 +16,7 @@ interface IAppControl {
             String target,
             IOperationCallback callback
     );
+    void captureDiagnostics(IOperationCallback callback);
     void setRuntimeOverrides(
             String processMatchingMode,
             boolean ipv6Enabled,

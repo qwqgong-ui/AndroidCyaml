@@ -9,7 +9,12 @@ class AndroidCyamlApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        if (isServiceProcess()) {
+        if (ProcessRole.isLogProcess(this)) {
+            // The log process owns the file and the schedule, and nothing else.
+            // DiagnosticsService drives it; there is no runtime here to sample
+            // directly and no WebView to configure.
+            DiagnosticsLog.setEnabled(UiPreferences(this).diagnosticsEnabled())
+        } else if (isServiceProcess()) {
             // WebView is not created unless the XHTTP WebView override is
             // enabled. Do not call WebView.disableWebView(): that API is
             // irreversible for the lifetime of this VPN process.
@@ -17,7 +22,10 @@ class AndroidCyamlApplication : Application() {
             // Restore log mode across process restarts. That is exactly when
             // the interesting evidence exists: a low-memory kill has just
             // happened and its exit record is waiting to be read.
-            DiagnosticsSampler.setEnabled(this, UiPreferences(this).diagnosticsEnabled())
+            DiagnosticsLog.setEnabled(UiPreferences(this).diagnosticsEnabled())
+            if (DiagnosticsLog.isEnabled()) {
+                DiagnosticsService.start(this)
+            }
         } else {
             // Dashboard and Browser Dialer may coexist in different app
             // processes. Chromium requires a separate data directory for each.

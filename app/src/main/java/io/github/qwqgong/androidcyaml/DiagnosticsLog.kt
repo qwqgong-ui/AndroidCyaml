@@ -22,6 +22,13 @@ import java.nio.charset.StandardCharsets
  * Lines are `key=value` and hold aggregate counters only. This file is meant to
  * be exported and shared, so nothing that identifies a destination, a network,
  * or a peer belongs in it.
+ *
+ * Only the log process writes the file. Two 2 MiB generations rotating under two
+ * writers is not a file that survives: appends interleave mid-line, and both
+ * processes can rotate at once and drop a generation the other was still using.
+ * Callers in the proxy and UI processes hand their lines to [DiagnosticsRelay]
+ * instead, and the log process collects them. `append` is the same call
+ * everywhere; where the line lands is decided here, once.
  */
 object DiagnosticsLog {
     private const val TAG = "AndroidCyaml/Diag"
@@ -55,7 +62,29 @@ object DiagnosticsLog {
         if (detail.isNotEmpty()) {
             line.append(' ').append(detail)
         }
-        write(context, line.toString())
+        record(context, line.toString())
+    }
+
+    /**
+     * Writes a line that was produced elsewhere and already carries its own
+     * clocks. Used by the log process for everything it collected over binder,
+     * whose timestamps belong to the moment the event happened rather than the
+     * moment it was drained.
+     */
+    fun appendVerbatim(context: Context, line: String) {
+        if (!enabled || line.isEmpty()) {
+            return
+        }
+        record(context, line)
+    }
+
+    private fun record(context: Context, line: String) {
+        if (ProcessRole.isLogProcess(context)) {
+            write(context, line)
+        } else {
+            Log.i(TAG, line)
+            DiagnosticsRelay.record(line)
+        }
     }
 
     /** Copies the retained generations, oldest first, into [destination]. */

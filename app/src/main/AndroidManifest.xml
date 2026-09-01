@@ -51,6 +51,17 @@
             android:name=".AppControlService"
             android:exported="false" />
 
+        <!--
+            The log runs in its own process so its lifetime is not the VPN's.
+            The evidence worth having is what a core restart or a low-memory
+            kill leaves behind, and a logger that dies with the thing it is
+            recording cannot hold it.
+        -->
+        <service
+            android:name=".DiagnosticsService"
+            android:exported="false"
+            android:process=":log" />
+
         <service
             android:name=".VpnTileService"
             android:exported="true"

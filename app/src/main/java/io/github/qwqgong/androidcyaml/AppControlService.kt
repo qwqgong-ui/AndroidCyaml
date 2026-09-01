@@ -65,6 +65,15 @@ class AppControlService : Service(), RuntimeStateBus.Listener {
             }
         }
 
+        override fun captureDiagnostics(callback: IOperationCallback?) {
+            enforceSameAppCaller()
+            // Assembled on the caller's binder thread on purpose: it is a read
+            // of counters the runtime already maintains plus two buffer drains,
+            // and routing it through the coordinator would put a minute-by-
+            // minute logging concern in the queue that serialises config work.
+            complete(callback, true, DiagnosticsCapture.collect(this@AppControlService))
+        }
+
         override fun setRuntimeOverrides(
             processMatchingMode: String?,
             ipv6Enabled: Boolean,
