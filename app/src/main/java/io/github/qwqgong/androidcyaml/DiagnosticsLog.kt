@@ -55,7 +55,12 @@ object DiagnosticsLog {
         if (detail.isNotEmpty()) {
             line.append(' ').append(detail)
         }
-        write(context, line.toString())
+        val rendered = line.toString()
+        write(context, rendered)
+        // The same event also goes to the core's log stream, so the log view is
+        // one timeline instead of two files that have to be merged by hand. The
+        // file keeps the full record for export; this is the live view.
+        MihomoNative.log(event.endsWith(".failed") || event.startsWith("warn"), rendered)
     }
 
     /** Copies the retained generations, oldest first, into [destination]. */

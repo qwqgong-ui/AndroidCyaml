@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
+
+	core "github.com/metacubex/mihomo/androidcyaml"
 )
 
 // dialProbe attributes a reconnect storm instead of leaving it to be guessed at.
@@ -22,8 +25,9 @@ import (
 //
 // PRIVACY: unlike the bucket counters, this records destinations. It is
 // populated only while diagnostics sampling is on -- an explicit, user-facing
-// toggle -- and only the top few entries are ever emitted. Anyone exporting a
-// diagnostics log with sampling enabled is exporting the hosts that failed.
+// toggle -- and reported only to the core log, which the log-level switch
+// already governs. It is deliberately kept out of the diagnostics metrics line,
+// because that file is the one meant to be exported and shared.
 type dialProbe struct {
 	mu        sync.Mutex
 	failures  map[string]uint64
@@ -38,9 +42,10 @@ const (
 	// one-off destinations grow without bound.
 	dialProbeCapacity = 512
 
-	// How many entries reach a diagnostics sample. A storm is concentrated by
-	// definition: if the top few do not show it, the tally is not the problem.
-	dialProbeReported = 6
+	// Entries per log line. The window is reported in full -- a truncated view
+	// is what made two earlier attributions wrong -- so this only decides how
+	// the full list is wrapped, not how much of it survives.
+	dialProbePerLine = 8
 )
 
 var platformDialProbe = newDialProbe()
@@ -98,19 +103,71 @@ func (p *dialProbe) bump(into map[string]uint64, key string) {
 	into[key]++
 }
 
-// counters reports the busiest entries. Keys carry the destination itself so the
-// existing sampler, which renders every metric as `key=value`, needs no change.
+// counters reports only the shape of the window. The destinations themselves go
+// to the log instead -- see report.
 func (p *dialProbe) counters(into map[string]uint64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	top(into, "dialFailDst.", p.failures)
-	top(into, "dialFailRule.", p.rules)
-	top(into, "dialFailOut.", p.outbounds)
-	top(into, "dialAddr.", p.addresses)
 	into["dialProbeDistinct"] = uint64(len(p.failures))
 	into["dialProbeAddresses"] = uint64(len(p.addresses))
 	into["dialProbeDropped"] = p.dropped
+}
+
+// report writes the window to mihomo's own log, in full.
+//
+// The destinations belong here rather than in the diagnostics metrics line for
+// two reasons. They are text, and that line is numeric -- carrying them as
+// synthetic `key=value` names worked but made every destination a permanent
+// column in a file meant for counters. And the log already has the control this
+// question needs: the log-level switch decides whether any of it is emitted.
+//
+// Every entry the window collected is reported, wrapped across lines. A ranked
+// excerpt is what produced two wrong attributions before this existed: the
+// address that explains a storm is not reliably in the top few, and the long
+// tail is what tells a P2P peer list apart from a single dead CDN. Bounding
+// happens once, at the capacity cap, and how much was lost to it is stated.
+//
+// Nothing is logged for a quiet window, so leaving the level raised does not
+// turn into a stream of empty lines.
+func (p *dialProbe) report() {
+	p.mu.Lock()
+	failures := ranked(p.failures)
+	rules := ranked(p.rules)
+	outbounds := ranked(p.outbounds)
+	addresses := ranked(p.addresses)
+	dropped := p.dropped
+	p.mu.Unlock()
+
+	if len(failures) == 0 && len(addresses) == 0 {
+		return
+	}
+
+	emit("dial probe failures", failures)
+	emit("dial probe rules", rules)
+	emit("dial probe outbounds", outbounds)
+	emit("dial probe addresses", addresses)
+	if dropped != 0 {
+		core.Warnln(
+			"dial probe: %d entries dropped past the %d cap; the window is incomplete",
+			dropped, dialProbeCapacity,
+		)
+	}
+}
+
+// emit writes one section, wrapped, with each line saying which part of the
+// whole it carries so a truncated view is never mistaken for the whole.
+func emit(label string, entries []string) {
+	if len(entries) == 0 {
+		return
+	}
+	for start := 0; start < len(entries); start += dialProbePerLine {
+		end := min(start+dialProbePerLine, len(entries))
+		core.Infoln(
+			"%s [%d-%d of %d]: %s",
+			label, start+1, end, len(entries), strings.Join(entries[start:end], " "),
+		)
+	}
 }
 
 // reset clears the tally, so each diagnostics window is attributable on its own
@@ -125,9 +182,11 @@ func (p *dialProbe) reset() {
 	p.dropped = 0
 }
 
-func top(into map[string]uint64, prefix string, from map[string]uint64) {
+// ranked renders every entry as `name=count`, busiest first. Nothing is
+// dropped here; the only bound on the window is the capacity cap.
+func ranked(from map[string]uint64) []string {
 	if len(from) == 0 {
-		return
+		return nil
 	}
 	keys := make([]string, 0, len(from))
 	for key := range from {
@@ -139,12 +198,11 @@ func top(into map[string]uint64, prefix string, from map[string]uint64) {
 		}
 		return keys[a] < keys[b]
 	})
-	if len(keys) > dialProbeReported {
-		keys = keys[:dialProbeReported]
-	}
+	entries := make([]string, 0, len(keys))
 	for _, key := range keys {
-		into[prefix+sanitizeMetricKey(key)] = from[key]
+		entries = append(entries, fmt.Sprintf("%s=%d", sanitizeEntry(key), from[key]))
 	}
+	return entries
 }
 
 // between returns the text between the first open and the next close after it.
@@ -161,9 +219,10 @@ func between(payload, open, close string) string {
 	return strings.TrimSpace(payload[start : start+end])
 }
 
-// sanitizeMetricKey keeps a destination readable while making sure it cannot
-// break the `key=value` shape the diagnostics line is parsed with.
-func sanitizeMetricKey(key string) string {
+// sanitizeEntry keeps a destination readable while making sure it cannot break
+// the `name=count` shape the log line is read with, or run to an unbounded
+// length because something upstream put an unexpected string in the payload.
+func sanitizeEntry(key string) string {
 	replaced := strings.Map(func(r rune) rune {
 		switch {
 		case r == ' ', r == '=', r == '\n', r == '\r', r == '\t':

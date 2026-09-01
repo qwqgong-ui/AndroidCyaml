@@ -77,6 +77,10 @@ const (
 
 	// ICMP sessions are answered and finished; they do not need a long window.
 	embeddedICMPTimeoutSeconds = 10
+
+	// Marks a log line as this layer's own rather than the core's, so the
+	// warning/error classifier can leave it out of the core buckets.
+	platformLogPrefix = "[android] "
 )
 
 type nativeResponse struct {
@@ -415,6 +419,9 @@ func AndroidCyamlRuntimeMetrics() *C.char {
 	sample["processLookupMisses"] = processLookupMisses.Load()
 	coreLog.counters(sample)
 	platformDialProbe.counters(sample)
+	// The attribution goes to the core log in full, where the log-level switch
+	// controls it; only the window's shape stays in the metrics line.
+	platformDialProbe.report()
 	// Each sample owns its own window. Without this the first burst after start
 	// would dominate the tally for the rest of the session, which is exactly the
 	// mistake that made an early burst look like steady state.
@@ -424,6 +431,42 @@ func AndroidCyamlRuntimeMetrics() *C.char {
 		Unavailable: unavailableRuntimeMetrics(),
 	})
 	return respond(payload, err)
+}
+
+// AndroidCyamlLog publishes one platform-side event into mihomo's own log
+// stream, which is what the dashboard's log view reads.
+//
+// Without this the two halves of the runtime are legible only in two different
+// places: the core's dial failures in the log view, and everything Android
+// knows -- the network transitions, the TUN and protect state, the memory and
+// thread counters -- in a separate file reachable only over adb. A question
+// like "did that storm start when the route changed" then needs two exports and
+// a manual merge on their timestamps. Publishing here puts both on one
+// timeline, in the order they actually happened.
+//
+// The severity is the caller's, so a platform warning stays a warning when the
+// log level filters the stream.
+//
+//export AndroidCyamlLog
+func AndroidCyamlLog(warningValue C.int, messageValue *C.char) *C.char {
+	message := C.GoString(messageValue)
+	if message == "" {
+		return respond(nil, nil)
+	}
+	// The prefix is what keeps the core's own counters honest. Every warning on
+	// this stream is classified and tallied as a core warning, and a platform
+	// event is not one -- without a marker, turning log mode on would inflate
+	// coreWarnings with Android's own events and make the bucket counters
+	// describe the wrong thing. pumpCoreLog skips anything carrying it.
+	//
+	// %s, not the message as a format string: the payload carries arbitrary
+	// text, and a stray verb in it must not turn into a formatting artefact.
+	if warningValue != 0 {
+		core.Warnln("%s%s", platformLogPrefix, message)
+	} else {
+		core.Infoln("%s%s", platformLogPrefix, message)
+	}
+	return respond(nil, nil)
 }
 
 // AndroidCyamlSetDiagnostics attaches or detaches the mihomo log classifier.
@@ -460,9 +503,13 @@ func pumpCoreLog(events <-chan core.LogEvent) {
 	for event := range events {
 		switch event.LogLevel {
 		case core.LogWarning:
-			coreLog.observe(true, event.Payload)
+			if !strings.HasPrefix(event.Payload, platformLogPrefix) {
+				coreLog.observe(true, event.Payload)
+			}
 		case core.LogError:
-			coreLog.observe(false, event.Payload)
+			if !strings.HasPrefix(event.Payload, platformLogPrefix) {
+				coreLog.observe(false, event.Payload)
+			}
 		}
 	}
 }
