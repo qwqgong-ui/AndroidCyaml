@@ -421,14 +421,6 @@ func AndroidCyamlRuntimeMetrics() *C.char {
 	sample["processLookupCalls"] = processLookupCalls.Load()
 	sample["processLookupMisses"] = processLookupMisses.Load()
 	coreLog.counters(sample)
-	platformDialProbe.counters(sample)
-	// The attribution goes to the core log in full, where the log-level switch
-	// controls it; only the window's shape stays in the metrics line.
-	platformDialProbe.report()
-	// Each sample owns its own window. Without this the first burst after start
-	// would dominate the tally for the rest of the session, which is exactly the
-	// mistake that made an early burst look like steady state.
-	platformDialProbe.reset()
 	capturedLines, capturedDropped := capturedCoreLog.drain()
 	payload, err := json.Marshal(diagnosticsSample{
 		Metrics:        sample,
@@ -723,7 +715,6 @@ func ipv4Addresses(values []netip.Addr) []netip.Addr {
 func installPlatformHooks() {
 	core.SetSocketHook(func(network, address string, connection syscall.RawConn) error {
 		dialHookCalls.Add(1)
-		platformDialProbe.observeAddress(address)
 		// A failed protect deliberately does not fail the dial.
 		//
 		// Failing it looked safer and was worse. Under load the protect path is
