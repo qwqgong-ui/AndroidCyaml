@@ -1,3 +1,65 @@
+# AndroidCyaml v1.0.48 发布说明
+
+## socket protect 回到 JNI，并给回调本身加上限
+
+v1.0.38 把拨号热路径移出 JNI：Go 侧用 `SCM_RIGHTS` 把 socket fd 经 unix socket
+交给 Java，由上限 8 个 worker 的线程池执行 `protect()`。目标是压住 OS thread 高
+水位，选中的代理指标是"避免跨语言调用"。
+
+这条路径没有准入控制。真机实测：某 CDN 域名的两条 A 记录同时被拨，`SYN-SENT` 里
+一次堆出 470 个半开 socket；数百个并发拨号打爆 endpoint 的 listen backlog，Go 侧
+只重试 3 次、退避 1ms+2ms（合计约 3ms）就判定传输失败，随后回退到 JNI 回调——而
+**当时唯一挂着并发上限的恰恰只有那条回退路径**。诊断计数印证了这一点：
+
+```
+protectTransportErrors = protectJniFallbacks = protectJniCalls = 5456
+```
+
+三者完全相等，即整条链路被走满 5456 次。
+
+真正需要约束的量是**同时进入 cgo 的调用数**——goroutine 阻塞在 cgo 期间独占其 OS
+thread，限住并发即封顶线程数。这个机制本版本库早就有（`callbackLimiter`），只是没
+用在主路径上。把上限加在回调本身之后，当初促使引入 unix socket 的问题即被解决，该
+传输层随之成为多余：
+
+- 移除 unix socket endpoint、`SocketProtectService` 与 JNI 侧的 endpoint 参数；
+- `protect` 恢复为「取许可 → JNI 直调 → 计数」，`maxConcurrentPlatformCallbacks`
+  由 16 收敛为 **8**，进程归属查询共享同一枚信号量；
+- 净删 611 行，protect 路径的状态空间从十余个分支收敛到 3 个。
+
+ClashMetaForAndroid 与 FlClash 采用的正是这一结构：一枚信号量加一次直接上调。
+
+## protect 失败不再让拨号失败
+
+原实现把 protect 失败转成拨号错误。高压下最先饱和的正是 protect，于是饱和 → 拨号
+失败 → mihomo 重试 → 上层客户端重试 → 更多 protect 请求灌回已饱和的地方，形成拥塞
+崩溃。这是一次慢速抖动演变成数千个半开 socket 的放大器。
+
+本版与两个参考实现对齐：protect 的裁决只被计数，不改变拨号成败。未被 protect 的
+socket 不会静默走错——它绕回 TUN 后被 loopback 检查拒绝，失败依然可见，只是表现为
+一条连接失败，而不是一个正反馈环。
+
+## 诊断字段变化
+
+读日志的话注意字段增删：
+
+- 移除 `protectJniCalls`、`protectJniRejections`、`protectJniFallbacks`、
+  `protectTransportErrors`；
+- 保留 `protectAttempts`，新增 `protectRejections`；
+- 运行状态行的 `protect unix socket` / `protect JNI 回退` 统一为 `protect JNI`。
+
+## 构建
+
+`scripts/build_mihomo.sh` 的 NDK host 探测此前只接受 Linux 与 Darwin，Windows 上
+直接退出。本版补上 `MINGW*|MSYS*|CYGWIN*` 分支，NDK 自带的 windows-x86_64 工具链
+Go 可直接驱动，无需其他改动。
+
+## 实测状态
+
+本版的线程与内存对比数据尚未在设备上验证。改动前的基线为：`protectTransportErrors`
+6456、goroutine 峰值 1748、`AndroidCyaml-pr` 线程 9 个（8 worker + 1 accept）。修复
+生效后前两项应显著回落，`AndroidCyaml-pr` 线程应完全消失。
+
 # AndroidCyaml v1.0.42 发布说明
 
 ## 系统默认切网与可观测状态
