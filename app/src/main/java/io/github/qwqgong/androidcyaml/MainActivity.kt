@@ -481,7 +481,7 @@ class MainActivity :
                 getString(R.string.diagnostics_export_failed, Exceptions.usefulMessage(failure))
             }
             runOnUiThread { showToast(outcome) }
-        }, "AndroidCyaml-diagnostics-export")
+        }, "acy-diag-export")
         worker.isDaemon = true
         worker.start()
     }

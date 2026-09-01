@@ -24,6 +24,13 @@ import java.io.IOException
 object DiagnosticsSampler {
     private const val TAG = "AndroidCyaml/Diag"
     private const val SAMPLE_INTERVAL_MILLIS = 60_000L
+
+    /** Fits in the 15-character `comm` limit and is unique at that length. */
+    const val SAMPLER_THREAD_NAME = "acy-diag-sample"
+
+    // A process has dozens of one-off threads whose names carry nothing. Naming
+    // every one of them each minute would bury the pools that actually grow.
+    private const val THREAD_CENSUS_FLOOR = 2
     private const val EXIT_HISTORY_LIMIT = 16
     private const val ART_THREAD_PREFIX = "Thread-"
 
@@ -52,7 +59,12 @@ object DiagnosticsSampler {
         if (handler != null) {
             return
         }
-        val thread = HandlerThread("AndroidCyaml-diagnostics", Process.THREAD_PRIORITY_BACKGROUND)
+        // Names are compared as /proc `comm`, which truncates at 15 characters.
+        // "AndroidCyaml-diagnostics" and "AndroidCyaml-diagnostics-export" both
+        // truncate to "AndroidCyaml-di", so a thread census could not tell them
+        // apart -- which is exactly the question a census gets asked. These fit
+        // inside the limit and stay distinct.
+        val thread = HandlerThread(SAMPLER_THREAD_NAME, Process.THREAD_PRIORITY_BACKGROUND)
         thread.start()
         val target = Handler(thread.looper)
         worker = thread
@@ -98,7 +110,7 @@ object DiagnosticsSampler {
         val detail = StringBuilder(320)
         appendProcessStatus(detail)
         appendJavaHeap(detail)
-        appendArtAttachFloor(detail)
+        appendThreadCensus(detail)
         detail.append(' ').append(NetworkDiagnostics.sample())
         appendCoreMetrics(detail)
         DiagnosticsLog.append(context, "sample", detail.toString().trim())
@@ -171,26 +183,63 @@ object DiagnosticsSampler {
      * invisible here, which makes it a floor rather than an attach count -- it
      * answers "are attaches still happening", not "how many".
      */
-    private fun appendArtAttachFloor(out: StringBuilder) {
+    /**
+     * Reports the ART attach high-water mark and a census of thread names, from
+     * one walk of `/proc/self/task`.
+     *
+     * The census exists because `threads=N` says the count went up and nothing
+     * else. Answering "which ones" then meant reading `comm` over adb and
+     * guessing, and `comm` truncates at 15 characters, so names that share a
+     * prefix are indistinguishable from outside. Counting them here, by the same
+     * truncated name the kernel reports, makes a growing pool name itself.
+     *
+     * ART's own `Thread-N` workers are folded into one entry: they are already
+     * summarised by the attach floor, and listing them individually would be
+     * thousands of entries describing one thing.
+     */
+    private fun appendThreadCensus(out: StringBuilder) {
         var highest = -1
+        val census = HashMap<String, Int>(32)
         try {
             val tasks = File("/proc/self/task").listFiles()
             if (tasks != null) {
                 for (task in tasks) {
-                    val name = File(task, "comm").readText().trim()
-                    if (!name.startsWith(ART_THREAD_PREFIX)) {
+                    val name = try {
+                        File(task, "comm").readText().trim()
+                    } catch (ignored: IOException) {
+                        // The thread exited between listing and reading.
                         continue
                     }
-                    val ordinal = name.removePrefix(ART_THREAD_PREFIX).toIntOrNull() ?: continue
-                    if (ordinal > highest) {
-                        highest = ordinal
+                    if (name.isEmpty()) {
+                        continue
                     }
+                    if (name.startsWith(ART_THREAD_PREFIX)) {
+                        val ordinal = name.removePrefix(ART_THREAD_PREFIX).toIntOrNull()
+                        if (ordinal != null) {
+                            if (ordinal > highest) {
+                                highest = ordinal
+                            }
+                            census[ART_THREAD_PREFIX + "N"] =
+                                (census[ART_THREAD_PREFIX + "N"] ?: 0) + 1
+                            continue
+                        }
+                    }
+                    census[name] = (census[name] ?: 0) + 1
                 }
             }
         } catch (failure: IOException) {
-            Log.d(TAG, "Unable to read the ART attach floor", failure)
+            Log.d(TAG, "Unable to read the thread census", failure)
         }
         out.append(" artAttachFloor=").append(highest)
+        for (entry in census.entries.sortedWith(
+            compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key },
+        )) {
+            if (entry.value < THREAD_CENSUS_FLOOR) {
+                continue
+            }
+            out.append(" thread.").append(entry.key.replace(' ', '_'))
+                .append('=').append(entry.value)
+        }
     }
 
     /** Nothing subscribes to the core's log fan-out unless diagnostics is on. */
