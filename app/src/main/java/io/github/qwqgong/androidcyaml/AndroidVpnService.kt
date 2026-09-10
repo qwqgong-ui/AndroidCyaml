@@ -51,6 +51,7 @@ class AndroidVpnService :
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
+        Log.i(TAG, "Start command action=$action flags=$flags id=$startId")
         updateManagedMode()
         if (ACTION_STOP == action) {
             if (sharedAlwaysOn) {
@@ -61,12 +62,15 @@ class AndroidVpnService :
             return START_NOT_STICKY
         }
 
+        setConnectionRequested(true)
+        return startRequestedVpn(intent?.getBooleanExtra(EXTRA_FOREGROUND_START, false) == true)
+    }
+
+    private fun startRequestedVpn(foregroundStart: Boolean): Int {
         commandGeneration++
         retryHandler.removeCallbacks(retryStart)
         stopping = false
         try {
-            val foregroundStart =
-                intent != null && intent.getBooleanExtra(EXTRA_FOREGROUND_START, false)
             enterForeground(
                 buildNotification(getString(R.string.vpn_starting)),
                 foregroundServiceTypes(
@@ -103,7 +107,23 @@ class AndroidVpnService :
         // Removing an activity task is not a VPN stop command. Keep the
         // existing foreground service and TUN; do not restart a healthy core.
         Log.i(TAG, "UI task removed; VPN foregroundActive=$foregroundActive stopping=$stopping")
+        val requested = VpnConnectionRequest.isRequested(this)
+        if (shouldRecoverRemovedTask(requested, stopping, foregroundActive)) {
+            // Some OEMs recreate the sticky service only to deliver this queued
+            // callback, without onStartCommand. Restore the requested session
+            // in that fresh instance; never disturb an already-running core.
+            Log.i(TAG, "Recovering requested VPN after task-only service recreation")
+            startRequestedVpn(false)
+        }
         super.onTaskRemoved(rootIntent)
+    }
+
+    private fun setConnectionRequested(requested: Boolean) {
+        // Persist before returning to Android: the OEM may kill this process
+        // immediately after task removal, before an asynchronous write finishes.
+        if (!VpnConnectionRequest.setRequested(this, requested)) {
+            Log.e(TAG, "Unable to persist VPN connection request")
+        }
     }
 
     override fun onDestroy() {
@@ -166,6 +186,7 @@ class AndroidVpnService :
     }
 
     private fun requestStop() {
+        setConnectionRequested(false)
         if (stopping) {
             return
         }
@@ -204,6 +225,11 @@ class AndroidVpnService :
             NotificationManager.IMPORTANCE_LOW,
         )
         channel.description = getString(R.string.vpn_notification_channel_description)
+        channel.setSound(null, null)
+        channel.enableVibration(false)
+        channel.enableLights(false)
+        channel.setShowBadge(false)
+        channel.lockscreenVisibility = Notification.VISIBILITY_SECRET
         manager.createNotificationChannel(channel)
     }
 
@@ -216,6 +242,8 @@ class AndroidVpnService :
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOnlyAlertOnce(true)
+            .setVisibility(Notification.VISIBILITY_SECRET)
+            .setShowWhen(false)
         if (!sharedAlwaysOn) {
             val stop = PendingIntent.getService(
                 this,
@@ -231,7 +259,9 @@ class AndroidVpnService :
                 ).build(),
             )
         }
-        return builder.build()
+        return builder.build().apply {
+            flags = flags or Notification.FLAG_NO_CLEAR
+        }
     }
 
     private fun updateNotification(text: String) {
@@ -276,6 +306,12 @@ class AndroidVpnService :
             PackageManager.PERMISSION_GRANTED
 
     companion object {
+        internal fun shouldRecoverRemovedTask(
+            requested: Boolean,
+            stopping: Boolean,
+            foregroundActive: Boolean,
+        ): Boolean = requested && !stopping && !foregroundActive
+
         const val ACTION_START = "io.github.qwqgong.androidcyaml.action.START_VPN"
         const val ACTION_STOP = "io.github.qwqgong.androidcyaml.action.STOP_VPN"
         const val EXTRA_FOREGROUND_START =
