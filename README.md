@@ -194,7 +194,7 @@ resolver 已经连包名一起返回，核心因此不再多做一次必然失�
 
 ### XHTTP System WebView
 
-开启 XHTTP WebView 后，TLS、HTTP/2 请求头、连接复用和网络侧浏览器特征由默认 VPN 进程中的隐藏
+开启 XHTTP WebView 后，TLS、HTTP/2 请求头、连接复用和网络侧浏览器特征由独立 `:vpn` 进程中的隐藏
 System WebView 产生，mihomo 继续负责 XHTTP 帧、session 和模式选择。启动时会实际检测
 `ReadableStream` 请求体与 Fetch `duplex: "half"`；支持时保留显式 `stream-up`，通过独立 download
 GET 与流式 upload 请求运行。上传正文使用异步 pull/回调桥接，等待 Go 流数据时不会阻塞 WebView 的
@@ -295,18 +295,18 @@ IP 时，连接面板显示 IP 属于正常结果。
 - 支持系统“始终开启 VPN”和锁定模式；
 - 普通模式可从通知停止 VPN；
 - 系统托管时，应用内停止入口会提示前往系统 VPN 设置；
-- UI 或 WebView 被回收不会停止默认进程中的 VPN 与 mihomo。
+- VPN 与控制服务同处专用 `:vpn` 进程，该进程不承载 Activity；UI 或 WebView 的销毁不调用核心停止。
 
-始终开启模式下，核心启动或重建失败会保留 VPN 前台服务，并按 2 秒起步、最长 60 秒的退避间隔
-重试；撤销 VPN 授权或销毁服务会取消重试。普通模式仍会报告失败并停止。
+普通和始终开启模式下，核心启动或重建失败都会保留 VPN 前台服务，并按 2 秒起步、最长 60 秒的退避间隔
+重试；显式停止、撤销 VPN 授权或销毁服务会取消重试。划掉任务卡片不触发核心停止或重建。
 系统“禁止无 VPN 连接”负责断线时阻止直连，不代表核心不会被厂商清理。realme 等设备还需要在
 系统应用管理中允许后台运行，并检查电池限制；普通应用不能自行强制开启这些系统设置。
 
 ## Android 17 内存限制
 
-VPN、TUN 和 mihomo 保留在默认前台服务进程。可见的 Dashboard WebView 位于可回收的 `:ui` 进程；
+VPN、TUN 和 mihomo 保留在专用 `:vpn` 前台服务进程。可见的 Dashboard WebView 位于可回收的 `:ui` 进程；
 UI 进入后台后解除绑定、销毁该 WebView 并结束独立 UI 进程，再次打开时冷启动 Dashboard，不影响
-VPN。开启 XHTTP WebView 时，默认 VPN 进程还会持有按精确端点隔离的隐藏传输 WebView，空闲时最多
+VPN。开启 XHTTP WebView 时，独立 `:vpn` 进程还会持有按精确端点隔离的隐藏传输 WebView，空闲时最多
 保留四个；它们跟随 `AndroidVpnService` / mihomo 生命周期，并使用进程级 `ProxyController`
 override，不会影响 `:ui` 进程中的 Dashboard WebView。关闭 XHTTP WebView 时不会创建这套隐藏
 WebView。

@@ -26,7 +26,7 @@ class AndroidCyamlApplication : Application() {
             if (DiagnosticsLog.isEnabled()) {
                 DiagnosticsService.start(this)
             }
-        } else {
+        } else if (ProcessRole.isUiProcess(this)) {
             // Dashboard and Browser Dialer may coexist in different app
             // processes. Chromium requires a separate data directory for each.
             WebView.setDataDirectorySuffix("ui")
@@ -53,5 +53,5 @@ class AndroidCyamlApplication : Application() {
         super.onLowMemory()
     }
 
-    private fun isServiceProcess(): Boolean = packageName == getProcessName()
+    private fun isServiceProcess(): Boolean = ProcessRole.isProxyProcess(this)
 }

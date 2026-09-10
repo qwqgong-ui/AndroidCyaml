@@ -63,9 +63,9 @@ class QuickActionActivity : Activity() {
     }
 
     private fun requestStop() {
-        if (AndroidVpnService.isAlwaysOnMode()) {
-            toast(getString(R.string.vpn_always_on_controlled))
-        } else if (!VpnQuickActions.stopService(this)) {
+        // The VPN service owns always-on state in another process and enforces
+        // it when handling this command. Static fields here are not its state.
+        if (!VpnQuickActions.stopService(this)) {
             toast(getString(R.string.quick_action_failed))
         }
         finish()

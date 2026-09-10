@@ -33,7 +33,7 @@ class AndroidVpnService :
     private var retryDelayMillis = 2_000L
     private val retryStart = Runnable {
         updateManagedMode()
-        if (!stopping && foregroundActive && sharedAlwaysOn) {
+        if (!stopping && foregroundActive) {
             commandGeneration++
             startCore()
         }
@@ -99,6 +99,13 @@ class AndroidVpnService :
         super.onRevoke()
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Removing an activity task is not a VPN stop command. Keep the
+        // existing foreground service and TUN; do not restart a healthy core.
+        Log.i(TAG, "UI task removed; VPN foregroundActive=$foregroundActive stopping=$stopping")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         retryHandler.removeCallbacks(retryStart)
         foregroundActive = false
@@ -151,18 +158,11 @@ class AndroidVpnService :
         if (stopping || !foregroundActive) return
         updateManagedMode()
         updateNotification(message)
-        if (sharedAlwaysOn) {
-            // Keep the foreground VPN service alive while the embedded core
-            // recovers. Lockdown remains enforced by Android during the outage.
-            retryHandler.removeCallbacks(retryStart)
-            retryHandler.postDelayed(retryStart, retryDelayMillis)
-            retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(60_000L)
-            return
-        }
-        stopping = true
-        foregroundActive = false
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // A started VPN remains requested until an explicit stop or revocation,
+        // regardless of the optional system always-on setting.
+        retryHandler.removeCallbacks(retryStart)
+        retryHandler.postDelayed(retryStart, retryDelayMillis)
+        retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(60_000L)
     }
 
     private fun requestStop() {

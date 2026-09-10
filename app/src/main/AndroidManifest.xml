@@ -49,7 +49,9 @@
 
         <service
             android:name=".AppControlService"
-            android:exported="false" />
+            android:exported="false"
+            android:process=":vpn"
+            android:stopWithTask="false" />
 
         <!--
             The log runs in its own process so its lifetime is not the VPN's.
@@ -81,6 +83,7 @@
 
         <service
             android:name=".AndroidVpnService"
+            android:process=":vpn"
             android:directBootAware="false"
             android:exported="true"
             android:foregroundServiceType="systemExempted|location"

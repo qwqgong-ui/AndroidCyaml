@@ -4,11 +4,11 @@ import android.app.Application
 import android.content.Context
 
 /**
- * Which of the three processes this code is running in.
+ * Identifies the dedicated VPN, UI and log processes.
  *
  * The split is deliberate. The proxy process owns the VPN, the native libraries
- * and the Go runtime, and it is the one Android kills first under memory
- * pressure. The UI process owns the dashboard and its WebViews, and comes and
+ * and the Go runtime, and hosts no activities. The UI process owns the dashboard
+ * and its WebViews, and comes and
  * goes with the user. The log process owns the diagnostics file, and exists
  * precisely so that neither of the other two taking a restart takes the record
  * of it with them.
@@ -35,6 +35,6 @@ object ProcessRole {
 
     fun isUiProcess(context: Context): Boolean = processName(context).endsWith(UI_SUFFIX)
 
-    /** The proxy process is the one whose name carries no suffix. */
-    fun isProxyProcess(context: Context): Boolean = processName(context) == context.packageName
+    /** Activities and shortcut entry points must never initialize the core. */
+    fun isProxyProcess(context: Context): Boolean = processName(context) == context.packageName + ":vpn"
 }
