@@ -42,13 +42,13 @@ class AndroidCyamlApplication : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (isServiceProcess()) {
-            FairMemoryManager.releaseLocalCaches()
+            RuntimeCoordinator.requestMemoryTrimIfCreated()
         }
     }
 
     override fun onLowMemory() {
         if (isServiceProcess()) {
-            FairMemoryManager.releaseLocalCaches()
+            RuntimeCoordinator.requestMemoryTrimIfCreated()
         }
         super.onLowMemory()
     }

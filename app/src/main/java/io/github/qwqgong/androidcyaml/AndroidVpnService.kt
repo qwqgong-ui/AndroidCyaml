@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.drawable.Icon
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 
 class AndroidVpnService :
@@ -25,6 +27,17 @@ class AndroidVpnService :
 
     @Volatile
     private var foregroundActive = false
+
+    private var commandGeneration = 0L
+    private val retryHandler = Handler(Looper.getMainLooper())
+    private var retryDelayMillis = 2_000L
+    private val retryStart = Runnable {
+        updateManagedMode()
+        if (!stopping && foregroundActive && sharedAlwaysOn) {
+            commandGeneration++
+            startCore()
+        }
+    }
 
     private var activeForegroundServiceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 
@@ -48,6 +61,8 @@ class AndroidVpnService :
             return START_NOT_STICKY
         }
 
+        commandGeneration++
+        retryHandler.removeCallbacks(retryStart)
         stopping = false
         try {
             val foregroundStart =
@@ -66,8 +81,17 @@ class AndroidVpnService :
             stopSelf()
             return START_NOT_STICKY
         }
-        coordinator.start(this)
+        startCore()
         return START_STICKY
+    }
+
+    private fun startCore() {
+        val startGeneration = commandGeneration
+        coordinator.start(this) { message ->
+            if (!stopping && commandGeneration == startGeneration) {
+                onCoordinatorFailure(message)
+            }
+        }
     }
 
     override fun onRevoke() {
@@ -76,6 +100,8 @@ class AndroidVpnService :
     }
 
     override fun onDestroy() {
+        retryHandler.removeCallbacks(retryStart)
+        foregroundActive = false
         coordinator.removeListener(this)
         if (!stopping) {
             coordinator.stop(this, null)
@@ -96,8 +122,10 @@ class AndroidVpnService :
         }
         when (snapshot.state) {
             RuntimeState.STARTING -> updateNotification(getString(R.string.vpn_starting))
-            RuntimeState.RUNNING ->
+            RuntimeState.RUNNING -> {
+                retryDelayMillis = 2_000L
                 updateNotification(getString(R.string.vpn_connected_native_tun))
+            }
             RuntimeState.STOPPING -> updateNotification(getString(R.string.vpn_stopping))
             RuntimeState.FAILED -> updateNotification(snapshot.detail)
             RuntimeState.STOPPED -> updateNotification(getString(R.string.vpn_stopped))
@@ -120,7 +148,17 @@ class AndroidVpnService :
     }
 
     fun onCoordinatorFailure(message: String) {
+        if (stopping || !foregroundActive) return
+        updateManagedMode()
         updateNotification(message)
+        if (sharedAlwaysOn) {
+            // Keep the foreground VPN service alive while the embedded core
+            // recovers. Lockdown remains enforced by Android during the outage.
+            retryHandler.removeCallbacks(retryStart)
+            retryHandler.postDelayed(retryStart, retryDelayMillis)
+            retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(60_000L)
+            return
+        }
         stopping = true
         foregroundActive = false
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -132,8 +170,15 @@ class AndroidVpnService :
             return
         }
         stopping = true
+        val stopGeneration = commandGeneration
+        retryHandler.removeCallbacks(retryStart)
         updateNotification(getString(R.string.vpn_stopping))
         coordinator.stop(this) {
+            // A newer start may already have re-established the core while
+            // this completion was waiting on the main thread.
+            if (!stopping || commandGeneration != stopGeneration) {
+                return@stop
+            }
             foregroundActive = false
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

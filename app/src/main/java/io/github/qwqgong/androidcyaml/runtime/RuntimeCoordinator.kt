@@ -20,6 +20,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Serializes every transition that can replace the TUN or embedded mihomo runtime. */
 class RuntimeCoordinator private constructor(context: Context) :
@@ -39,6 +40,7 @@ class RuntimeCoordinator private constructor(context: Context) :
     private val context: Context = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
+    private val memoryTrimPending = AtomicBoolean(false)
     private val stateBus = RuntimeStateBus()
     private val fileStore = MihomoFileStore(this.context)
     private val configInstaller = ConfigInstaller(this.context, fileStore)
@@ -79,8 +81,8 @@ class RuntimeCoordinator private constructor(context: Context) :
         stateBus.removeListener(listener)
     }
 
-    fun start(requestedService: AndroidVpnService) {
-        executor.execute { startInternal(requestedService) }
+    fun start(requestedService: AndroidVpnService, onFailure: (String) -> Unit) {
+        executor.execute { startInternal(requestedService, onFailure) }
     }
 
     fun stop(requestedService: AndroidVpnService?, completion: Runnable?) {
@@ -197,7 +199,7 @@ class RuntimeCoordinator private constructor(context: Context) :
         }
     }
 
-    private fun startInternal(requestedService: AndroidVpnService) {
+    private fun startInternal(requestedService: AndroidVpnService, onFailure: (String) -> Unit) {
         val current = stateBus.snapshot().state
         if (lifecycle.ownsService(requestedService) &&
             (current == RuntimeState.STARTING || current == RuntimeState.RUNNING)
@@ -222,7 +224,12 @@ class RuntimeCoordinator private constructor(context: Context) :
             if (exception is InterruptedException) {
                 Thread.currentThread().interrupt()
             }
-            failActiveService("VPN 启动失败：" + Exceptions.usefulMessage(exception))
+            // Failed startup can clear the lifecycle's service reference, or
+            // fail before assigning it. Notify the submitting service directly.
+            val message = "VPN 启动失败：" + Exceptions.usefulMessage(exception)
+            cleanupAll()
+            publish(RuntimeState.FAILED, message)
+            mainHandler.post { onFailure(message) }
         }
     }
 
@@ -369,6 +376,24 @@ class RuntimeCoordinator private constructor(context: Context) :
             // an otherwise idle service process to trim memory.
             val current = instance?.lifecycle?.runtime()
             return current?.trimRebuildableCaches() ?: 0
+        }
+
+        fun requestMemoryTrimIfCreated() {
+            val local = instance ?: return
+            if (local.lifecycle.runtime() == null ||
+                !local.memoryTrimPending.compareAndSet(false, true)
+            ) return
+            // JNI trimming runs a full Go GC. Keep it off Android's main
+            // thread and coalesce pressure callbacks while one trim is pending.
+            local.executor.execute {
+                try {
+                    local.lifecycle.runtime()?.trimRebuildableCaches()
+                } catch (failure: RuntimeException) {
+                    Log.w(TAG, "Unable to trim embedded core memory", failure)
+                } finally {
+                    local.memoryTrimPending.set(false)
+                }
+            }
         }
 
         fun persistStateForMemoryKill(): Boolean {

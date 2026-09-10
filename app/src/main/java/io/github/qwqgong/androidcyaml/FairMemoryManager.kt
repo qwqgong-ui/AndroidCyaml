@@ -22,7 +22,7 @@ class FairMemoryManager private constructor(context: Context) {
 
     private var lastPssSampleElapsed = 0L
     private var lastPssKb = -1L
-    private var lastHandledElapsed = Long.MIN_VALUE
+    private var lastHandledElapsed: Long? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(ignored: Context, intent: Intent) {
@@ -55,7 +55,9 @@ class FairMemoryManager private constructor(context: Context) {
                 ?: throw IllegalArgumentException("missing callback binder")
 
             val now = SystemClock.elapsedRealtime()
-            val throttled = now - lastHandledElapsed < MIN_HANDLE_INTERVAL_MILLIS
+            val throttled = lastHandledElapsed?.let {
+                now - it < MIN_HANDLE_INTERVAL_MILLIS
+            } ?: false
             var clearedCacheGroups = 0
             var statePersisted = true
             if (handled && !throttled) {
