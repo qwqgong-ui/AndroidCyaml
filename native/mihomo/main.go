@@ -348,7 +348,8 @@ func AndroidCyamlNotifyNetworkChanged(closeConnectionsValue C.int) *C.char {
 		// return to the previous network's long-lived DNS branch.
 		core.FlushInterfaceCache()
 		if closeConnectionsValue != 0 {
-			core.ClearTCPConcurrentCache()
+			// Winners are partitioned by the physical network, just like DNS.
+			// Preserve them so returning to this network can reuse its hints.
 			core.ResetDNSConnections()
 			core.CloseAllConnections()
 		}
@@ -367,8 +368,8 @@ func AndroidCyamlUpdateSystemDNS(serversValue *C.char) *C.char {
 	}
 	core.UpdateSystemDNS(servers)
 	if active {
-		// Clear only ordinary answers and DNS transports. ClearVolatileCache
-		// deliberately preserves the 24-hour network/source candidate branches.
+		// Request a refresh on the active partition without deleting old values.
+		// DNS failure or a pending refresh must not interrupt cached resolution.
 		core.ClearVolatileDNSCache()
 		core.ResetDNSConnections()
 	}
