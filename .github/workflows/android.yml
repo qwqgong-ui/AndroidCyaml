@@ -90,6 +90,8 @@ jobs:
             ${{ runner.os }}-mihomo-go-work-go1.27-ndk29-
 
       - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install Android 17 SDK and NDK
         shell: bash
@@ -193,7 +195,7 @@ jobs:
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
       - name: Upload failed build log
-        if: failure()
+        if: failure() && hashFiles('build.log') != ''
         uses: actions/upload-artifact@v7
         with:
           name: AndroidCyaml-build-log-${{ github.run_id }}
