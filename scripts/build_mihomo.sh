@@ -232,7 +232,7 @@ cp "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" "${MODULE_DIR}/"
         GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
         go test \
         -mod=mod \
-        -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku" \
+        -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku no_easytier" \
         .
 )
 
@@ -256,7 +256,7 @@ readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X 
         go build \
         -mod=mod \
         -buildmode=c-shared \
-        -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku" \
+        -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku no_easytier" \
         -trimpath \
         -ldflags "${LDFLAGS}" \
         -o "${TEMP_DIR}/libmihomo.so" \
