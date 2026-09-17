@@ -342,6 +342,10 @@ adb shell pidof io.github.qwqgong.androidcyaml:ui
 `LDXR`/`STXR` 独占重试循环。这对 mihomo 这种高并发 Go 负载在骁龙 8 Elite 等多核大芯片上意义最大。
 `scripts/build_mihomo.sh` 在构建后读取 `go version -m` 记录的 build setting 断言该基线确实生效。
 
+Go 核心同时启用 PGO：使用 mihomo `dev` 根目录的 `default.pgo`（Linux amd64 实际代理流量的 CPU
+profile）。PGO 基于调用关系而非指令集，可跨架构使用；隧道、QUIC/hy2、DNS 等共享热路径受益，
+JNI 与 VpnService 胶水代码不在样本中。构建脚本同样通过 `go version -m` 断言 `-pgo` 已生效。
+
 原生库以未压缩方式打包（`useLegacyPackaging = false`），由 linker 直接从 APK 内 mmap，安装后不再
 额外解压一份到 `/data/app/.../lib/`。代价是 APK 下载体积等于原生库的未压缩大小。
 

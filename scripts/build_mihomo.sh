@@ -5,7 +5,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_SOURCE_BRANCH="dev"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
-readonly BUILD_RECIPE_VERSION="27"
+readonly BUILD_RECIPE_VERSION="28"
 readonly NDK_VERSION="29.0.14206865"
 # NDK 29.0.14206865 ships no toolchain above API 35, so this trails minSdk 36
 # on purpose. Linking against an older platform than minSdk is safe.
@@ -156,6 +156,15 @@ esac
 # mihomo checkout, are applied to copies of the downloaded modules, and are
 # wired in through a generated modfile. Skipping this step leaves the kernel
 # calling sing-tun APIs that no released sing-tun has.
+# dev ships a production CPU profile as default.pgo. Go only auto-applies it to
+# the main package in its own directory, so the wrapper module has to name it.
+# Code paths the profile never saw (JNI, VpnService glue) simply stay unoptimized.
+readonly PGO_PROFILE="${SOURCE_DIR}/default.pgo"
+[[ -s "${PGO_PROFILE}" ]] || {
+    echo "mihomo PGO profile is missing: ${PGO_PROFILE}" >&2
+    exit 1
+}
+
 readonly DEP_PATCH_SCRIPT="${SOURCE_DIR}/patches/apply-dependency-patches.sh"
 [[ -f "${DEP_PATCH_SCRIPT}" ]] || {
     echo "mihomo dependency patch script is missing: ${DEP_PATCH_SCRIPT}" >&2
@@ -258,6 +267,7 @@ readonly LDFLAGS="-X github.com/metacubex/mihomo/constant.Version=${VERSION} -X 
         -buildmode=c-shared \
         -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku no_easytier" \
         -trimpath \
+        -pgo="${PGO_PROFILE}" \
         -ldflags "${LDFLAGS}" \
         -o "${TEMP_DIR}/libmihomo.so" \
         .
@@ -277,6 +287,13 @@ readonly built_goarm64="$(
 )"
 if [[ "${built_goarm64}" != "${GOARM64_BASELINE}" ]]; then
     echo "Go core was built for GOARM64=${built_goarm64:-unknown}, expected ${GOARM64_BASELINE}" >&2
+    exit 1
+fi
+
+if ! env GOWORK=off GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
+    go version -m "${TEMP_DIR}/libmihomo.so" \
+    | awk '$1 == "build" && $2 == "-pgo=default.pgo" { found = 1 } END { exit !found }'; then
+    echo "Go core was built without the mihomo default.pgo profile" >&2
     exit 1
 fi
 
