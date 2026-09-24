@@ -256,8 +256,9 @@ system-exempted 类型正常运行，但不会对无法稳定识别的 Wi-Fi 保
 http://<手机局域网 IP>:<端口>/ui/
 ```
 
-Android 17 会在启用公开访问时请求 `ACCESS_LOCAL_NETWORK`。公开模式要求用户配置中的 `secret`
-非空；本机模式保留 mihomo 对空 `secret` 的原始行为。
+Android 17 从应用界面启动 VPN 时会请求 `ACCESS_LOCAL_NETWORK`。升级后若 VPN 已自动恢复，打开
+应用界面也会请求一次。若未授权，局域网 DNS 或节点可能无法连接；VPN 仍可启动以供仅使用公网端点的
+配置运行。公开模式要求用户配置中的 `secret` 非空；本机模式保留 mihomo 对空 `secret` 的原始行为。
 
 ## 配置边界
 

@@ -58,6 +58,9 @@ class MainActivity :
     private var pendingRuntimeOverrides: RuntimeOverrideSettings? = null
     private var pendingIdentityPermissionStart = false
     private var pendingIdentityPermissionAutomatic = false
+    private var pendingLocalNetworkPermissionStart = false
+    private var pendingLocalNetworkPermissionAutomatic = false
+    private var localNetworkPermissionPromptedThisActivity = false
     private var backAnimator: PredictiveBackAnimator? = null
     private var backCallbackRegistered = false
 
@@ -203,6 +206,18 @@ class MainActivity :
             STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC,
             false,
         )
+        pendingLocalNetworkPermissionStart = savedInstanceState.getBoolean(
+            STATE_PENDING_LOCAL_NETWORK_PERMISSION_START,
+            false,
+        )
+        pendingLocalNetworkPermissionAutomatic = savedInstanceState.getBoolean(
+            STATE_PENDING_LOCAL_NETWORK_PERMISSION_AUTOMATIC,
+            false,
+        )
+        localNetworkPermissionPromptedThisActivity = savedInstanceState.getBoolean(
+            STATE_LOCAL_NETWORK_PERMISSION_PROMPTED,
+            false,
+        )
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -230,6 +245,18 @@ class MainActivity :
         outState.putBoolean(
             STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC,
             pendingIdentityPermissionAutomatic,
+        )
+        outState.putBoolean(
+            STATE_PENDING_LOCAL_NETWORK_PERMISSION_START,
+            pendingLocalNetworkPermissionStart,
+        )
+        outState.putBoolean(
+            STATE_PENDING_LOCAL_NETWORK_PERMISSION_AUTOMATIC,
+            pendingLocalNetworkPermissionAutomatic,
+        )
+        outState.putBoolean(
+            STATE_LOCAL_NETWORK_PERMISSION_PROMPTED,
+            localNetworkPermissionPromptedThisActivity,
         )
     }
 
@@ -298,6 +325,21 @@ class MainActivity :
                 showToast(getString(R.string.network_identity_permission_denied))
             }
             if (shouldStart) {
+                requestVpnStart(automatic)
+            }
+            return
+        }
+        if (requestCode == REQUEST_VPN_LOCAL_NETWORK_PERMISSION) {
+            val shouldStart = pendingLocalNetworkPermissionStart
+            val automatic = pendingLocalNetworkPermissionAutomatic
+            pendingLocalNetworkPermissionStart = false
+            pendingLocalNetworkPermissionAutomatic = false
+            if (grantResults.isEmpty() ||
+                grantResults[0] != PackageManager.PERMISSION_GRANTED
+            ) {
+                showToast(getString(R.string.vpn_local_network_permission_denied))
+            }
+            if (shouldStart) {
                 vpnController.requestStart(runtimeState, automatic)
             }
             return
@@ -333,6 +375,22 @@ class MainActivity :
             payload.alwaysOn,
             payload.lockdown,
         )
+        if (activityVisible && payload.state == RuntimeState.RUNNING &&
+            Build.VERSION.SDK_INT >= ANDROID_17_API &&
+            !localNetworkPermissionPromptedThisActivity &&
+            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            localNetworkPermissionPromptedThisActivity = true
+            try {
+                requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK),
+                    REQUEST_VPN_LOCAL_NETWORK_PERMISSION,
+                )
+            } catch (exception: RuntimeException) {
+                showToast(getString(R.string.vpn_local_network_permission_denied))
+            }
+        }
     }
 
     override fun onControlDisconnected() {
@@ -672,6 +730,25 @@ class MainActivity :
                 showToast(getString(R.string.network_identity_permission_denied))
             }
         }
+        if (Build.VERSION.SDK_INT >= ANDROID_17_API &&
+            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            localNetworkPermissionPromptedThisActivity = true
+            pendingLocalNetworkPermissionStart = true
+            pendingLocalNetworkPermissionAutomatic = automatic
+            try {
+                requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK),
+                    REQUEST_VPN_LOCAL_NETWORK_PERMISSION,
+                )
+                return
+            } catch (exception: RuntimeException) {
+                pendingLocalNetworkPermissionStart = false
+                pendingLocalNetworkPermissionAutomatic = false
+                showToast(getString(R.string.vpn_local_network_permission_denied))
+            }
+        }
         vpnController.requestStart(runtimeState, automatic)
     }
 
@@ -705,6 +782,7 @@ class MainActivity :
         const val REQUEST_LOCAL_NETWORK_PERMISSION = 10_003
         const val REQUEST_NETWORK_IDENTITY_PERMISSIONS = 10_004
         const val REQUEST_DIAGNOSTICS_EXPORT = 10_005
+        const val REQUEST_VPN_LOCAL_NETWORK_PERMISSION = 10_006
         const val ANDROID_17_API = 37
 
         const val STATE_PENDING_OVERRIDES_PRESENT = "pending_overrides_present"
@@ -717,6 +795,12 @@ class MainActivity :
         const val STATE_PENDING_IDENTITY_PERMISSION_START = "pending_identity_permission_start"
         const val STATE_PENDING_IDENTITY_PERMISSION_AUTOMATIC =
             "pending_identity_permission_automatic"
+        const val STATE_PENDING_LOCAL_NETWORK_PERMISSION_START =
+            "pending_local_network_permission_start"
+        const val STATE_PENDING_LOCAL_NETWORK_PERMISSION_AUTOMATIC =
+            "pending_local_network_permission_automatic"
+        const val STATE_LOCAL_NETWORK_PERMISSION_PROMPTED =
+            "local_network_permission_prompted"
 
         fun quickTileResultMessage(result: Int): Int = when (result) {
             StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> R.string.quick_tile_added
