@@ -75,9 +75,9 @@ UDP 域名转发等定制。
 面板 WebView 存在页内历史时，`MainActivity` 才向 `OnBackInvokedDispatcher` 注册
 `OnBackAnimationCallback` 并接管返回；没有历史时不注册回调，退出应用交由系统自身的预测性返回动画处理。
 
-整个 AndroidCyaml UID 保持在 VPN 数据路径内。使用 `tun.include-package` 时，外壳会自动把自身加入
-允许列表；使用 `tun.exclude-package` 时会忽略对自身包的排除。只有 mihomo 真正建立的上游 socket
-通过 `protect(fd)` 离开 VPN，system 栈内部 TCP listener 与 NAT 回注仍留在 TUN 内。
+Android VPN 覆盖所有应用，不应用 YAML 中的 `tun.include-package`、`tun.exclude-package`、
+路由包含或排除字段，也不允许应用绕过 VPN。只有 mihomo 真正建立的上游 socket 通过
+`protect(fd)` 离开 VPN，system 栈内部 TCP listener 与 NAT 回注仍留在 TUN 内。
 
 ## 快捷入口
 
@@ -101,6 +101,7 @@ UDP 域名转发等定制。
 - IPv6：`fdfe:dcba:9876::1/126`（用户启用时保持稳定）
 - MTU：`9000`
 - GSO：关闭
+- 路由：已启用地址族的默认路由 `0.0.0.0/0`、`::/0`，无应用或目的地址排除
 
 `/30` 与 `/126` 为 system 栈提供 `.2` / `::2` 回注地址，避免 `/32`、`/128` 无下一地址的问题。
 接口地址保留主机位；只有添加路由时才归一为网段。
@@ -270,11 +271,11 @@ Android 17 从应用界面启动 VPN 时会请求 `ACCESS_LOCAL_NETWORK`。升�
 - WebUI 在 `127.0.0.1` 与 `0.0.0.0` 之间切换，并保留 YAML 中的 `secret`；
 - 使用固定 `/30`、`/126`、MTU 9000，并关闭 GSO；
 - 根据 IPv6 有效状态移除 IPv6 地址和路由；
-- 将路由、排除路由、DNS 和包范围交给 `VpnService.Builder`；
+- 将接口地址与 DNS 交给 `VpnService.Builder`，由 Android 固定添加默认路由并覆盖所有应用；
 - 把 Android TUN FD 交给 sing-tun，并关闭核心侧重复的系统路由操作。
 
 节点、代理组、规则、DNS、fake-ip、sniffer、DNS 劫持、NAT 和代理选择仍由 mihomo 处理。
-动态 `route-address-set` 无法直接转换为 Android `VpnService.Builder` 路由，会明确报错。
+YAML 的 `auto-route`、路由包含/排除及包范围不参与 Android VPN 路由配置。
 
 域名展示依赖 fake-ip DNS 映射或 sniffer。关闭映射与嗅探、使用应用自有加密 DNS，或目标本身只有
 IP 时，连接面板显示 IP 属于正常结果。

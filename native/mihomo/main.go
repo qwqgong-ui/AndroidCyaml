@@ -108,17 +108,10 @@ type startPayload struct {
 }
 
 type tunSpec struct {
-	MTU                      uint32   `json:"mtu"`
-	Inet4Address             []string `json:"inet4Address"`
-	Inet6Address             []string `json:"inet6Address"`
-	AutoRoute                bool     `json:"autoRoute"`
-	Inet4RouteAddress        []string `json:"inet4RouteAddress"`
-	Inet6RouteAddress        []string `json:"inet6RouteAddress"`
-	Inet4RouteExcludeAddress []string `json:"inet4RouteExcludeAddress"`
-	Inet6RouteExcludeAddress []string `json:"inet6RouteExcludeAddress"`
-	DNSServerAddress         []string `json:"dnsServerAddress"`
-	IncludePackage           []string `json:"includePackage"`
-	ExcludePackage           []string `json:"excludePackage"`
+	MTU              uint32   `json:"mtu"`
+	Inet4Address     []string `json:"inet4Address"`
+	Inet6Address     []string `json:"inet6Address"`
+	DNSServerAddress []string `json:"dnsServerAddress"`
 }
 
 var (
@@ -521,11 +514,6 @@ func prepareEmbeddedConfig(cfg *core.Config, options embeddedOptions) ([]byte, e
 	}
 
 	tunConfig := &cfg.General.Tun
-	if len(tunConfig.RouteAddressSet) != 0 || len(tunConfig.RouteExcludeAddressSet) != 0 {
-		return nil, errors.New("Android VpnService does not support dynamic TUN route-address-set fields")
-	}
-
-	originalAutoRoute := tunConfig.AutoRoute
 	tunConfig.Enable = true
 	tunConfig.Device = "AndroidCyaml"
 	tunConfig.Stack = core.TunStackSystem
@@ -559,7 +547,6 @@ func prepareEmbeddedConfig(cfg *core.Config, options embeddedOptions) ([]byte, e
 	}
 	cfg.General.FindProcessMode = findProcessMode
 
-	tunConfig.AutoRoute = originalAutoRoute
 	dnsEnabled := cfg.DNS != nil && cfg.DNS.Enable
 	spec := makeTunSpec(*tunConfig, dnsEnabled)
 	payload, err := json.Marshal(spec)
@@ -612,44 +599,14 @@ func makeTunSpec(tunConfig core.Tun, dnsEnabled bool) tunSpec {
 		mtu = embeddedMTU
 	}
 
-	routes := append([]netip.Prefix{}, tunConfig.RouteAddress...)
-	routes = append(routes, tunConfig.Inet4RouteAddress...)
-	routes = append(routes, tunConfig.Inet6RouteAddress...)
-	excludedRoutes := append([]netip.Prefix{}, tunConfig.RouteExcludeAddress...)
-	excludedRoutes = append(excludedRoutes, tunConfig.Inet4RouteExcludeAddress...)
-	excludedRoutes = append(excludedRoutes, tunConfig.Inet6RouteExcludeAddress...)
-
-	inet4Routes, inet6Routes := splitPrefixes(routes)
-	inet4Excluded, inet6Excluded := splitPrefixes(excludedRoutes)
+	// Android establishes default routes for every enabled address family and
+	// includes every app. Route and package filters from YAML never reach Builder.
 	return tunSpec{
-		MTU:                      mtu,
-		Inet4Address:             prefixStrings(tunConfig.Inet4Address),
-		Inet6Address:             prefixStrings(tunConfig.Inet6Address),
-		AutoRoute:                tunConfig.AutoRoute,
-		Inet4RouteAddress:        inet4Routes,
-		Inet6RouteAddress:        inet6Routes,
-		Inet4RouteExcludeAddress: inet4Excluded,
-		Inet6RouteExcludeAddress: inet6Excluded,
-		DNSServerAddress:         dnsServerAddresses(tunConfig, dnsEnabled),
-		IncludePackage:           uniqueSorted(append([]string{}, tunConfig.IncludePackage...)),
-		ExcludePackage:           uniqueSorted(append([]string{}, tunConfig.ExcludePackage...)),
+		MTU:              mtu,
+		Inet4Address:     prefixStrings(tunConfig.Inet4Address),
+		Inet6Address:     prefixStrings(tunConfig.Inet6Address),
+		DNSServerAddress: dnsServerAddresses(tunConfig, dnsEnabled),
 	}
-}
-
-func splitPrefixes(prefixes []netip.Prefix) ([]string, []string) {
-	var inet4 []string
-	var inet6 []string
-	for _, prefix := range prefixes {
-		if !prefix.IsValid() {
-			continue
-		}
-		if prefix.Addr().Is4() {
-			inet4 = append(inet4, prefix.String())
-		} else {
-			inet6 = append(inet6, prefix.String())
-		}
-	}
-	return uniqueSorted(inet4), uniqueSorted(inet6)
 }
 
 func prefixStrings(prefixes []netip.Prefix) []string {

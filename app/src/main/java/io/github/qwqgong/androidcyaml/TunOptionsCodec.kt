@@ -16,14 +16,7 @@ object TunOptionsCodec {
                 mtu,
                 strings(payload.optJSONArray("inet4Address")),
                 strings(payload.optJSONArray("inet6Address")),
-                payload.optBoolean("autoRoute", true),
-                strings(payload.optJSONArray("inet4RouteAddress")),
-                strings(payload.optJSONArray("inet6RouteAddress")),
-                strings(payload.optJSONArray("inet4RouteExcludeAddress")),
-                strings(payload.optJSONArray("inet6RouteExcludeAddress")),
                 strings(payload.optJSONArray("dnsServerAddress")),
-                strings(payload.optJSONArray("includePackage")),
-                strings(payload.optJSONArray("excludePackage")),
             )
         } catch (exception: JSONException) {
             throw IOException("无法解析 mihomo TUN 参数", exception)

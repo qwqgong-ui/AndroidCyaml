@@ -129,7 +129,7 @@ Go 核心额外固定 `GOARM64=v8.2`，使运行时原子操作走 ARMv8.1 LSE �
    - IPv6 `fdfe:dcba:9876::1/126`（用户启用时）；
    - MTU 9000；
    - GSO 关闭；
-5. Go runtime 返回供 `VpnService.Builder` 使用的地址、路由、DNS 和包范围；
+5. Go runtime 返回供 `VpnService.Builder` 使用的接口地址与 DNS；Android 固定添加默认路由并覆盖所有应用；
 6. Android 建立或复用 VPN TUN；
 7. Java 复制 TUN FD 并将副本交给 `MihomoNative.start`；
 8. Go runtime 安装 socket protect 与进程所有者 hook，应用配置并在提供的 FD 上启动 system sing-tun；
@@ -144,7 +144,7 @@ TUN 栈不再属于运行时覆写，也不采用 YAML 中的 `stack`。旧版�
 `tun_stack_mode` 会被清除，运行时始终使用 system。
 
 固定 `/30` 与 `/126` 前缀保证 system 栈拥有第二个接口地址用于 local-listener NAT 回注。Android
-接口保留 `.1` / `::1` 主机位；只有路由通过 `IpPrefix` 归一化。gVisor 和 mixed 配置在该内核中不可用。
+接口保留 `.1` / `::1` 主机位；已启用地址族使用 `/0` 默认路由。gVisor 和 mixed 配置在该内核中不可用。
 
 GSO 固定关闭：Android `VpnService` 的 fd 不支持 `IFF_VNET_HDR`，这不是可调项。
 
@@ -191,11 +191,8 @@ system 栈内部 TCP listener 不经过真实出站 dialer hook，因此仍处�
 
 ## Application routing
 
-- 没有包过滤时，AndroidCyaml 自身也留在 VPN 中；
-- 使用 `include-package` 时自动加入 AndroidCyaml；
-- 使用 `exclude-package` 时忽略对 AndroidCyaml 的排除；
-- 未安装的用户包会记录并跳过；include 列表无有效目标时明确失败。
-
+Android VpnService 不设置应用白名单或黑名单。已启用的地址族使用默认路由，
+YAML 中的 `include-package`、`exclude-package`、路由包含和排除字段不改变 Android TUN 覆盖范围。
 真实上游 socket 是唯一通过逐个 `protect()` 排除的 socket。
 
 ## Mihomo outbound tree
