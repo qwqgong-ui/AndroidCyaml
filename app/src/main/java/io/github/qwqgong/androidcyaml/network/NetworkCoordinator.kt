@@ -22,12 +22,6 @@ class NetworkCoordinator(
     interface Host {
         fun submit(operation: Runnable)
 
-        /**
-         * Rebuilds the runtime against the state observed right now. Used for the
-         * dimensions a running core cannot be reconciled with in place.
-         */
-        fun rebuildRuntime()
-
         fun snapshot(): RuntimeSnapshot
         fun publish(snapshot: RuntimeSnapshot)
         fun diagnostic(event: String, detail: String)
@@ -125,20 +119,12 @@ class NetworkCoordinator(
             return
         }
 
-        if (next.needsTunIpv6Rebuild(settings.ipv6Enabled, lifecycle.tunIpv6Enabled)) {
-            // Physical IPv6 decides the TUN's own shape, which is fixed at
-            // establish() time. A brief gap between Wi-Fi and cellular is not
-            // a new physical network: keep the existing TUN during that gap and
-            // rebuild only when the next available network needs a different
-            // shape. This avoids forcing Android to revalidate the VPN on every
-            // handover through an unavailable state.
-            pendingTransition = NetworkTransition.none()
-            host.diagnostic("network.ipv6.rebuild", description)
-            host.rebuildRuntime()
-        } else {
-            applyTcpConcurrent(settings.adaptiveTcpConcurrent)
-            pendingTransition = applyRuntimeTransition(next, transition, settings.ipv6Enabled)
-        }
+        // The Android TUN follows the user's IPv6 setting. Physical IPv6
+        // availability only changes the core's runtime resolver/DNS behavior;
+        // rebuilding the TUN here makes Android revalidate the VPN while Wi-Fi
+        // is still acquiring its IPv6 address.
+        applyTcpConcurrent(settings.adaptiveTcpConcurrent)
+        pendingTransition = applyRuntimeTransition(next, transition, settings.ipv6Enabled)
         if (identityChanged && next.available()) scheduleSelectionRestoration()
         host.publish(host.snapshot())
     }

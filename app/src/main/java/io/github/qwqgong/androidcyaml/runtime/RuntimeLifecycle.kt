@@ -21,10 +21,6 @@ class RuntimeLifecycle(
         private set
 
     @Volatile
-    var tunIpv6Enabled = false
-        private set
-
-    @Volatile
     var effectiveTcpConcurrent = false
         private set
 
@@ -69,16 +65,10 @@ class RuntimeLifecycle(
         networkState: NetworkState,
         runtimeStarted: Runnable?,
     ): String {
-        // The TUN shape follows the user's IPv6 intent *and* whether the physical
-        // network actually carries IPv6. A TUN that advertises IPv6 the core will
-        // refuse to dial is worse than no IPv6 at all: apps that reach past DNS --
-        // an HTTPDNS client, or one replaying addresses it cached on another
-        // network -- keep dialing addresses that can never connect, with no DNS
-        // answer left to steer them back. Losing or gaining physical IPv6 therefore
-        // restarts the core and re-establishes the tunnel. The VpnService itself
-        // stays up, and that restart is affordable because the change coincides
-        // with the handover that already drops every connection.
-        val requestedIpv6 = settings.ipv6Enabled && networkState.ipv6Usable
+        // Keep the Android TUN shape stable across Wi-Fi/cellular handovers.
+        // The core receives physical IPv6 availability separately and disables
+        // IPv6 resolution/dialing when the underlying network cannot carry it.
+        val requestedIpv6 = settings.ipv6Enabled
         return startRuntime(
             settings,
             networkState,
@@ -126,7 +116,6 @@ class RuntimeLifecycle(
         platformCallbacks = null
         service = null
         effectiveIpv6Enabled = false
-        tunIpv6Enabled = false
         effectiveTcpConcurrent = false
     }
 
@@ -164,9 +153,7 @@ class RuntimeLifecycle(
             if (!activeTunManager.hasUsableTunnel()) {
                 throw IOException("mihomo 未建立 Android TUN")
             }
-            // ipv6Enabled already carries the physical-availability mask.
-            effectiveIpv6Enabled = ipv6Enabled
-            tunIpv6Enabled = ipv6Enabled
+            effectiveIpv6Enabled = ipv6Enabled && networkState.ipv6Usable
             effectiveTcpConcurrent = tcpConcurrentEnabled
             runtimeStarted?.run()
             selectorSession.begin(candidate, networkState)

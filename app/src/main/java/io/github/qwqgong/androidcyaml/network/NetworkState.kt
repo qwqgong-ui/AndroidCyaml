@@ -13,10 +13,6 @@ data class NetworkState(
 ) {
     fun available(): Boolean = networkHandle != 0L
 
-    /** A temporary loss of the physical network does not change the established TUN. */
-    fun needsTunIpv6Rebuild(configuredIpv6: Boolean, tunIpv6Enabled: Boolean): Boolean =
-        available() && configuredIpv6 && ipv6Usable != tunIpv6Enabled
-
     // Cache scope and selection memory answer different questions, so they must
     // not share a key. Selection memory keys on the SSID alone, deliberately, so
     // that roaming across the access points of one Wi-Fi keeps a single profile.
