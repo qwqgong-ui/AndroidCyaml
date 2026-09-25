@@ -136,7 +136,8 @@ Go RawConn FD → NativePlatformCallbacks.protectSocket(fd)
 
 `UnderlyingNetworkMonitor` 同时从系统评分选出的最佳非 VPN `LinkProperties` 取得 DNS，通过 JNI
 更新 mihomo 非 CMFA Android 路径的 `UpdateSystemDNS`。因此配置中的 `system://` 始终表示
-当前 Wi-Fi/移动网络提供的 DNS。普通查询 socket 只做 protect，不绑定指定 Network。
+当前 Wi-Fi/移动网络提供的 DNS。上游 socket 绑定该物理 Network 后执行 protect；切网时先更新
+绑定目标，再刷新 DNS 与连接。绑定或保护失败会终止该次拨号，避免 DNS 绕回 TUN。
 
 ### 按物理网络隔离的长期 DNS 候选缓存
 

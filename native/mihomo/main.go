@@ -673,45 +673,35 @@ func ipv4Addresses(values []netip.Addr) []netip.Addr {
 func installPlatformHooks() {
 	core.SetSocketHook(func(network, address string, connection syscall.RawConn) error {
 		dialHookCalls.Add(1)
-		// A failed protect deliberately does not fail the dial.
-		//
-		// Failing it looked safer and was worse. Under load the protect path is
-		// exactly what saturates first, so turning that into a dial error made
-		// mihomo retry, made the client above retry, and fed more protect calls
-		// into the thing that was already saturated. That is congestion
-		// collapse, and it is how a slow moment became thousands of half-open
-		// sockets.
-		//
-		// An unprotected socket is not silently wrong either: it routes back
-		// into the TUN, where the loopback guard rejects it. The failure still
-		// surfaces, as one connection failing instead of a feedback loop.
-		// ClashMetaForAndroid and FlClash both return nothing from protect.
-		err := connection.Control(func(fileDescriptor uintptr) {
-			protectDialedSocket(int(fileDescriptor))
-		})
-		if err != nil {
+		// An unprotected DNS request can re-enter the TUN and receive a
+		// successful fake-IP reply. The loopback guard cannot reject that
+		// reply before it poisons an upstream resolver's cache. Keep the
+		// callback concurrency bound, but never connect an unprotected socket.
+		err := protectRawSocket(connection, protectDialedSocket)
+		if err != nil && !errors.Is(err, errSocketProtectionRejected) {
 			dialHookControlFails.Add(1)
-			return err
 		}
-		return nil
+		return err
 	})
 	core.SetProcessResolver(resolveProcess)
 }
 
 // protectDialedSocket hands one socket to VpnService.protect through the JNI
 // callback, bounded by the shared platform-callback permit.
-func protectDialedSocket(fileDescriptor int) {
+func protectDialedSocket(fileDescriptor int) bool {
 	callback := currentProtectCallback()
-	if callback == nil {
-		return
-	}
 	protectAttempts.Add(1)
+	if callback == nil {
+		protectRejections.Add(1)
+		return false
+	}
 	rejected := withCallbackPermit(platformCallbackLimit, func() bool {
 		return C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
 	})
 	if rejected {
 		protectRejections.Add(1)
 	}
+	return !rejected
 }
 
 func clearPlatformHooks() {

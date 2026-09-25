@@ -44,7 +44,7 @@ class RuntimeLifecycle(
         tunManager = AndroidTunManager(requestedService)
         val callbacks = NativePlatformCallbacks(requestedService)
         platformCallbacks = callbacks
-        callbacks.updateWebViewUnderlyingNetwork(networkState.networkHandle)
+        callbacks.updateUnderlyingNetwork(networkState.networkHandle)
         try {
             return restart(settings, networkState, runtimeStarted)
         } catch (failure: IOException) {
@@ -78,8 +78,8 @@ class RuntimeLifecycle(
         )
     }
 
-    fun updateWebViewUnderlyingNetwork(networkHandle: Long) {
-        platformCallbacks?.updateWebViewUnderlyingNetwork(networkHandle)
+    fun updateUnderlyingNetwork(networkHandle: Long) {
+        platformCallbacks?.updateUnderlyingNetwork(networkHandle)
     }
 
     fun applyTcpConcurrent(enabled: Boolean): Boolean {

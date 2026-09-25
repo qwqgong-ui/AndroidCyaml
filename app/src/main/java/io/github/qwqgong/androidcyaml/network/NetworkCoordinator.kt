@@ -103,10 +103,10 @@ class NetworkCoordinator(
             description,
         )
 
-        // Only WebView XHTTP needs an explicit physical Network to avoid resolving through the
-        // VPN recursively. Normal mihomo sockets remain protect-only and use Android's default.
+        // Switch the socket binding before refreshing DNS or opening any new
+        // upstream connections. Both use this same physical network snapshot.
         if (transition.routeChanged) {
-            lifecycle.updateWebViewUnderlyingNetwork(next.networkHandle)
+            lifecycle.updateUnderlyingNetwork(next.networkHandle)
         }
 
         val settings = overrideStore.settings()

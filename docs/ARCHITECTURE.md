@@ -161,9 +161,9 @@ sing-tun 在最后一个包之后保留 UDP 会话整个超时时长，NAT 表�
 
 1. `dialer.DefaultSocketHook` 在 connect 前获得 raw FD；
 2. Go 取一枚 `platformCallbackLimit` 许可（上限 `maxConcurrentPlatformCallbacks = 8`）后进入 JNI；
-3. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`；
-4. socket 不绑定指定 Network，由 Android 系统默认路由选择 Wi-Fi 或移动数据；
-5. protect 的裁决只被计数，不改变拨号成败。
+3. `NativePlatformCallbacks.protectSocket` 将 socket 绑定到监视器当前选定的物理 Network；
+4. 调用 `AndroidVpnService.protect(fd)`，使上游连接绕过 VPN；
+5. 无可用物理网络、绑定失败或 protect 拒绝时，socket control hook 返回错误，停止该次拨号。
 
 `VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect fwmark 位，所以请求
 必须到达 JVM。goroutine 阻塞在 cgo 期间独占其 OS thread，因此真正需要约束的量是**同时进入 cgo 的
@@ -178,10 +178,8 @@ ClashMetaForAndroid 与 FlClash 采用完全相同的结构。
 加在回调本身，就解决了当初促使引入该传输层的问题，传输层本身随之成为多余，故连同
 `SocketProtectService` 一并移除。
 
-protect 失败不再让拨号失败。让它失败看似更安全，实则更糟：高压下最先饱和的正是 protect，把饱和变成
-拨号错误会让 mihomo 重试、上层客户端重试，再把更多 protect 请求灌回已经饱和的地方，形成拥塞崩溃。
-未被 protect 的 socket 也不会静默走错——它绕回 TUN 后被 loopback 检查拒绝，失败依然可见，只是表现为
-一条连接失败，而不是一个正反馈环。
+绑定与保护失败必须返回拨号错误。DNS 绕回 TUN 时可能收到成功的 fake-IP 响应，loopback 检查
+无法阻止这类响应污染上游 DNS 缓存。并发仍由同一枚许可限制，不增加内部保护重试。
 
 进程归属查询是真正的 Binder 调用，仍走 JNI，并保留 16 并发的 Go 侧入口；限流发生在进入 cgo 之前。
 System WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消
@@ -251,16 +249,15 @@ resolver/DNS 行为。
 - 用户关闭 IPv6：运行 IPv4-only；
 - 用户开启但环境不可用：保留双栈 TUN，只暂停 DIRECT IPv6；
 - 同一物理网络 IPv6 变化：只更新 IPv6 resolver/DNS，不关闭 IPv4/代理连接；
-- 物理 route handle 改变：关闭旧路径连接，新连接使用系统默认出口；
-- IPv6 启动失败：停止失败实例并执行一次 IPv4-only 重试。
+- 物理 route handle 改变：更新 socket 绑定目标并关闭旧路径连接，新连接使用新的物理 Network。
 
 ## Underlying-network handover
 
 `NetworkCoordinator` 把变化分为 route、DNS、IPv6、identity 和 cache scope。DNS 变化只更新
 DNS；IPv6 变化只更新 IPv6；identity 变化只处理策略记忆；cache scope 变化只更新
 direct cache key；只有最佳物理 Network handle 改变才刷新
-接口状态并关闭旧路径连接。`VpnService.Builder.setUnderlyingNetworks(null)` 与 protect-only socket
-让 Android 的吞吐、费用、用户偏好和网络评分决定 Wi-Fi/移动数据出口。
+接口状态并关闭旧路径连接。监视器跟随 Android 评分选出的最佳非 VPN 网络，上游 socket 显式
+绑定到这个 Network，使出站连接与 DNS 服务器来源一致；TUN 的 underlyingNetworks 保持 null。
 
 每个维度独立提交。某个 native 调用失败时只有该维度算未完成，其余照常生效；未完成的维度
 记在 pending 集合里，由下一次转变重放。观察到的状态在调用之前就已推进，没有这个重放，
