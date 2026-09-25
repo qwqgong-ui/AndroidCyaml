@@ -6,12 +6,12 @@
 | --- | --- | --- |
 | `AndroidVpnService` | VPN permission, foreground lifetime, notification, Builder and TUN FD | mihomo rules and proxy semantics |
 | `RuntimeCoordinator` | public runtime API, single-thread submission, module assembly and state publication | lifecycle, config rollback or network debounce implementation |
-| `RuntimeLifecycle` | VPN service, TUN/native resources, core restart and IPv6-to-IPv4 startup fallback | persisted settings or network monitoring |
+| `RuntimeLifecycle` | VPN service, TUN/native resources and core restart | persisted settings or network monitoring |
 | `RuntimeConfigTransactions` | config install, runtime override persistence and failure rollback | direct mutation of lifecycle or coordinator state |
 | `network/NetworkCoordinator` | typed route/DNS/IPv6/identity transitions, cache updates and delayed selector restore | TUN/native resource ownership |
 | `network/SelectorSession` | per-network selector checkpoint, restore, catalog and selection persistence | physical-network monitoring or core lifecycle |
 | `RuntimeOverrideStore` | process matching, IPv6, log level, adaptive TCP concurrency and LAN WebUI intent | YAML mutation or effective network state |
-| `network/UnderlyingNetworkMonitor` | Android-scored best validated non-VPN network, identity, DNS and IPv6 snapshots | user preference or core lifecycle |
+| `network/UnderlyingNetworkMonitor` | Android-scored best non-VPN network, identity, DNS and IPv6 snapshots; no wait for VALIDATED | user preference or core lifecycle |
 | `AndroidTunManager` | fixed interface addresses, routes, DNS and application scope | socket protection or proxy routing |
 | `NativePlatformCallbacks` | per-socket `protect(fd)` and Android UID/package lookup | TUN packet processing |
 | `MihomoNative` | Java JNI contract and native response decoding | VPN lifecycle |
@@ -20,8 +20,9 @@
 | mihomo `androidcyaml` facade | the entire mihomo-facing contract: config, lifecycle, network, process, transport, diagnostics | Android JNI implementation or platform policy |
 | UI/Binder | user intent and observation | runtime ownership |
 
-`MainActivity` runs in `:ui`; `AppControlService`、`AndroidVpnService`、两个原生库和 Go runtime 均位于默认
-VPN 服务进程。
+`MainActivity` 与 dashboard WebView 位于 `:ui`；`AppControlService`、`AndroidVpnService`、两个
+原生库和 Go runtime 位于 `:vpn`。可选的 `DiagnosticsService` 位于 `:log`；默认进程只承载
+快捷入口与磁贴等轻量组件。
 
 网络观察、变化分类、策略记忆和持久化物理集中在
 `app/src/main/java/io/github/qwqgong/androidcyaml/network/`，并使用独立
@@ -45,25 +46,8 @@ executor、route、dns、config、constant、listener/config、log、process）�
 应当回流上游的内核修复——构建时应用到新检出上；改动进入 dev 后构建会识别为已存在并跳过。
 这是过渡机制，不是常设补丁层：每个补丁都以合入 dev 后被删除为目标。
 
-当前暂存两个连接生命周期修复，均在 Android 上实测复现：
-
-- `0001-relay-bound-half-closed-direction.patch`：`N.Relay` 在一侧 `CloseWrite` 后，
-  另一方向的 `Copy` 没有时间上界。远端 FIN 而本地不再写入时（被黑洞路由抛弃的流），
-  存活方向永久阻塞，`defer` 的 Close 不执行，inbound socket 连同 fd、goroutine、
-  tracker 一起停在 CLOSE_WAIT。修复为半关闭后对存活方向读取侧装载 `HalfCloseTimeout`。
-- `0002-dialer-unreachable-destination-breaker.patch`：拨号路径不记忆失败。
-  对不应答的 CDN 地址，每次重试都要付满 `DefaultTCPTimeout`，客户端并发重试时
-  会堆出数千个并发半开 socket。修复为按 `directNetworkEnvironment` 作用域的
-  熔断器：连续可达性失败达阈值后立即失败，冷却后放行一次探测。
-  作用域携带网络身份，因此切换网络时旧判决自然失效，无需显式清理。
-- `0003-direct-gate-address-race.patch`：DIRECT 出站此前无条件启用地址竞速
-  （`adapter/outbound/direct.go` 直接 append `WithDirectDualStack()`，无配置项）。
-  竞速对同一地址族内**所有** A 记录同时发起连接，没有 RFC 8305 的
-  Connection Attempt Delay，也没有上限；赢家缓存只在成功时写入，所以完全不通的
-  域名每次重试都付全量扇出。实测两条 A 记录的 CDN 域名 = 235 条连接 / 470 个并发
-  半开 socket。补丁引入 `dialer.DirectRaceEnabled`（默认 `false`）在唯一调用点
-  门控，使 DIRECT 恢复上游逐个地址拨号；竞速代码本身保留，等它学会错开候选后
-  再打开。注意：`tcp-concurrent` 开关管不到这条路径——关掉它反而会进入竞速分支。
+当前没有暂存补丁。错误上游 DNS 答案与缓存的修复位于
+`qwqgong-ui/mmmmmmhhhmmm` 的 `dev` 分支，由内核更新流程同步到 AndroidCyaml。
 
 较大的 Android 行为全部位于 AndroidCyaml：
 
@@ -86,7 +70,7 @@ GOOS=android
 GOARCH=arm64
 CGO_ENABLED=1
 -buildmode=c-shared
--tags "no_tailscale no_zerotier"
+-tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku no_easytier"
 ```
 
 不启用 `with_gvisor`，因此 APK 内核不包含 gVisor/mixed TUN 栈；Tailscale 与 ZeroTier 出站也被裁剪。
@@ -185,7 +169,7 @@ DNS 上游响应会拒绝当前 fake-IP 地址池内的 A/AAAA 答案，允许�
 读取普通、bootstrap 和 DIRECT 候选缓存时也执行同一检查，淘汰旧版本保留的异常答案，
 无需等待 TTL。显式清理和切网刷新覆盖 bootstrap 缓存，fake-IP 到域名的映射池独立保留。
 
-进程归属查询是真正的 Binder 调用，仍走 JNI，并保留 16 并发的 Go 侧入口；限流发生在进入 cgo 之前。
+进程归属查询走 JNI 调用系统 Binder，与 protect 共用 8 并发的 Go 侧入口；限流发生在进入 cgo 之前。
 System WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消
 与限流互相等待。
 
@@ -310,11 +294,11 @@ APK 离线只包含 Zashboard，不打包或安装 `GeoIP.dat` 与 `GeoSite.dat`
 
 ## Diagnostics sampling
 
-二级菜单中的「诊断采样日志」开关持久化在 `UiPreferences`，服务进程启动时恢复——进程刚被
-系统杀掉重启的那一刻正是证据最完整的时候。开关与 `AndroidVpnService` 同进程（只有 dashboard
-WebView 在 `:ui`），所以切换立即生效，且不依赖运行时是否已启动。
+二级菜单中的「诊断采样日志」开关持久化在 `UiPreferences`，服务进程启动时恢复。
+`DiagnosticsService` 在独立的 `:log` 进程持有日志文件和采样时钟，通过 Binder 向 `:vpn`
+请求指标、事件与内核日志。UI 与 VPN 服务分属不同进程，界面偏好变化与实际采样状态需要分别确认。
 
-`DiagnosticsSampler` 用一个后台 `HandlerThread` 上的 `postDelayed` 每分钟采一次。该 API 走
+`DiagnosticsService` 用一个后台 `HandlerThread` 上的 `postDelayed` 每分钟采一次。该 API 走
 uptime 时钟，设备挂起期间不推进，因此采样器不会唤醒 CPU：doze 中自动暂停，设备因其他原因醒来
 后继续。整个特性不使用 AlarmManager、JobScheduler 或 wake lock。
 
@@ -327,7 +311,7 @@ uptime 时钟，设备挂起期间不推进，因此采样器不会唤醒 CPU：
 `DiagnosticsLog` 在 app 私有 `no_backup` 目录下轮转两代 2 MiB 文件。每行 `key=value`，前缀是
 wall/boot/awake 三个时钟——`boot - awake` 即休眠时长，使序列中的空档可解释。关闭时 `append`
 只做一次 volatile 读，因此低频事件标记（运行时状态、网络切换、内存 trim/kill、历史进程退出）
-可以直接埋在原路径上。日志只记聚合计数，不写域名、IP、SNI 或网络指纹。
+可以直接埋在原路径上。日志包含聚合计数，也包含内核原始日志；原始日志可能带有域名和目标地址。
 
 导出走 `ACTION_CREATE_DOCUMENT`，不需要 FileProvider；写入在后台线程完成。
 
@@ -335,13 +319,12 @@ wall/boot/awake 三个时钟——`boot - awake` 即休眠时长，使序列中�
 `onCapabilitiesChanged` 只在 validated / notSuspended / notMetered / notRoaming / transport
 真的翻转时才写，弱网下每分钟数十次的回调因此不会淹没日志。其余一律是 `NetworkDiagnostics`
 里的计数器，由每分钟那一行读走。拨号路径同样分层计数：dial hook 调用数、protect 尝试/拒绝/
-传输错误、JNI 回退次数、进程归属查询次数与未命中数。
+socket control 错误、进程归属查询次数与未命中数。
 
 `coreLogCounters` 把 mihomo 自己的 warning/error 分成 timeout、refused、unreachable、reset、
-dns、tls、closed、protect、other 若干桶。只记桶计数，不抄原始消息：那些消息里带着失败的目标
-地址，而诊断日志是用来导出分享的。mihomo 的每条日志无论配置级别都会发到 observable，且订阅者
-阻塞会反压到调用点，因此分类器只在诊断开启时通过 `AndroidCyamlSetDiagnostics` 订阅，pump 只做
-一次分类加一次原子累加。
+dns、tls、closed、protect、other 若干桶，并保留有上限的原始日志供下一次采样取走。
+mihomo observable 的慢订阅者会反压调用点，因此只在诊断开启时通过
+`AndroidCyamlSetDiagnostics` 订阅，采样报告同时记录原始日志丢弃数。
 
 ## Removed architecture
 
