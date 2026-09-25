@@ -125,13 +125,13 @@ class NetworkCoordinator(
             return
         }
 
-        if (transition.ipv6Changed && settings.ipv6Enabled) {
+        if (next.needsTunIpv6Rebuild(settings.ipv6Enabled, lifecycle.tunIpv6Enabled)) {
             // Physical IPv6 decides the TUN's own shape, which is fixed at
-            // establish() time, so this dimension cannot be reconciled against a
-            // running core -- the core owns the descriptor and will not take a new
-            // one while up. The rebuild starts from the state observed now, which
-            // reconciles every other dimension along with it. Only the core
-            // restarts: the tunnel is re-established over the live VpnService.
+            // establish() time. A brief gap between Wi-Fi and cellular is not
+            // a new physical network: keep the existing TUN during that gap and
+            // rebuild only when the next available network needs a different
+            // shape. This avoids forcing Android to revalidate the VPN on every
+            // handover through an unavailable state.
             pendingTransition = NetworkTransition.none()
             host.diagnostic("network.ipv6.rebuild", description)
             host.rebuildRuntime()

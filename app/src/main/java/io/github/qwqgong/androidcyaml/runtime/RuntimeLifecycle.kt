@@ -21,6 +21,10 @@ class RuntimeLifecycle(
         private set
 
     @Volatile
+    var tunIpv6Enabled = false
+        private set
+
+    @Volatile
     var effectiveTcpConcurrent = false
         private set
 
@@ -122,6 +126,7 @@ class RuntimeLifecycle(
         platformCallbacks = null
         service = null
         effectiveIpv6Enabled = false
+        tunIpv6Enabled = false
         effectiveTcpConcurrent = false
     }
 
@@ -161,6 +166,7 @@ class RuntimeLifecycle(
             }
             // ipv6Enabled already carries the physical-availability mask.
             effectiveIpv6Enabled = ipv6Enabled
+            tunIpv6Enabled = ipv6Enabled
             effectiveTcpConcurrent = tcpConcurrentEnabled
             runtimeStarted?.run()
             selectorSession.begin(candidate, networkState)

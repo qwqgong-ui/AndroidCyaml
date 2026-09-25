@@ -28,11 +28,13 @@ class AndroidVpnService :
     @Volatile
     private var foregroundActive = false
 
+    private var notificationText: String? = null
+    private var notificationAlwaysOn = false
+
     private var commandGeneration = 0L
     private val retryHandler = Handler(Looper.getMainLooper())
     private var retryDelayMillis = 2_000L
     private val retryStart = Runnable {
-        updateManagedMode()
         if (!stopping && foregroundActive) {
             commandGeneration++
             startCore()
@@ -143,7 +145,6 @@ class AndroidVpnService :
     }
 
     override fun onRuntimeStateChanged(snapshot: RuntimeSnapshot) {
-        updateManagedMode()
         if (!foregroundActive) {
             return
         }
@@ -176,7 +177,6 @@ class AndroidVpnService :
 
     fun onCoordinatorFailure(message: String) {
         if (stopping || !foregroundActive) return
-        updateManagedMode()
         updateNotification(message)
         // A started VPN remains requested until an explicit stop or revocation,
         // regardless of the optional system always-on setting.
@@ -201,6 +201,7 @@ class AndroidVpnService :
                 return@stop
             }
             foregroundActive = false
+            notificationText = null
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
@@ -265,7 +266,9 @@ class AndroidVpnService :
     }
 
     private fun updateNotification(text: String) {
-        if (!foregroundActive) {
+        if (!foregroundActive ||
+            (notificationText == text && notificationAlwaysOn == sharedAlwaysOn)
+        ) {
             return
         }
         try {
@@ -273,6 +276,8 @@ class AndroidVpnService :
             // startForeground does not turn VPN startup into a notification
             // permission gate on Android 13+.
             startForeground(NOTIFICATION_ID, buildNotification(text), activeForegroundServiceTypes)
+            notificationText = text
+            notificationAlwaysOn = sharedAlwaysOn
         } catch (exception: RuntimeException) {
             Log.w(TAG, "Unable to update foreground notification", exception)
         }
@@ -295,6 +300,8 @@ class AndroidVpnService :
             activeForegroundServiceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
             startForeground(NOTIFICATION_ID, notification, activeForegroundServiceTypes)
         }
+        notificationText = getString(R.string.vpn_starting)
+        notificationAlwaysOn = sharedAlwaysOn
     }
 
     private fun hasFineLocationPermission(): Boolean =

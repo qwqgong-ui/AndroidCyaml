@@ -90,6 +90,25 @@ class NetworkComponentTest {
     }
 
     @Test
+    fun transientNetworkLossKeepsTunUntilPhysicalIpv6ActuallyDiffers() {
+        val disconnected = NetworkState.unavailable()
+        val wifiIpv6 = NetworkState.of(
+            100L, "wlan0", true, true, listOf("192.168.1.1"), "home",
+        )
+        val mobileIpv6 = NetworkState.of(
+            200L, "rmnet_data0", true, false, listOf("10.0.0.1"), "mobile",
+        )
+        val mobileIpv4 = mobileIpv6.copy(ipv6Usable = false)
+
+        assertFalse(disconnected.needsTunIpv6Rebuild(true, true))
+        assertFalse(wifiIpv6.needsTunIpv6Rebuild(true, true))
+        assertFalse(mobileIpv6.needsTunIpv6Rebuild(true, true))
+        assertTrue(mobileIpv4.needsTunIpv6Rebuild(true, true))
+        assertTrue(mobileIpv6.needsTunIpv6Rebuild(true, false))
+        assertFalse(mobileIpv6.needsTunIpv6Rebuild(false, false))
+    }
+
+    @Test
     fun cacheScopeSeparatesDistinctNetworksSharingOneSsid() {
         // Two different physical networks that merely share a name: a chain
         // cafe, a carrier hotspot, one SSID across office sites. Selection
