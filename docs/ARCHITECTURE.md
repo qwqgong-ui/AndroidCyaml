@@ -161,9 +161,9 @@ sing-tun 在最后一个包之后保留 UDP 会话整个超时时长，NAT 表�
 
 1. `dialer.DefaultSocketHook` 在 connect 前获得 raw FD；
 2. Go 取一枚 `platformCallbackLimit` 许可（上限 `maxConcurrentPlatformCallbacks = 8`）后进入 JNI；
-3. `NativePlatformCallbacks.protectSocket` 将 socket 绑定到监视器当前选定的物理 Network；
-4. 调用 `AndroidVpnService.protect(fd)`，使上游连接绕过 VPN；
-5. 无可用物理网络、绑定失败或 protect 拒绝时，socket control hook 返回错误，停止该次拨号。
+3. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`，使上游连接绕过 VPN；
+4. 普通 socket 由 Android 默认路由选择物理出口，只有 WebView XHTTP 显式绑定 Network；
+5. protect 拒绝时，socket control hook 返回错误，停止该次拨号。
 
 `VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect fwmark 位，所以请求
 必须到达 JVM。goroutine 阻塞在 cgo 期间独占其 OS thread，因此真正需要约束的量是**同时进入 cgo 的
@@ -178,8 +178,12 @@ ClashMetaForAndroid 与 FlClash 采用完全相同的结构。
 加在回调本身，就解决了当初促使引入该传输层的问题，传输层本身随之成为多余，故连同
 `SocketProtectService` 一并移除。
 
-绑定与保护失败必须返回拨号错误。DNS 绕回 TUN 时可能收到成功的 fake-IP 响应，loopback 检查
+保护失败必须返回拨号错误。DNS 绕回 TUN 时可能收到成功的 fake-IP 响应，loopback 检查
 无法阻止这类响应污染上游 DNS 缓存。并发仍由同一枚许可限制，不增加内部保护重试。
+
+DNS 上游响应会拒绝当前 fake-IP 地址池内的 A/AAAA 答案，允许其它上游继续返回真实地址。
+读取普通、bootstrap 和 DIRECT 候选缓存时也执行同一检查，淘汰旧版本保留的异常答案，
+无需等待 TTL。显式清理和切网刷新覆盖 bootstrap 缓存，fake-IP 到域名的映射池独立保留。
 
 进程归属查询是真正的 Binder 调用，仍走 JNI，并保留 16 并发的 Go 侧入口；限流发生在进入 cgo 之前。
 System WebView XHTTP 的阻塞式响应头回调另有独立的 16 并发上限；取消回调不受此上限约束，避免取消
@@ -249,15 +253,15 @@ resolver/DNS 行为。
 - 用户关闭 IPv6：运行 IPv4-only；
 - 用户开启但环境不可用：保留双栈 TUN，只暂停 DIRECT IPv6；
 - 同一物理网络 IPv6 变化：只更新 IPv6 resolver/DNS，不关闭 IPv4/代理连接；
-- 物理 route handle 改变：更新 socket 绑定目标并关闭旧路径连接，新连接使用新的物理 Network。
+- 物理 route handle 改变：更新 WebView XHTTP 绑定目标并关闭旧路径连接，普通新连接使用系统默认出口。
 
 ## Underlying-network handover
 
 `NetworkCoordinator` 把变化分为 route、DNS、IPv6、identity 和 cache scope。DNS 变化只更新
 DNS；IPv6 变化只更新 IPv6；identity 变化只处理策略记忆；cache scope 变化只更新
 direct cache key；只有最佳物理 Network handle 改变才刷新
-接口状态并关闭旧路径连接。监视器跟随 Android 评分选出的最佳非 VPN 网络，上游 socket 显式
-绑定到这个 Network，使出站连接与 DNS 服务器来源一致；TUN 的 underlyingNetworks 保持 null。
+接口状态并关闭旧路径连接。监视器跟随 Android 评分选出的最佳非 VPN 网络，普通上游 socket
+由 protect 后的默认路由选择出口；TUN 的 underlyingNetworks 保持 null。
 
 每个维度独立提交。某个 native 调用失败时只有该维度算未完成，其余照常生效；未完成的维度
 记在 pending 集合里，由下一次转变重放。观察到的状态在调用之前就已推进，没有这个重放，

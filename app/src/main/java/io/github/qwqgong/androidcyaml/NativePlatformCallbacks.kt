@@ -2,7 +2,6 @@ package io.github.qwqgong.androidcyaml
 
 import android.net.Network
 import android.net.VpnService
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import org.json.JSONException
 import org.json.JSONObject
@@ -27,7 +26,7 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
         closeWebViewXhttp()
     }
 
-    fun updateUnderlyingNetwork(networkHandle: Long) {
+    fun updateWebViewUnderlyingNetwork(networkHandle: Long) {
         underlyingNetwork = try {
             if (networkHandle == 0L) null else Network.fromNetworkHandle(networkHandle)
         } catch (exception: IllegalArgumentException) {
@@ -44,24 +43,7 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
     }
 
     private fun protect(fileDescriptor: Int): Boolean = try {
-        // Use the same physical network that supplied the current DNS servers.
-        // protect alone leaves routing to the default-network policy, which can
-        // send system DNS back through the VPN during a Wi-Fi/cellular handover.
-        val network = underlyingNetwork
-        if (network == null) {
-            false
-        } else {
-            // fromFd duplicates the descriptor: closing this wrapper must not
-            // close the Go-owned socket. The network binding belongs to the
-            // socket and therefore also applies to the original descriptor.
-            ParcelFileDescriptor.fromFd(fileDescriptor).use {
-                network.bindSocket(it.fileDescriptor)
-            }
-            vpnService.protect(fileDescriptor)
-        }
-    } catch (exception: IOException) {
-        Log.w(TAG, "Unable to protect socket fd=$fileDescriptor", exception)
-        false
+        vpnService.protect(fileDescriptor)
     } catch (exception: RuntimeException) {
         Log.w(TAG, "Unable to protect socket fd=$fileDescriptor", exception)
         false
