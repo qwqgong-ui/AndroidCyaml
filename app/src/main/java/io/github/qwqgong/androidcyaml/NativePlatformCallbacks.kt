@@ -2,7 +2,6 @@ package io.github.qwqgong.androidcyaml
 
 import android.net.Network
 import android.net.VpnService
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import org.json.JSONException
 import org.json.JSONObject
@@ -27,7 +26,7 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
         closeWebViewXhttp()
     }
 
-    fun updateUnderlyingNetwork(networkHandle: Long) {
+    fun updateWebViewUnderlyingNetwork(networkHandle: Long) {
         underlyingNetwork = try {
             if (networkHandle == 0L) null else Network.fromNetworkHandle(networkHandle)
         } catch (exception: IllegalArgumentException) {
@@ -36,42 +35,11 @@ class NativePlatformCallbacks(private val vpnService: VpnService) : AutoCloseabl
         }
     }
 
-    fun protectSocket(fileDescriptor: Int, bindPhysicalNetwork: Boolean): Boolean {
+    fun protectSocket(fileDescriptor: Int): Boolean {
         if (fileDescriptor < 0) {
             return false
         }
-        if (bindPhysicalNetwork && !bindDnsSocket(fileDescriptor)) {
-            return false
-        }
         return protect(fileDescriptor)
-    }
-
-    // A protect-only socket has a VPN bypass bit but no explicit physical netId.
-    // On affected Android devices such UDP DNS packets still re-enter the TUN.
-    // DNS servers belong to the observed physical network, so bind these sockets
-    // before protect/connect; keep ordinary connections on Android's default route.
-    private fun bindDnsSocket(fileDescriptor: Int): Boolean {
-        var network = underlyingNetwork ?: return false
-        repeat(2) {
-            try {
-                ParcelFileDescriptor.fromFd(fileDescriptor).use { duplicate ->
-                    network.bindSocket(duplicate.fileDescriptor)
-                }
-                return true
-            } catch (exception: IOException) {
-                val current = underlyingNetwork
-                if (current != null && current != network) {
-                    network = current
-                } else {
-                    Log.w(TAG, "Unable to bind DNS socket fd=$fileDescriptor network=${network.networkHandle}", exception)
-                    return false
-                }
-            } catch (exception: RuntimeException) {
-                Log.w(TAG, "Unable to bind DNS socket fd=$fileDescriptor", exception)
-                return false
-            }
-        }
-        return false
     }
 
     private fun protect(fileDescriptor: Int): Boolean = try {

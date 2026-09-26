@@ -19,7 +19,7 @@ import java.net.InetAddress
  *
  * Routing remains in system-default mode: this monitor does not request a network and does not
  * impose its own Wi-Fi/cellular ranking. The selected handle is used for network identity,
- * per-network memory, DNS socket binding and WebView XHTTP's direct escape path.
+ * per-network memory and WebView XHTTP's direct escape path only.
  */
 class UnderlyingNetworkMonitor(context: Context) {
     fun interface Listener {

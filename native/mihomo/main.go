@@ -5,7 +5,7 @@ package main
 /*
 #include <stdlib.h>
 
-typedef int (*androidcyaml_protect_callback_t)(int fd, int bind_physical_network);
+typedef int (*androidcyaml_protect_callback_t)(int fd);
 typedef char* (*androidcyaml_resolve_callback_t)(
     int protocol,
     const char* source_address,
@@ -14,11 +14,11 @@ typedef char* (*androidcyaml_resolve_callback_t)(
     int destination_port
 );
 
-static __attribute__((unused)) int androidcyaml_call_protect(void* callback, int fd, int bind_physical_network) {
+static __attribute__((unused)) int androidcyaml_call_protect(void* callback, int fd) {
     if (callback == NULL) {
         return 0;
     }
-    return ((androidcyaml_protect_callback_t) callback)(fd, bind_physical_network);
+    return ((androidcyaml_protect_callback_t) callback)(fd);
 }
 
 static __attribute__((unused)) char* androidcyaml_call_resolve(
@@ -677,10 +677,7 @@ func installPlatformHooks() {
 		// successful fake-IP reply. The loopback guard cannot reject that
 		// reply before it poisons an upstream resolver's cache. Keep the
 		// callback concurrency bound, but never connect an unprotected socket.
-		bindPhysicalNetwork := isPlainDNSSocket(network, address)
-		err := protectRawSocket(connection, func(fd int) bool {
-			return protectDialedSocket(fd, bindPhysicalNetwork)
-		})
+		err := protectRawSocket(connection, protectDialedSocket)
 		if err != nil && !errors.Is(err, errSocketProtectionRejected) {
 			dialHookControlFails.Add(1)
 		}
@@ -691,7 +688,7 @@ func installPlatformHooks() {
 
 // protectDialedSocket hands one socket to VpnService.protect through the JNI
 // callback, bounded by the shared platform-callback permit.
-func protectDialedSocket(fileDescriptor int, bindPhysicalNetwork bool) bool {
+func protectDialedSocket(fileDescriptor int) bool {
 	callback := currentProtectCallback()
 	protectAttempts.Add(1)
 	if callback == nil {
@@ -699,11 +696,7 @@ func protectDialedSocket(fileDescriptor int, bindPhysicalNetwork bool) bool {
 		return false
 	}
 	rejected := withCallbackPermit(platformCallbackLimit, func() bool {
-		var bindValue C.int
-		if bindPhysicalNetwork {
-			bindValue = 1
-		}
-		return C.androidcyaml_call_protect(callback, C.int(fileDescriptor), bindValue) == 0
+		return C.androidcyaml_call_protect(callback, C.int(fileDescriptor)) == 0
 	})
 	if rejected {
 		protectRejections.Add(1)

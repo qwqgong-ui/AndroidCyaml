@@ -2,7 +2,7 @@
 # these entry points from Java call sites. Every method listed here is part of
 # the native callback ABI and must retain both its name and descriptor.
 -keepclassmembers,allowoptimization class io.github.qwqgong.androidcyaml.NativePlatformCallbacks {
-    public boolean protectSocket(int, boolean);
+    public boolean protectSocket(int);
     public java.lang.String resolveProcessOwner(int, java.lang.String, int, java.lang.String, int);
     public java.lang.String startBrowserRequest(java.lang.String, byte[]);
     public java.lang.String awaitBrowserResponse(long);
