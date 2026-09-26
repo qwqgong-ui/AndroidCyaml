@@ -118,7 +118,7 @@ bool installCallback(JNIEnv* env, jobject callback) {
         clearJavaException(env);
         return false;
     }
-    jmethodID protect = env->GetMethodID(callback_class, "protectSocket", "(I)Z");
+    jmethodID protect = env->GetMethodID(callback_class, "protectSocket", "(IZ)Z");
     jmethodID resolve = env->GetMethodID(
             callback_class,
             "resolveProcessOwner",
@@ -204,7 +204,7 @@ jobject localCallback(
     return env->NewLocalRef(g_callback);
 }
 
-int protectSocketCallback(int fd) {
+int protectSocketCallback(int fd, int bind_physical_network) {
     AttachedEnv attached;
     JNIEnv* env = attached.get();
     if (env == nullptr) {
@@ -215,7 +215,9 @@ int protectSocketCallback(int fd) {
     if (callback == nullptr || method == nullptr) {
         return 0;
     }
-    jboolean protected_socket = env->CallBooleanMethod(callback, method, static_cast<jint>(fd));
+    jboolean protected_socket = env->CallBooleanMethod(
+            callback, method, static_cast<jint>(fd),
+            static_cast<jboolean>(bind_physical_network != 0));
     if (env->ExceptionCheck()) {
         clearJavaException(env);
         protected_socket = JNI_FALSE;

@@ -19,8 +19,8 @@ android {
         applicationId = "io.github.qwqgong.androidcyaml"
         minSdk = 36
         targetSdk = 37
-        versionCode = 396
-        versionName = "1.0.98"
+        versionCode = 397
+        versionName = "1.0.99"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

@@ -146,7 +146,7 @@ sing-tun 在最后一个包之后保留 UDP 会话整个超时时长，NAT 表�
 1. `dialer.DefaultSocketHook` 在 connect 前获得 raw FD；
 2. Go 取一枚 `platformCallbackLimit` 许可（上限 `maxConcurrentPlatformCallbacks = 8`）后进入 JNI；
 3. `NativePlatformCallbacks.protectSocket` 调用 `AndroidVpnService.protect(fd)`，使上游连接绕过 VPN；
-4. 普通 socket 由 Android 默认路由选择物理出口，只有 WebView XHTTP 显式绑定 Network；
+4. UDP/TCP 53 上游 socket 在 protect 前绑定当前物理 Network；其它普通 socket 仍由 Android 默认路由选择出口，WebView XHTTP 也显式绑定 Network；
 5. protect 拒绝时，socket control hook 返回错误，停止该次拨号。
 
 `VpnService.protect()` 没有 NDK 等价物，只有 Java API 能让 netd 设置 protect fwmark 位，所以请求
@@ -197,9 +197,11 @@ Android app traffic
                 └── WebView HTTPS request outside the VPN
 ```
 
-WebView XHTTP 是唯一例外：它需要在 Java 端显式绑定已观察到的物理 network，避免
-WebView 自身的 DNS/HTTPS 请求重新进入 VPN 形成递归。这个特例不改变普通 mihomo
-DIRECT、DNS 和代理出站的系统默认选网行为。
+UDP/TCP 53 上游 DNS 和 WebView XHTTP 在 Java 端显式绑定已观察到的物理 network。
+真机日志证实部分 DNS socket 的 protect 位在连接及响应时均为 `0x20000`，但对应源端口的
+请求仍进入 TUN。DNS 绑定同时指定物理 netId，避免仅有 protect 位的默认选网路径。
+绑定目标在切网时更新；失效网络绑定失败时停止该次 DNS 拨号，只在观察到新 handle 时立即重试一次。
+其它 DIRECT、加密 DNS 和原生代理出站保持系统默认选网行为。
 
 ## Runtime overrides
 
@@ -237,7 +239,7 @@ resolver/DNS 行为。
 - 用户关闭 IPv6：运行 IPv4-only；
 - 用户开启但环境不可用：保留双栈 TUN，只暂停 DIRECT IPv6；
 - 同一物理网络 IPv6 变化：只更新 IPv6 resolver/DNS，不关闭 IPv4/代理连接；
-- 物理 route handle 改变：更新 WebView XHTTP 绑定目标并关闭旧路径连接，普通新连接使用系统默认出口。
+- 物理 route handle 改变：更新 DNS/WebView XHTTP 绑定目标并关闭旧路径连接，其它新连接使用系统默认出口。
 
 ## Underlying-network handover
 

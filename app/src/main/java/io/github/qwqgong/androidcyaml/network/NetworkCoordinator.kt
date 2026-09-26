@@ -103,10 +103,10 @@ class NetworkCoordinator(
             description,
         )
 
-        // WebView XHTTP resolves through an explicit physical Network. Ordinary
-        // protected sockets follow Android's default route across handovers.
+        // DNS sockets and WebView XHTTP use the observed physical Network.
+        // Other protected sockets follow Android's default route across handovers.
         if (transition.routeChanged) {
-            lifecycle.updateWebViewUnderlyingNetwork(next.networkHandle)
+            lifecycle.updateUnderlyingNetwork(next.networkHandle)
         }
 
         val settings = overrideStore.settings()
