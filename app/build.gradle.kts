@@ -9,6 +9,8 @@ val mihomoWrapperSources = fileTree(rootProject.file("native/mihomo")) {
     include("*.go")
 }
 val androidNdkVersion = "29.0.14206865"
+val unitTestsOnly = providers.gradleProperty("androidcyaml.unitTestsOnly")
+    .map(String::toBoolean).getOrElse(false)
 
 android {
     namespace = "io.github.qwqgong.androidcyaml"
@@ -44,10 +46,12 @@ android {
         buildConfig = true
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    if (!unitTestsOnly) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
@@ -134,6 +138,9 @@ val buildMihomo by tasks.registering(Exec::class) {
 }
 
 tasks.configureEach {
+    if (unitTestsOnly && name.matches(Regex("(assemble|bundle)(Debug|Release|Optimized)?"))) {
+        doFirst { error("androidcyaml.unitTestsOnly cannot produce APKs or bundles") }
+    }
     if (name.startsWith("configureCMake")
             || name.startsWith("buildCMake")
             || name.contains("ExternalNativeBuild")) {
@@ -142,5 +149,5 @@ tasks.configureEach {
 }
 
 tasks.named("preBuild") {
-    dependsOn(buildMihomo)
+    if (!unitTestsOnly) dependsOn(buildMihomo)
 }

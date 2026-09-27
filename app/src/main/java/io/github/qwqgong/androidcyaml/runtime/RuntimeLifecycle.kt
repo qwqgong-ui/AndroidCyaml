@@ -20,6 +20,9 @@ class RuntimeLifecycle(
     var effectiveIpv6Enabled = false
         private set
 
+    var tunIpv6Enabled = false
+        private set
+
     @Volatile
     var effectiveTcpConcurrent = false
         private set
@@ -65,10 +68,9 @@ class RuntimeLifecycle(
         networkState: NetworkState,
         runtimeStarted: Runnable?,
     ): String {
-        // Keep the Android TUN shape stable across Wi-Fi/cellular handovers.
-        // The core receives physical IPv6 availability separately and disables
-        // IPv6 resolution/dialing when the underlying network cannot carry it.
-        val requestedIpv6 = settings.ipv6Enabled
+        // Android apps choose address families from the VPN's LinkProperties.
+        // Resolver gating alone cannot stop cached AAAA/IPv6 literal traffic.
+        val requestedIpv6 = networkState.effectiveIpv6(settings.ipv6Enabled)
         return startRuntime(
             settings,
             networkState,
@@ -116,6 +118,7 @@ class RuntimeLifecycle(
         platformCallbacks = null
         service = null
         effectiveIpv6Enabled = false
+        tunIpv6Enabled = false
         effectiveTcpConcurrent = false
     }
 
@@ -154,6 +157,7 @@ class RuntimeLifecycle(
                 throw IOException("mihomo 未建立 Android TUN")
             }
             effectiveIpv6Enabled = ipv6Enabled && networkState.ipv6Usable
+            tunIpv6Enabled = ipv6Enabled
             effectiveTcpConcurrent = tcpConcurrentEnabled
             runtimeStarted?.run()
             selectorSession.begin(candidate, networkState)

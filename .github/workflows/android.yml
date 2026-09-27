@@ -1,16 +1,25 @@
-name: Android
+name: Android package and release
 
 on:
-  push:
-    branches:
-      - main
-      - copy
-      - "agent/**"
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      mihomo-revision:
+        required: true
+        type: string
+    secrets:
+      GRADLE_ENCRYPTION_KEY:
+        required: false
+      ANDROID_RELEASE_KEYSTORE_BASE64:
+        required: false
+      ANDROID_RELEASE_STORE_PASSWORD:
+        required: false
+      ANDROID_RELEASE_KEY_ALIAS:
+        required: false
+      ANDROID_RELEASE_KEY_PASSWORD:
+        required: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-${{ github.ref }}
@@ -18,6 +27,10 @@ concurrency:
 
 jobs:
   build:
+    permissions:
+      contents: write
+    env:
+      MIHOMO_REVISION: ${{ inputs.mihomo-revision }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -50,10 +63,7 @@ jobs:
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "release=${release}" >> "${GITHUB_OUTPUT}"
           echo "go-cache-generation=$(date -u +%G-%V)" >> "${GITHUB_OUTPUT}"
-          mihomo_commit="$(
-            git ls-remote https://github.com/qwqgong-ui/mihomo.git refs/heads/dev \
-              | awk 'NR == 1 { print $1 }'
-          )"
+          mihomo_commit="${MIHOMO_REVISION}"
           [[ "${mihomo_commit}" =~ ^[0-9a-f]{40}$ ]]
           echo "mihomo-commit=${mihomo_commit}" >> "${GITHUB_OUTPUT}"
 
@@ -75,7 +85,7 @@ jobs:
             app/src/main/jniLibs/arm64-v8a/libmihomo.so
             app/src/main/cpp/generated/libmihomo.h
             .third_party/mihomo.commit
-          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ steps.build.outputs.mihomo-commit }}-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go') }}
+          key: ${{ runner.os }}-mihomo-native-go1.27-ndk29-${{ steps.build.outputs.mihomo-commit }}-${{ hashFiles('scripts/build_mihomo.sh', 'native/mihomo/go.mod', 'native/mihomo/*.go', 'patches/mihomo/*.patch') }}
 
       - name: Restore weekly Go build cache
         id: go-cache
@@ -143,7 +153,6 @@ jobs:
           fi
 
           ./gradlew \
-            :app:testDebugUnitTest \
             ":app:assemble${variant}" \
             ":app:lint${variant}" \
             --stacktrace 2>&1 | tee build.log || status=$?

@@ -98,7 +98,7 @@ Android VPN 覆盖所有应用，不应用 YAML 中的 `tun.include-package`、`
 - 栈：`system`
 - 设备名：`AndroidCyaml`
 - IPv4：`172.19.0.1/30`
-- IPv6：`fdfe:dcba:9876::1/126`（用户启用时保持稳定）
+- IPv6：`fdfe:dcba:9876::1/126`（用户启用且物理网络 IPv6 可用时）
 - MTU：`9000`
 - GSO：关闭
 - 路由：已启用地址族的默认路由 `0.0.0.0/0`、`::/0`，无应用或目的地址排除
@@ -213,13 +213,15 @@ HTTP/3。关闭该开关时，上述限制不影响 mihomo 原生 XHTTP 传输�
 
 IPv6 开关表示用户意愿。实际启用还要求当前最佳非 VPN 网络同时具备：
 
-- Android 已验证的互联网能力；
+- 非 VPN 网络的互联网能力（不等待 Android VALIDATED，避免切网期间误判）；
 - 全局 IPv6 地址；
 - IPv6 默认路由。
 
-用户启用后 Android TUN 保持双栈；环境不满足时只暂停 DIRECT IPv6、AAAA 解析和相关 resolver
-连接，不重建 TUN，也不关闭 IPv4 或代理连接。只有系统评分选出的物理 Network handle 真正变化时，
-才关闭旧路径的现有连接。若双栈模式首次启动失败，仍会停止失败实例并以 IPv4-only 重试一次。
+Android 上报物理 IPv6 状态，上游 dev 负责 resolver/DNS 的自动切换。Android TUN 同时遵循有效
+地址族：IPv4-only 网络不配置 IPv6 地址、路由或 DNS，以免应用使用缓存 AAAA/IPv6 字面量继续发起
+无法直连的 IPv6 请求。可用网络的有效地址族改变时会重建 TUN 和核心，现有连接会短暂中断；
+仅 DNS 变化或物理网络丢失不重建地址族，等待下一个可用物理网络再判断。
+失败的网络同步按 1–30 秒退避重试，不依赖下次网络回调。
 
 ### 按网络记忆策略组
 
@@ -334,6 +336,30 @@ adb shell pidof io.github.qwqgong.androidcyaml:ui
 ```
 
 ## 构建
+
+### 分项测试
+
+`ci.yml` 在 push、PR 和手动运行时先解析一次 mihomo dev SHA，再运行 `tests.yml` 的独立任务：
+原生 DNS、网络、传输、JNI 包装契约，以及 Android 网络、控制器、生命周期、WebView、设置。
+所有功能组通过后才调用 `android.yml` 打包和发布，测试与 APK 使用同一个 dev SHA。
+`Functional tests` 也可单独手动运行，不需要签名密钥，不会发布；原生缓存命中不会跳过测试。
+
+```bash
+# 只需要 Go 和 C 工具链，不要求 Android SDK/NDK
+bash scripts/build_mihomo.sh --test-group dns
+bash scripts/build_mihomo.sh --test-group network
+bash scripts/build_mihomo.sh --test-group transport
+bash scripts/build_mihomo.sh --test-group wrapper
+
+# 需要 JDK 17 和 Android SDK 37，不构建 JNI
+bash scripts/test_android_unit.sh network
+# 其他组：controller、lifecycle、webview、settings
+```
+
+本地原生组应顺序运行，因为共用 `.third_party` 工作目录；CI 每组使用独立 runner。
+可通过 `MIHOMO_REVISION=<完整 SHA>` 重现同一上游版本。
+
+### APK
 
 需要：
 

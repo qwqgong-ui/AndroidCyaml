@@ -2,6 +2,17 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_GROUP=""
+if [[ "${1:-}" == "--test-group" && $# == 2 ]]; then
+    TEST_GROUP="$2"
+    case "${TEST_GROUP}" in
+        dns|network|transport|wrapper) ;;
+        *) echo "Unknown test group: ${TEST_GROUP}" >&2; exit 2 ;;
+    esac
+elif (( $# != 0 )); then
+    echo "Usage: $0 [--test-group dns|network|transport|wrapper]" >&2
+    exit 2
+fi
 readonly SOURCE_URL="https://github.com/qwqgong-ui/mihomo.git"
 readonly MIHOMO_SOURCE_BRANCH="dev"
 readonly WRAPPER_SOURCE_DIR="${ROOT_DIR}/native/mihomo"
@@ -75,7 +86,7 @@ fi
 # Resolve the moving dev branch on every invocation. The exact fetched commit
 # is still recorded in the marker and native version for reproducibility and
 # diagnostics, but it is deliberately not pinned in this repository.
-git -C "${SOURCE_DIR}" fetch --depth=1 origin "refs/heads/${MIHOMO_SOURCE_BRANCH}"
+git -C "${SOURCE_DIR}" fetch --depth=1 origin "${MIHOMO_REVISION:-refs/heads/${MIHOMO_SOURCE_BRANCH}}"
 readonly MIHOMO_COMMIT="$(git -C "${SOURCE_DIR}" rev-parse --verify FETCH_HEAD^{commit})"
 git -C "${SOURCE_DIR}" checkout --detach --force "${MIHOMO_COMMIT}"
 git -C "${SOURCE_DIR}" clean -ffdqx
@@ -96,12 +107,13 @@ done
 
 readonly EXPECTED_MARKER="${MIHOMO_SOURCE_BRANCH}:${MIHOMO_COMMIT}:${WRAPPER_DIGEST}:${PATCH_DIGEST}:android-arm64-api${NATIVE_API}-${GOARM64_BASELINE}-jni-c-shared-v${BUILD_RECIPE_VERSION}"
 
-if [[ -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
+if [[ -z "${TEST_GROUP}" && -f "${OUTPUT_LIBRARY}" && -f "${OUTPUT_HEADER}" && -f "${MARKER_FILE}" ]] \
     && [[ "$(<"${MARKER_FILE}")" == "${EXPECTED_MARKER}" ]]; then
     echo "mihomo ${MIHOMO_SOURCE_BRANCH} at ${MIHOMO_COMMIT:0:8} with the AndroidCyaml wrapper is already built."
     exit 0
 fi
 
+if [[ -z "${TEST_GROUP}" ]]; then
 sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [[ -z "${sdk_root}" && -f "${ROOT_DIR}/local.properties" ]]; then
     sdk_root="$(sed -n 's/^sdk.dir=//p' "${ROOT_DIR}/local.properties" | tail -n 1)"
@@ -139,6 +151,7 @@ readonly ANDROID_AR="${TOOLCHAIN}/bin/llvm-ar"
     echo "NDK arm64 API ${NATIVE_API} toolchain is incomplete" >&2
     exit 1
 }
+fi
 
 readonly INSTALLED_GO_VERSION="$(GOTOOLCHAIN=local go env GOVERSION)"
 case "${INSTALLED_GO_VERSION}" in
@@ -213,16 +226,24 @@ if grep -qE '=> \.{1,2}/' <<<"${MIHOMO_REPLACEMENTS}"; then
     exit 1
 fi
 
-# Compile and exercise the pinned dev kernel before cross-compiling the JNI
-# library. AndroidCyaml integration is provided by dev APIs, not source patches.
+# Host tests run independently of JNI/NDK and never use the native output cache.
+case "${TEST_GROUP}" in
+    dns) test_packages=(./dns) ;;
+    network) test_packages=(./component/dialer ./component/process ./component/resolver ./hub/executor) ;;
+    transport) test_packages=(./transport/xhttp ./adapter/outbound) ;;
+    *) test_packages=() ;;
+esac
+if (( ${#test_packages[@]} > 0 )); then
 (
     cd "${SOURCE_DIR}"
     env \
         GOWORK=off \
         GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
         GOFLAGS="-modfile=${MIHOMO_MODFILE}" \
-        go test ./transport/xhttp ./adapter/outbound ./dns ./component/dialer ./component/process ./component/resolver ./hub/executor
+        go test -p "${GO_TEST_PARALLELISM:-2}" -count=1 "${test_packages[@]}"
 )
+exit 0
+fi
 
 rm -rf "${MODULE_DIR}" "${TEMP_DIR}"
 mkdir -p "${MODULE_DIR}" "${TEMP_DIR}"
@@ -234,16 +255,20 @@ cp "${WRAPPER_SOURCE_DIR}/go.mod" "${wrapper_sources[@]}" "${MODULE_DIR}/"
 
 # The wrapper's host-safe lifecycle tests exercise state that would otherwise
 # only fail after a second in-process Android TUN startup.
+if [[ "${TEST_GROUP}" == "wrapper" ]]; then
 (
     cd "${MODULE_DIR}"
     env \
         GOWORK=off \
         GOTOOLCHAIN="${GO_TOOLCHAIN_MODE}" \
         go test \
+        -p "${GO_TEST_PARALLELISM:-2}" -count=1 \
         -mod=mod \
         -tags "no_tailscale no_zerotier no_wireguard no_openvpn no_mieru no_sudoku no_easytier" \
         .
 )
+exit 0
+fi
 
 readonly BUILD_TIME="$(git -C "${SOURCE_DIR}" show -s --format=%cI "${MIHOMO_COMMIT}")"
 readonly VERSION="androidcyaml-${MIHOMO_COMMIT:0:8}"

@@ -13,6 +13,11 @@ data class NetworkState(
 ) {
     fun available(): Boolean = networkHandle != 0L
 
+    fun effectiveIpv6(configured: Boolean): Boolean = configured && available() && ipv6Usable
+
+    fun requiresTunRebuild(configured: Boolean, tunIpv6: Boolean, runtimePresent: Boolean): Boolean =
+        !runtimePresent || (available() && effectiveIpv6(configured) != tunIpv6)
+
     // Cache scope and selection memory answer different questions, so they must
     // not share a key. Selection memory keys on the SSID alone, deliberately, so
     // that roaming across the access points of one Wi-Fi keeps a single profile.
@@ -110,6 +115,15 @@ data class NetworkTransition(
     val identityChanged: Boolean,
     val cacheChanged: Boolean,
 ) {
+    /** Each dimension commits independently; only unsuccessful work stays pending. */
+    fun reconcile(apply: (NetworkDimension) -> Boolean): NetworkTransition {
+        val cacheFailed = cacheChanged && !apply(NetworkDimension.CACHE)
+        val dnsFailed = dnsChanged && !apply(NetworkDimension.DNS)
+        val ipv6Failed = ipv6Changed && !apply(NetworkDimension.IPV6)
+        val routeFailed = routeChanged && !apply(NetworkDimension.ROUTE)
+        return NetworkTransition(routeFailed, dnsFailed, ipv6Failed, false, cacheFailed)
+    }
+
     fun changed(): Boolean =
         routeChanged || dnsChanged || ipv6Changed || identityChanged || cacheChanged
 
@@ -145,3 +159,5 @@ data class NetworkTransition(
         )
     }
 }
+
+enum class NetworkDimension { CACHE, DNS, IPV6, ROUTE }

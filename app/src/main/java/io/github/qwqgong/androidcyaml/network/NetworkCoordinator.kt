@@ -25,6 +25,7 @@ class NetworkCoordinator(
         fun snapshot(): RuntimeSnapshot
         fun publish(snapshot: RuntimeSnapshot)
         fun diagnostic(event: String, detail: String)
+        fun rebuildForNetwork(state: NetworkState)
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -35,15 +36,22 @@ class NetworkCoordinator(
     private var pendingSelectionRestoration: Runnable? = null
     private var selectionRestorationGeneration = 0L
 
-    // Dimensions a previous transition observed but could not reconcile with the
-    // runtime. They are replayed on the next transition; see mergePending.
+    // Dimensions a previous transition could not reconcile. Retry on a timer as
+    // well as on new callbacks: the monitor suppresses identical network states.
     private var pendingTransition: NetworkTransition = NetworkTransition.none()
+    private val transitionRetry = NetworkTransitionRetry(
+        schedule = { task, delay -> mainHandler.postDelayed(task, delay) },
+        remove = { task -> mainHandler.removeCallbacks(task) },
+        dispatch = host::submit,
+        retry = { apply(state) },
+    )
 
     init {
         lifecycle.setIdleEffectiveState(overrideStore.settings(), state)
     }
 
     fun start(): NetworkState {
+        transitionRetry.clear()
         // The runtime is built from this state, so it starts fully reconciled.
         pendingTransition = NetworkTransition.none()
         state = monitor.start { next -> host.submit { apply(next) } }
@@ -61,12 +69,14 @@ class NetworkCoordinator(
      * rebuild reconciles every dimension, so nothing stays owed.
      */
     fun refreshState(): NetworkState {
+        transitionRetry.clear()
         pendingTransition = NetworkTransition.none()
         state = monitor.currentState()
         return state
     }
 
     fun stop() {
+        transitionRetry.clear()
         pendingTransition = NetworkTransition.none()
         cancelSelectionRestoration()
         monitor.stop()
@@ -114,17 +124,33 @@ class NetworkCoordinator(
             // Nothing to reconcile against, and a later start rebuilds the runtime
             // from the state observed at that moment, so no work is owed.
             pendingTransition = NetworkTransition.none()
+            transitionRetry.clear()
             lifecycle.setIdleEffectiveState(settings, next)
             host.publish(host.snapshot())
             return
         }
 
-        // The Android TUN follows the user's IPv6 setting. Physical IPv6
-        // availability only changes the core's runtime resolver/DNS behavior;
-        // rebuilding the TUN here makes Android revalidate the VPN while Wi-Fi
-        // is still acquiring its IPv6 address.
+        // The core does not own the Android VPN descriptor. When a real network
+        // changes address family, rebuild the platform TUN too; otherwise apps
+        // continue choosing cached IPv6 destinations after core gating turns off.
+        // Network loss is not a change of address family. Wait for the next
+        // physical network before deciding whether the platform TUN must change.
+        if (next.requiresTunRebuild(
+                settings.ipv6Enabled,
+                lifecycle.tunIpv6Enabled,
+                lifecycle.runtime() != null,
+            )
+        ) {
+            val rebuilt = reconcile(description, "tun") { host.rebuildForNetwork(next) }
+            pendingTransition = if (rebuilt) NetworkTransition.none()
+                else NetworkTransition(true, true, true, false, true)
+            transitionRetry.update(pendingTransition.changed())
+            host.publish(host.snapshot())
+            return
+        }
         applyTcpConcurrent(settings.adaptiveTcpConcurrent)
         pendingTransition = applyRuntimeTransition(next, transition, settings.ipv6Enabled)
+        transitionRetry.update(pendingTransition.changed())
         if (identityChanged && next.available()) scheduleSelectionRestoration()
         host.publish(host.snapshot())
     }
@@ -137,7 +163,7 @@ class NetworkCoordinator(
      * of the old network's connections, which runs last -- and because the
      * observed state had already advanced, no later transition would report those
      * dimensions as changed again. The work was dropped silently. The returned
-     * transition is replayed on the next transition instead.
+     * transition is replayed by the retry timer or the next network transition.
      */
     private fun applyRuntimeTransition(
         next: NetworkState,
@@ -148,33 +174,19 @@ class NetworkCoordinator(
         // No runtime means nothing was reconciled; the whole transition stays owed.
         val runtime = lifecycle.runtime() ?: return transition
 
-        val cacheFailed = transition.cacheChanged && !reconcile(description, "cache") {
-            runtime.updateNetworkEnvironment(next.cacheIdentity())
-        }
-        val dnsFailed = transition.dnsChanged && !reconcile(description, "dns") {
-            runtime.updateSystemDns(next.dnsServers)
-        }
-        var ipv6Failed = false
-        if (transition.ipv6Changed) {
-            ipv6Failed = !reconcile(description, "ipv6") {
-                runtime.updateIpv6Availability(next.ipv6Usable)
-            }
-            if (!ipv6Failed) {
-                lifecycle.updateEffectiveIpv6(configuredIpv6 && next.ipv6Usable)
+        val failed = transition.reconcile { dimension ->
+            reconcile(description, dimension.name.lowercase()) {
+                when (dimension) {
+                    NetworkDimension.CACHE -> runtime.updateNetworkEnvironment(next.cacheIdentity())
+                    NetworkDimension.DNS -> runtime.updateSystemDns(next.dnsServers)
+                    NetworkDimension.IPV6 -> {
+                        runtime.updateIpv6Availability(next.ipv6Usable)
+                        lifecycle.updateEffectiveIpv6(configuredIpv6 && next.ipv6Usable)
+                    }
+                    NetworkDimension.ROUTE -> runtime.onPhysicalRouteChanged()
+                }
             }
         }
-        val routeFailed = transition.routeChanged && !reconcile(description, "route") {
-            runtime.onPhysicalRouteChanged()
-        }
-
-        val failed = NetworkTransition(
-            routeChanged = routeFailed,
-            dnsChanged = dnsFailed,
-            ipv6Changed = ipv6Failed,
-            // Selector memory is not reconciled here, so it is never owed.
-            identityChanged = false,
-            cacheChanged = cacheFailed,
-        )
         if (!failed.changed()) {
             Log.i(TAG, "Applied network transition: $description")
         }

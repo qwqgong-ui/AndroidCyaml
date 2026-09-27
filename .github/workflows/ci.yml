@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    outputs:
+      mihomo-commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - id: source
+        run: |
+          set -euo pipefail
+          commit="$(git ls-remote https://github.com/qwqgong-ui/mihomo.git refs/heads/dev | awk 'NR == 1 { print $1 }')"
+          [[ "${commit}" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
+
+  tests:
+    needs: source
+    uses: ./.github/workflows/tests.yml
+    with:
+      mihomo-revision: ${{ needs.source.outputs.mihomo-commit }}
+
+  package:
+    needs: [source, tests]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+    with:
+      mihomo-revision: ${{ needs.source.outputs.mihomo-commit }}

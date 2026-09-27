@@ -242,6 +242,22 @@ class RuntimeCoordinator private constructor(context: Context) :
         ) + request.detailSuffix
     }
 
+    override fun rebuildForNetwork(state: NetworkState) {
+        val request = runtimeStartRequest()
+        publish(RuntimeState.STARTING, "正在同步物理网络与 VPN 地址族…")
+        try {
+            val detail = lifecycle.restart(
+                request.settings,
+                state,
+                networkCoordinator::cancelSelectionRestoration,
+            ) + request.detailSuffix
+            publish(RuntimeState.RUNNING, detail)
+        } catch (exception: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("同步 VPN 地址族被中断", exception)
+        }
+    }
+
     private fun runtimeStartRequest(): RuntimeStartRequest {
         var settings = overrideStore.settings()
         val localNetworkFallback = settings.lanWebUiPublic && !hasLocalNetworkAccess()
